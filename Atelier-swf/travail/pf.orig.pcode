@@ -1,0 +1,77 @@
+method
+name "populateFilterOptions"
+returns QName(PackageNamespace(""),"void")
+
+body
+maxstack 3
+localcount 6
+initscopedepth 0
+maxscopedepth 1
+
+code
+getlocal0
+pushscope
+getlex QName(PrivateNamespace("com.sulake.habbo.inventory.furni:FurniView"),"_-y1")
+pushstring "filter.options"
+callproperty QName(Namespace("com.sulake.core.window:IWindow"),"findChildByName"), 1
+getlex QName(PackageNamespace("com.sulake.core.window.components"),"_-X6")
+astypelate
+coerce QName(PackageNamespace("com.sulake.core.window.components"),"_-X6")
+setlocal3
+newarray 0
+coerce QName(PackageNamespace(""),"Array")
+setlocal1
+pushbyte 0
+setlocal 5
+getlex QName(PrivateNamespace("com.sulake.habbo.inventory.furni:FurniView"),"MAIN_FILTER_IDS")
+setlocal 4
+jump ofs003b
+ofs0025:
+label
+getlocal 4
+getlocal 5
+nextvalue
+coerce_s
+setlocal2
+getlocal1
+findpropstrict QName(PrivateNamespace("com.sulake.habbo.inventory.furni:FurniView"),"getMainFilterLabel")
+getlocal2
+callproperty QName(PrivateNamespace("com.sulake.habbo.inventory.furni:FurniView"),"getMainFilterLabel"), 1
+callpropvoid QName(Namespace("http://adobe.com/AS3/2006/builtin"),"push"), 1
+ofs003b:
+hasnext2 4, 5
+iftrue ofs0025
+getlocal3
+getlocal1
+callpropvoid QName(Namespace("com.sulake.core.window.components:IDropMenuWindow"),"populate"), 1
+getlocal3
+pushbyte 0
+setproperty QName(Namespace("com.sulake.core.window.components:IDropMenuWindow"),"selection")
+findpropstrict QName(PrivateNamespace("com.sulake.habbo.inventory.furni:FurniView"),"populateTypeFilterOptions")
+pushstring "all"
+pushstring "any"
+callpropvoid QName(PrivateNamespace("com.sulake.habbo.inventory.furni:FurniView"),"populateTypeFilterOptions"), 2
+getlex QName(PrivateNamespace("com.sulake.habbo.inventory.furni:FurniView"),"_-y1")
+pushstring "filter"
+callproperty QName(Namespace("com.sulake.core.window:IWindow"),"findChildByName"), 1
+pushstring ""
+setproperty QName(Namespace("com.sulake.core.window:IWindow"),"caption")
+jump ofs007d
+getlex QName(PrivateNamespace("com.sulake.habbo.inventory.furni:FurniView"),"_-y1")
+pushstring "items.shown"
+callproperty QName(Namespace("com.sulake.core.window:IWindow"),"findChildByName"), 1
+pushtrue
+setproperty QName(Namespace("com.sulake.core.window:IWindow"),"visible")
+jump ofs007d
+ofs007d:
+getlex QName(PrivateNamespace("com.sulake.habbo.inventory.furni:FurniView"),"_-y1")
+pushstring "items.shown"
+callproperty QName(Namespace("com.sulake.core.window:IWindow"),"findChildByName"), 1
+pushfalse
+setproperty QName(Namespace("com.sulake.core.window:IWindow"),"visible")
+getlex QName(PrivateNamespace("com.sulake.habbo.inventory.furni:FurniView"),"_-y1")
+callpropvoid QName(Namespace("com.sulake.core.window:IWindow"),"invalidate"), 0
+returnvoid
+end ; code
+end ; body
+end ; method

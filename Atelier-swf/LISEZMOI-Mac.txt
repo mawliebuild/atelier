@@ -1,0 +1,14 @@
+L'ATELIER — Mac
+===============
+
+1. Décompresse ce zip (double-clic dessus).
+2. Double-clique « Lancer l'Atelier.command ».
+   La première fois, macOS peut refuser (« développeur non identifié ») :
+   clic droit sur le fichier › Ouvrir › Ouvrir.
+3. Tape ton mot de passe Mac quand il est demandé (rien ne s'affiche, c'est normal).
+4. Ouvre Habbo par le Habbo Launcher : l'Atelier se connecte tout seul.
+
+Tout s'installe tout seul (dans Documents), Java est fourni.
+S'il y a un problème, la fenêtre l'explique.
+Pour les modifs du jeu (grille, catégories…), Habbo doit être FERMÉ au moment du double-clic.
+Les fois suivantes : double-clique « Lancer l'Atelier.command » de la même façon.

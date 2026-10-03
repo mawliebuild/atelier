@@ -1,0 +1,80 @@
+method
+name "updateSprites"
+param QName(PackageNamespace(""),"int")
+param QName(PackageNamespace(""),"Boolean")
+param QName(PackageNamespace(""),"int")
+returns QName(PackageNamespace(""),"void")
+
+body
+maxstack 3
+localcount 6
+initscopedepth 0
+maxscopedepth 1
+
+code
+getlocal0
+pushscope
+pushbyte 0
+setlocal 5
+pushbyte 0
+setlocal 4
+getlex QName(ProtectedNamespace("com.sulake.habbo.room.object.visualization.furniture:FurnitureVisualization"),"_-a2y")
+getlex QName(PackageNamespace(""),"spriteCount")
+ifeq ofs001e
+findpropstrict QName(ProtectedNamespace("com.sulake.room.object.visualization:RoomObjectSpriteVisualization"),"createSprites")
+getlex QName(ProtectedNamespace("com.sulake.habbo.room.object.visualization.furniture:FurnitureVisualization"),"_-a2y")
+callpropvoid QName(ProtectedNamespace("com.sulake.room.object.visualization:RoomObjectSpriteVisualization"),"createSprites"), 1
+ofs001e:
+getlocal2
+iffalse ofs004b
+getlex QName(PackageNamespace(""),"spriteCount")
+pushbyte 1
+subtract
+convert_i
+setlocal 5
+jump ofs003f
+ofs0030:
+label
+findpropstrict QName(ProtectedNamespace("com.sulake.habbo.room.object.visualization.furniture:FurnitureVisualization"),"updateSprite")
+getlocal1
+getlocal 5
+callpropvoid QName(ProtectedNamespace("com.sulake.habbo.room.object.visualization.furniture:FurnitureVisualization"),"updateSprite"), 2
+declocal_i 5
+ofs003f:
+getlocal 5
+pushbyte 0
+ifge ofs0030
+jump ofs0076
+ofs004b:
+pushbyte 0
+setlocal 4
+jump ofs006f
+ofs0053:
+label
+getlocal3
+pushbyte 1
+bitand
+iffalse ofs0068
+findpropstrict QName(ProtectedNamespace("com.sulake.habbo.room.object.visualization.furniture:FurnitureVisualization"),"updateSprite")
+getlocal1
+getlocal 4
+callpropvoid QName(ProtectedNamespace("com.sulake.habbo.room.object.visualization.furniture:FurnitureVisualization"),"updateSprite"), 2
+ofs0068:
+inclocal_i 4
+getlocal3
+pushbyte 1
+rshift
+setlocal3
+ofs006f:
+getlocal3
+pushbyte 0
+ifgt ofs0053
+ofs0076:
+pushfalse
+findproperty QName(ProtectedNamespace("com.sulake.habbo.room.object.visualization.furniture:FurnitureVisualization"),"_-Ko")
+swap
+setproperty QName(ProtectedNamespace("com.sulake.habbo.room.object.visualization.furniture:FurnitureVisualization"),"_-Ko")
+returnvoid
+end ; code
+end ; body
+end ; method

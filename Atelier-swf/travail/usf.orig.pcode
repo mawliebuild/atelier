@@ -1,0 +1,79 @@
+method
+name "updateSpriteFilters"
+param QName(PackageNamespace(""),"int")
+param QName(PackageNamespace("com.sulake.room.object.visualization"),"IRoomObjectSprite")
+param QName(PackageNamespace(""),"int")
+returns QName(PackageNamespace(""),"void")
+
+body
+maxstack 4
+localcount 6
+initscopedepth 0
+maxscopedepth 1
+
+code
+getlocal0
+pushscope
+pushnull
+setlocal 4
+pushnull
+setlocal 5
+getlocal2
+getproperty QName(Namespace("com.sulake.room.object.visualization:IRoomObjectSprite"),"blendMode")
+pushstring "add"
+ifeq ofs0076
+findpropstrict QName(ProtectedNamespace("com.sulake.habbo.room.object.visualization.furniture:FurnitureVisualization"),"getSpriteFilters")
+getlocal1
+getlex QName(PrivateNamespace("com.sulake.habbo.room.object.visualization.furniture:FurnitureVisualization"),"_-N1y")
+getlocal3
+callproperty QName(ProtectedNamespace("com.sulake.habbo.room.object.visualization.furniture:FurnitureVisualization"),"getSpriteFilters"), 3
+coerce QName(PackageNamespace(""),"Array")
+dup
+setlocal 4
+pushnull
+ifne ofs0036
+getlocal2
+getlex QName(PrivateNamespace("com.sulake.habbo.room.object.visualization.furniture:FurnitureVisualization"),"_filters")
+setproperty QName(Namespace("com.sulake.room.object.visualization:IRoomObjectSprite"),"filters")
+jump ofs0072
+ofs0036:
+getlex QName(PrivateNamespace("com.sulake.habbo.room.object.visualization.furniture:FurnitureVisualization"),"_filters")
+pushnull
+ifne ofs0048
+getlocal2
+getlocal 4
+setproperty QName(Namespace("com.sulake.room.object.visualization:IRoomObjectSprite"),"filters")
+jump ofs0072
+ofs0048:
+findpropstrict QName(PrivateNamespace("com.sulake.habbo.room.object.visualization.furniture:FurnitureVisualization"),"concatListWillEqual")
+getlex QName(PrivateNamespace("com.sulake.habbo.room.object.visualization.furniture:FurnitureVisualization"),"_filters")
+getlocal 4
+getlocal2
+getproperty QName(Namespace("com.sulake.room.object.visualization:IRoomObjectSprite"),"filters")
+callproperty QName(PrivateNamespace("com.sulake.habbo.room.object.visualization.furniture:FurnitureVisualization"),"concatListWillEqual"), 3
+iffalse ofs005f
+returnvoid
+ofs005f:
+getlex QName(PrivateNamespace("com.sulake.habbo.room.object.visualization.furniture:FurnitureVisualization"),"_filters")
+getlocal 4
+callproperty QName(Namespace("http://adobe.com/AS3/2006/builtin"),"concat"), 1
+coerce QName(PackageNamespace(""),"Array")
+setlocal 5
+getlocal2
+getlocal 5
+setproperty QName(Namespace("com.sulake.room.object.visualization:IRoomObjectSprite"),"filters")
+ofs0072:
+jump ofs0084
+ofs0076:
+getlocal2
+getproperty QName(Namespace("com.sulake.room.object.visualization:IRoomObjectSprite"),"filters")
+pushnull
+ifeq ofs0084
+getlocal2
+pushnull
+setproperty QName(Namespace("com.sulake.room.object.visualization:IRoomObjectSprite"),"filters")
+ofs0084:
+returnvoid
+end ; code
+end ; body
+end ; method

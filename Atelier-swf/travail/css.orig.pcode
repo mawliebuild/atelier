@@ -1,0 +1,132 @@
+method
+name "createScreenShot"
+param QName(PackageNamespace(""),"int")
+param QName(PackageNamespace(""),"int")
+param QName(PackageNamespace(""),"String")
+returns QName(PackageNamespace(""),"void")
+
+body
+maxstack 4
+localcount 13
+initscopedepth 0
+maxscopedepth 2
+
+code
+getlocal0
+pushscope
+pushnull
+setlocal 10
+pushnull
+setlocal 7
+pushnull
+setlocal 5
+pushnull
+setlocal 6
+getlex QName(PackageNamespace(""),"RegExp")
+pushstring "[:\\/\\\\\\*\\?\"<>\\|%]"
+pushstring "g"
+construct 2
+coerce QName(PackageNamespace(""),"RegExp")
+setlocal 4
+getlocal3
+getlocal 4
+pushstring ""
+callproperty QName(Namespace("http://adobe.com/AS3/2006/builtin"),"replace"), 2
+coerce_s
+setlocal3
+findpropstrict QName(PackageNamespace(""),"getRoomCanvas")
+getlocal1
+getlocal2
+callproperty QName(PackageNamespace(""),"getRoomCanvas"), 2
+coerce QName(PackageNamespace("com.sulake.room.renderer"),"IRoomRenderingCanvas")
+dup
+setlocal 9
+iftrue ofs003e
+returnvoid
+ofs003e:
+getlocal 9
+callproperty QName(Namespace("com.sulake.room.renderer:IRoomRenderingCanvas"),"takeScreenShot"), 0
+coerce QName(PackageNamespace("flash.display"),"BitmapData")
+setlocal 8
+getlex QName(PackageNamespace("com.sulake.core.utils"),"_-C1v")
+pushbyte 11
+pushbyte 3
+callproperty QName(PackageNamespace(""),"isVersionAtLeast"), 2
+iffalse ofs005a
+ofs005a:
+getlocal 10
+pushnull
+ifne ofs006f
+getlex QName(PackageNamespace("com.sulake.core.utils.images"),"_-s1R")
+getlocal 8
+callproperty QName(PackageNamespace(""),"encode"), 1
+coerce QName(PackageNamespace("flash.utils"),"ByteArray")
+setlocal 10
+ofs006f:
+findpropstrict QName(PackageNamespace("flash.net"),"FileReference")
+constructprop QName(PackageNamespace("flash.net"),"FileReference"), 0
+coerce QName(PackageNamespace("flash.net"),"FileReference")
+dup
+setlocal 7
+getlocal 10
+getlocal3
+callpropvoid QName(PackageNamespace(""),"save"), 2
+ofs0084:
+jump ofs0101
+ofs0088:
+getlocal0
+pushscope
+newcatch 0
+dup
+setlocal 12
+dup
+pushscope
+swap
+setslot 1
+findpropstrict QName(PackageNamespace(""),"Date")
+constructprop QName(PackageNamespace(""),"Date"), 0
+coerce QName(PackageNamespace(""),"Date")
+dup
+setlocal 5
+callproperty QName(Namespace("http://adobe.com/AS3/2006/builtin"),"getFullYear"), 0
+getlocal 5
+callproperty QName(Namespace("http://adobe.com/AS3/2006/builtin"),"getMonth"), 0
+getlocal 5
+callproperty QName(Namespace("http://adobe.com/AS3/2006/builtin"),"getDate"), 0
+newarray 3
+pushstring "-"
+callproperty QName(Namespace("http://adobe.com/AS3/2006/builtin"),"join"), 1
+pushstring " "
+add
+getlocal 5
+callproperty QName(Namespace("http://adobe.com/AS3/2006/builtin"),"getHours"), 0
+getlocal 5
+callproperty QName(Namespace("http://adobe.com/AS3/2006/builtin"),"getMinutes"), 0
+getlocal 5
+callproperty QName(Namespace("http://adobe.com/AS3/2006/builtin"),"getSeconds"), 0
+newarray 3
+pushstring "."
+callproperty QName(Namespace("http://adobe.com/AS3/2006/builtin"),"join"), 1
+add
+coerce_s
+setlocal 6
+pushstring "Habbo "
+getlocal 6
+add
+coerce_s
+setlocal3
+findpropstrict QName(PackageNamespace("flash.net"),"FileReference")
+constructprop QName(PackageNamespace("flash.net"),"FileReference"), 0
+coerce QName(PackageNamespace("flash.net"),"FileReference")
+dup
+setlocal 7
+getlocal 10
+getlocal3
+callpropvoid QName(PackageNamespace(""),"save"), 2
+popscope
+ofs0101:
+returnvoid
+end ; code
+try from ofs006f to ofs0084 target ofs0088 type QName(PackageNamespace(""),"Error") name QName(PackageInternalNs("com.sulake.habbo.room"),"error") end
+end ; body
+end ; method

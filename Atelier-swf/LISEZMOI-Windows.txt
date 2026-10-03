@@ -1,0 +1,11 @@
+L'ATELIER — Windows
+===================
+
+1. Fais clic droit sur ce zip › « Extraire tout ».
+2. Double-clique « Lancer l'Atelier.bat » et accepte la demande administrateur.
+   Si Windows affiche « Windows a protégé votre ordinateur » : Informations complémentaires › Exécuter quand même.
+3. Ouvre Habbo par le Habbo Launcher : l'Atelier se connecte tout seul.
+
+Tout s'installe tout seul (dans Documents), Java est fourni.
+S'il y a un problème, la fenêtre l'explique.
+Pour les modifs du jeu (grille, catégories…), Habbo doit être FERMÉ au moment du double-clic.

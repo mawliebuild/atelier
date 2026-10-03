@@ -1,0 +1,246 @@
+method
+name "render"
+flag HAS_OPTIONAL
+param QName(PackageNamespace(""),"int")
+param QName(PackageNamespace(""),"Boolean")
+optional False()
+returns QName(PackageNamespace(""),"void")
+
+body
+maxstack 7
+localcount 11
+initscopedepth 0
+maxscopedepth 1
+
+code
+getlocal0
+pushscope
+getlocal1
+pushbyte -1
+ifne ofs0011
+getlex QName(PrivateNamespace("com.sulake.room.renderer:RoomSpriteCanvas"),"_-1J")
+pushbyte 1
+add
+convert_i
+setlocal1
+ofs0011:
+getlex QName(PrivateNamespace("com.sulake.room.renderer:RoomSpriteCanvas"),"_skipObjectUpdate")
+not
+findproperty QName(PrivateNamespace("com.sulake.room.renderer:RoomSpriteCanvas"),"_skipObjectUpdate")
+swap
+setproperty QName(PrivateNamespace("com.sulake.room.renderer:RoomSpriteCanvas"),"_skipObjectUpdate")
+getlex QName(PackageNamespace("flash.utils"),"getTimer")
+getglobalscope
+call 0
+convert_i
+setlocal 6
+getlex QName(PrivateNamespace("com.sulake.room.renderer:RoomSpriteCanvas"),"_container")
+pushnull
+equals
+dup
+iftrue ofs0038
+pop
+getlex QName(PrivateNamespace("com.sulake.room.renderer:RoomSpriteCanvas"),"_geometry")
+pushnull
+equals
+ofs0038:
+iffalse ofs003d
+returnvoid
+ofs003d:
+getlocal1
+getlex QName(PrivateNamespace("com.sulake.room.renderer:RoomSpriteCanvas"),"_-1J")
+ifne ofs0046
+returnvoid
+ofs0046:
+getlex QName(PrivateNamespace("com.sulake.room.renderer:RoomSpriteCanvas"),"_bitmapDataCache")
+getproperty QName(PackageNamespace(""),"memUsage")
+getlex QName(PrivateNamespace("com.sulake.room.renderer:RoomSpriteCanvas"),"_bitmapDataCache")
+getproperty QName(PackageNamespace(""),"memLimit")
+ifngt ofs0060
+getlex QName(PrivateNamespace("com.sulake.room.renderer:RoomSpriteCanvas"),"_bitmapDataCache")
+callpropvoid QName(PackageNamespace(""),"compress"), 0
+ofs0060:
+getlex QName(PrivateNamespace("com.sulake.room.renderer:RoomSpriteCanvas"),"_container")
+callproperty QName(Namespace("com.sulake.room.renderer:IRoomSpriteCanvasContainer"),"getRoomObjectCount"), 0
+convert_i
+setlocal 7
+pushbyte 0
+setlocal 4
+pushbyte 0
+setlocal 5
+pushstring ""
+coerce_s
+setlocal 9
+pushnull
+coerce QName(PackageNamespace("com.sulake.room.object"),"IRoomObject")
+setlocal 10
+getlex QName(PrivateNamespace("com.sulake.room.renderer:RoomSpriteCanvas"),"_-Yd")
+getlex QName(PrivateNamespace("com.sulake.room.renderer:RoomSpriteCanvas"),"_-K12")
+equals
+not
+dup
+iftrue ofs0096
+pop
+getlex QName(PrivateNamespace("com.sulake.room.renderer:RoomSpriteCanvas"),"_-E1E")
+getlex QName(PrivateNamespace("com.sulake.room.renderer:RoomSpriteCanvas"),"_-52c")
+equals
+not
+ofs0096:
+iffalse ofs009c
+pushtrue
+setlocal2
+ofs009c:
+getlex QName(PrivateNamespace("com.sulake.room.renderer:RoomSpriteCanvas"),"_display")
+getproperty QName(PackageNamespace(""),"x")
+getlex QName(PrivateNamespace("com.sulake.room.renderer:RoomSpriteCanvas"),"_-Ib")
+equals
+not
+dup
+iftrue ofs00b6
+pop
+getlex QName(PrivateNamespace("com.sulake.room.renderer:RoomSpriteCanvas"),"_display")
+getproperty QName(PackageNamespace(""),"y")
+getlex QName(PrivateNamespace("com.sulake.room.renderer:RoomSpriteCanvas"),"_-s1V")
+equals
+not
+ofs00b6:
+dup
+iftrue ofs00c7
+pop
+getlex QName(PrivateNamespace("com.sulake.room.renderer:RoomSpriteCanvas"),"_display")
+getproperty QName(PackageNamespace(""),"scaleX")
+getlex QName(PrivateNamespace("com.sulake.room.renderer:RoomSpriteCanvas"),"displayScale")
+equals
+not
+ofs00c7:
+iffalse ofs00ef
+getlex QName(PrivateNamespace("com.sulake.room.renderer:RoomSpriteCanvas"),"_display")
+getlex QName(PrivateNamespace("com.sulake.room.renderer:RoomSpriteCanvas"),"_-Ib")
+setproperty QName(PackageNamespace(""),"x")
+getlex QName(PrivateNamespace("com.sulake.room.renderer:RoomSpriteCanvas"),"_display")
+getlex QName(PrivateNamespace("com.sulake.room.renderer:RoomSpriteCanvas"),"_-s1V")
+setproperty QName(PackageNamespace(""),"y")
+getlex QName(PrivateNamespace("com.sulake.room.renderer:RoomSpriteCanvas"),"_display")
+getlex QName(PrivateNamespace("com.sulake.room.renderer:RoomSpriteCanvas"),"displayScale")
+setproperty QName(PackageNamespace(""),"scaleX")
+getlex QName(PrivateNamespace("com.sulake.room.renderer:RoomSpriteCanvas"),"_display")
+getlex QName(PrivateNamespace("com.sulake.room.renderer:RoomSpriteCanvas"),"displayScale")
+setproperty QName(PackageNamespace(""),"scaleY")
+pushtrue
+setlocal2
+ofs00ef:
+pushbyte 0
+setlocal 4
+jump ofs0133
+ofs00f7:
+label
+getlex QName(PrivateNamespace("com.sulake.room.renderer:RoomSpriteCanvas"),"_container")
+getlocal 4
+callproperty QName(Namespace("com.sulake.room.renderer:IRoomSpriteCanvasContainer"),"getRoomObjectWithIndex"), 1
+coerce QName(PackageNamespace("com.sulake.room.object"),"IRoomObject")
+dup
+setlocal 10
+pushnull
+ifeq ofs0131
+getlex QName(PrivateNamespace("com.sulake.room.renderer:RoomSpriteCanvas"),"_container")
+getlocal 4
+callproperty QName(Namespace("com.sulake.room.renderer:IRoomSpriteCanvasContainer"),"getRoomObjectIdWithIndex"), 1
+coerce_s
+setlocal 9
+getlocal 5
+findpropstrict QName(PrivateNamespace("com.sulake.room.renderer:RoomSpriteCanvas"),"renderObject")
+getlocal 10
+getlocal 9
+getlocal1
+getlocal2
+getlocal 5
+callproperty QName(PrivateNamespace("com.sulake.room.renderer:RoomSpriteCanvas"),"renderObject"), 5
+add
+convert_i
+setlocal 5
+ofs0131:
+inclocal_i 4
+ofs0133:
+getlocal 4
+getlocal 7
+iflt ofs00f7
+getlex QName(PrivateNamespace("com.sulake.room.renderer:RoomSpriteCanvas"),"_-D2w")
+getproperty QName(PackageNamespace(""),"length")
+pushbyte 1
+ifngt ofs015a
+getlex QName(PrivateNamespace("com.sulake.room.renderer:RoomSpriteCanvas"),"_-D2w")
+pushstring "z"
+pushbyte 16
+callpropvoid QName(Namespace("http://adobe.com/AS3/2006/builtin"),"sortOn"), 2
+getlex QName(PrivateNamespace("com.sulake.room.renderer:RoomSpriteCanvas"),"_-D2w")
+callpropvoid QName(Namespace("http://adobe.com/AS3/2006/builtin"),"reverse"), 0
+ofs015a:
+getlocal 5
+getlex QName(PrivateNamespace("com.sulake.room.renderer:RoomSpriteCanvas"),"_-D2w")
+getproperty QName(PackageNamespace(""),"length")
+ifnlt ofs016e
+getlex QName(PrivateNamespace("com.sulake.room.renderer:RoomSpriteCanvas"),"_-D2w")
+getlocal 5
+callpropvoid QName(Namespace("http://adobe.com/AS3/2006/builtin"),"splice"), 1
+ofs016e:
+pushnull
+coerce QName(PackageNamespace("com.sulake.room.renderer.utils"),"_-yX")
+setlocal3
+pushbyte 0
+setlocal 4
+jump ofs01a1
+ofs017b:
+label
+getlex QName(PrivateNamespace("com.sulake.room.renderer:RoomSpriteCanvas"),"_-D2w")
+getlocal 4
+getproperty MultinameL([PrivateNamespace("com.sulake.room.renderer:RoomSpriteCanvas"),ProtectedNamespace("com.sulake.room.renderer:_-b2M"),StaticProtectedNs("com.sulake.room.renderer:_-b2M"),StaticProtectedNs("Object"),PackageNamespace("com.sulake.room.utils"),PackageNamespace("com.sulake.room.renderer"),PackageInternalNs("com.sulake.room.renderer"),PrivateNamespace("FilePrivateNS:RoomSpriteCanvas"),PackageNamespace(""),Namespace("http://adobe.com/AS3/2006/builtin")])
+getlex QName(PackageNamespace("com.sulake.room.renderer.utils"),"_-yX")
+astypelate
+coerce QName(PackageNamespace("com.sulake.room.renderer.utils"),"_-yX")
+setlocal3
+getlocal3
+pushnull
+ifeq ofs019f
+findpropstrict QName(PrivateNamespace("com.sulake.room.renderer:RoomSpriteCanvas"),"updateSprite")
+getlocal 4
+getlocal3
+callpropvoid QName(PrivateNamespace("com.sulake.room.renderer:RoomSpriteCanvas"),"updateSprite"), 2
+ofs019f:
+inclocal_i 4
+ofs01a1:
+getlocal 4
+getlocal 5
+iflt ofs017b
+findpropstrict QName(PrivateNamespace("com.sulake.room.renderer:RoomSpriteCanvas"),"cleanSprites")
+getlocal 5
+callpropvoid QName(PrivateNamespace("com.sulake.room.renderer:RoomSpriteCanvas"),"cleanSprites"), 1
+getlex QName(PackageNamespace("flash.utils"),"getTimer")
+getglobalscope
+call 0
+convert_i
+dup
+setlocal 8
+getlocal 6
+subtract
+findproperty QName(PrivateNamespace("com.sulake.room.renderer:RoomSpriteCanvas"),"_-22a")
+swap
+setproperty QName(PrivateNamespace("com.sulake.room.renderer:RoomSpriteCanvas"),"_-22a")
+findpropstrict QName(PrivateNamespace("com.sulake.room.renderer:RoomSpriteCanvas"),"calculateUpdateInterval")
+getlocal1
+callpropvoid QName(PrivateNamespace("com.sulake.room.renderer:RoomSpriteCanvas"),"calculateUpdateInterval"), 1
+getlocal1
+findproperty QName(PrivateNamespace("com.sulake.room.renderer:RoomSpriteCanvas"),"_-1J")
+swap
+setproperty QName(PrivateNamespace("com.sulake.room.renderer:RoomSpriteCanvas"),"_-1J")
+getlex QName(PrivateNamespace("com.sulake.room.renderer:RoomSpriteCanvas"),"_-Yd")
+findproperty QName(PrivateNamespace("com.sulake.room.renderer:RoomSpriteCanvas"),"_-K12")
+swap
+setproperty QName(PrivateNamespace("com.sulake.room.renderer:RoomSpriteCanvas"),"_-K12")
+getlex QName(PrivateNamespace("com.sulake.room.renderer:RoomSpriteCanvas"),"_-E1E")
+findproperty QName(PrivateNamespace("com.sulake.room.renderer:RoomSpriteCanvas"),"_-52c")
+swap
+setproperty QName(PrivateNamespace("com.sulake.room.renderer:RoomSpriteCanvas"),"_-52c")
+returnvoid
+end ; code
+end ; body
+end ; method

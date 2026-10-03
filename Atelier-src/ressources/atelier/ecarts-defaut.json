@@ -1,0 +1,5 @@
+{
+  "version": 1,
+  "explication": "Écarts par défaut des mobis muraux pour Murs › Aligner des murs. droite = pans de mur entre deux copies côte à côte, haut = pixels entre deux rangées. Un écart enregistré dans l'Atelier passe avant celui-ci.",
+  "ecarts": []
+}

@@ -1,0 +1,1564 @@
+package atelier;
+
+import extension.GPresets;
+import game.FloorState;
+import gearth.extensions.parsers.HFloorItem;
+import gearth.extensions.parsers.HWallItem;
+
+import javafx.application.Platform;
+import javafx.beans.property.SimpleIntegerProperty;
+import javafx.beans.property.SimpleStringProperty;
+import javafx.collections.FXCollections;
+import javafx.collections.ObservableList;
+import javafx.geometry.Insets;
+import javafx.geometry.Pos;
+import javafx.scene.control.*;
+import javafx.scene.control.cell.PropertyValueFactory;
+import javafx.scene.input.Clipboard;
+import javafx.scene.input.ClipboardContent;
+import javafx.scene.layout.*;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+import java.io.File;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.util.*;
+import java.util.concurrent.CountDownLatch;
+
+/**
+ * Onglet Apparts, en deux volets :
+ *   - Ma salle      : agir sur la salle courante (liste, copie Discord, retrait).
+ *                     La liste suit la salle en temps reel, sans bouton « Relire ».
+ *   - Copier appart : poser un appart enregistre dans la salle courante
+ *
+ * Le journal est partage, dans un panneau a separateur deplacable.
+ */
+public class OngletApparts {
+
+    public static class Ligne {
+        private final SimpleStringProperty nom;
+        private final SimpleIntegerProperty quantite;
+        private final String type;          // "sol" | "mur"
+        private final String origine;       // "BC" | "inventaire" | "?"
+        private final String proprietaire;  // le pseudo du poseur, ou "—"
+        public Ligne(String n, int q, String t, String o, String pr) {
+            nom = new SimpleStringProperty(n);
+            quantite = new SimpleIntegerProperty(q);
+            type = t; origine = o; proprietaire = pr;
+        }
+        public String getNom() { return nom.get(); }
+        public int getQuantite() { return quantite.get(); }
+        public String getType() { return type; }
+        public String getOrigine() { return origine; }
+        public String getProprietaire() { return proprietaire; }
+        /** Prix de la ligne (quantite comprise), en credits ; -1 inconnu. Pas dans « Copier la liste ». */
+        private long prix = -1;
+        public String getPrix() {
+            return prix < 0 ? "—" : java.text.NumberFormat.getIntegerInstance(java.util.Locale.FRANCE).format(prix) + " c";
+        }
+    }
+
+    private Label etat;
+
+    // volet « ma salle »
+    private RadioButton oTout, oBc, oInv, tTout, tSols, tMurs;
+    private TableView<Ligne> tableSalle;
+    private Label cptSalle;
+    private Ui.Voyant vInv, vBc, vFurni, vSalle;
+    private VBox blocEtat, contenuSalle, blocEtat2, contenuAppart;
+    private Ui.Voyant vInv2, vBc2, vFurni2, vSalle2;
+    private Ui.Voyant vPaquets;
+    private Label salleActuelle, salleActuelle2;
+    private ComboBox<String> choixProprio;
+    private HBox ligneProprio;
+
+    /** Choix par defaut du filtre par personne. */
+    private static final String TOUT_LE_MONDE = "Tout le monde";
+    /** Ce qu'on affiche quand le serveur n'a pas donne de poseur. */
+    private static final String INCONNU = "inconnu";
+    private TextField nomNouvelAppart;
+    private RadioButton etTout, etZone;
+    private CheckBox cpSols, cpMurs, cpWired;
+    private Label coinsLbl;
+    private volatile boolean attenteCoins = false;
+    private volatile gearth.extensions.parsers.HPoint coin1, coin2;
+    private final List<Ligne> brutSalle = new ArrayList<>();
+
+    // volet « copier un appart »
+    private ComboBox<String> choixAppart;
+    private Label cptAppart;
+    private RadioButton sInv, sBc, sBcInv, sInvBc;
+    private TableView<Ligne> tableAppart;
+    private final List<Ligne> brutAppart = new ArrayList<>();
+
+    // ------------------------------------------------------------------ UI
+
+    public Pane construire() {
+        etat = new Label("");
+        etat.setWrapText(true);
+
+        Tab t1 = new Tab("Ma salle", defiler(voletSalle()));
+        Tab t2 = new Tab("Dupliquer un appart", defiler(voletAppart()));
+        t1.setClosable(false); t2.setClosable(false);
+
+        VBox racine = Ui.sousMenu(t1, t2);
+        racine.getChildren().add(etat);
+
+        chargerListeApparts();
+        return racine;
+    }
+
+    private static ScrollPane defiler(Pane contenu) {
+        ScrollPane sp = new ScrollPane(contenu);
+        sp.setFitToWidth(true);
+        sp.setFitToHeight(true);
+        sp.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+        sp.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
+        return sp;
+    }
+
+    // -------------------------------------------------------- volet ma salle
+
+    private Pane voletSalle() {
+        cptSalle = new Label("--");
+
+        vInv = new Ui.Voyant("Inventaire");
+        vBc  = new Ui.Voyant("Catalogue BC");
+        vFurni = new Ui.Voyant("Furnidata");
+        vSalle = new Ui.Voyant("Salle");
+        vPaquets = new Ui.Voyant("Paquets");
+        demarrerVoyants();
+        demarrerSuiviSalle();
+
+        ToggleGroup origSalle = new ToggleGroup();
+        oTout = radio("Les deux", origSalle, true);
+        oBc   = radio("BC", origSalle, false);
+        oInv  = radio("Inventaire", origSalle, false);
+        for (RadioButton r : new RadioButton[]{oTout, oBc, oInv})
+            r.setOnAction(e -> filtrerSalle());
+
+        ToggleGroup typeSalle = new ToggleGroup();
+        tTout = radio("Tout", typeSalle, true);
+        tSols = radio("Sols", typeSalle, false);
+        tMurs = radio("Murs", typeSalle, false);
+        for (RadioButton r : new RadioButton[]{tTout, tSols, tMurs})
+            r.setOnAction(e -> filtrerSalle());
+
+        tableSalle = table();
+
+        Button copier = plein("Copier la liste",
+                e -> copier(tableSalle, "Ma salle"));
+        copier.getStyleClass().add("primaire");
+
+
+        choixProprio = new ComboBox<>();
+        choixProprio.setMaxWidth(Double.MAX_VALUE);
+        choixProprio.getItems().add(TOUT_LE_MONDE);
+        choixProprio.setValue(TOUT_LE_MONDE);
+        choixProprio.valueProperty().addListener((o, a, b) -> filtrerSalle());
+
+        salleActuelle = Ui.valeur("—");
+        blocEtat = Ui.bloc("État", vPaquets, vSalle, vFurni, vInv, vBc);
+
+        // Grand par defaut : la fenetre prend toute la hauteur dispo, et seul le
+        // tableau defile (la fenetre, elle, ne defile pas).
+        tableSalle.setPrefHeight(900);
+        tableSalle.setMinHeight(140);
+        VBox.setVgrow(tableSalle, Priority.ALWAYS);
+
+        // En tete : le nom de la salle en valeur, le compte juste dessous.
+        salleActuelle.setWrapText(true);
+        cptSalle.getStyleClass().add("salle-compte");
+        cptSalle.setWrapText(true);
+        VBox enTete = new VBox(2, salleActuelle, cptSalle);
+
+        // Filtres : une ligne chacun, l'intitule a gauche, sans boites imbriquees.
+        VBox filtres = new VBox(8,
+                filtre("Origine", Ui.ligne(oTout, oBc, oInv)),
+                filtre("Type", Ui.ligne(tTout, tSols, tMurs)),
+                ligneProprio = filtre("À qui", choixProprio));
+        // « À qui » seulement si les mobis de l'appart sont a plusieurs personnes
+        // (la liste contient « tout le monde » + un nom par proprietaire).
+        ligneProprio.visibleProperty().bind(javafx.beans.binding.Bindings.size(choixProprio.getItems()).greaterThan(2));
+        ligneProprio.managedProperty().bind(ligneProprio.visibleProperty());
+
+        // En haut : la salle a gauche, les filtres a droite.
+        VBox blocSalle = Ui.bloc("Salle", enTete), blocFiltres = Ui.bloc("Filtres", filtres);
+        HBox haut = new HBox(12, blocSalle, blocFiltres);
+        HBox.setHgrow(blocSalle, Priority.ALWAYS);
+        HBox.setHgrow(blocFiltres, Priority.ALWAYS);
+        blocSalle.setMaxWidth(Double.MAX_VALUE);
+        blocFiltres.setMaxWidth(Double.MAX_VALUE);
+        blocSalle.setPrefWidth(200);
+        blocFiltres.setPrefWidth(300);
+
+        VBox blocMobis = Ui.bloc("Mobis", tableSalle, copier,
+                Ui.aide("La liste suit la salle toute seule, en temps réel. "
+                        + "Copier la liste : le tableau tel qu'il est filtré, prêt à coller."));
+        // Le tableau prend toute la hauteur restante.
+        VBox.setVgrow(blocMobis, Priority.ALWAYS);
+        VBox.setVgrow(blocMobis.getChildren().get(1), Priority.ALWAYS);
+
+        contenuSalle = new VBox(12, haut, LimitesSalle.bloc(), blocMobis);
+        contenuSalle.setFillWidth(true);
+        VBox.setVgrow(contenuSalle, Priority.ALWAYS);
+
+        // Les voyants techniques (paquets, furnidata...) ne s'affichent plus :
+        // la liste se remplit d'elle-meme, et ce qui manque se voit dans le tableau.
+        VBox v = new VBox(12, contenuSalle);
+        VBox.setVgrow(contenuSalle, Priority.ALWAYS);
+        v.setFillWidth(true);
+        v.setPadding(new Insets(12, 14, 14, 14));
+        return v;
+    }
+
+    /**
+     * Voyants des prerequis : couleur et raison en clair, rafraichis chaque
+     * seconde. C'est ce qui manquait : avant, un chargement rate ne se voyait
+     * qu'au moment ou une action echouait.
+     */
+    private void demarrerVoyants() {
+        Thread t = new Thread(() -> {
+            while (true) {
+                try { majVoyants(); } catch (Throwable ignored) { }
+                try { Thread.sleep(1000); } catch (InterruptedException e) { return; }
+            }
+        }, "atelier-voyants");
+        t.setDaemon(true);
+        t.start();
+    }
+
+    private void majVoyants() {
+        GPresets gp = AtelierLauncher.gpresets();
+        if (gp == null) {
+            reglerDuo(vSalle, vSalle2, "absent", "G-Presets pas encore prêt");
+            return;
+        }
+
+        NomSalle.installer();
+        SelectionMur.installer();
+
+        long so = SelectionMur.sortants(), en = SelectionMur.entrants();
+        if (so == 0 && en == 0)
+            regler(vPaquets, "absent", "Aucun paquet reçu — l'extension n'est pas branchée au flux");
+        else
+            regler(vPaquets, "ok", so + " envoyés · " + en + " reçus");
+
+        FloorState s = gp.getFloorState();
+        boolean dansSalle = (s != null && s.inRoom());
+        if (s == null)         reglerDuo(vSalle, vSalle2, "absent", "État de salle indisponible");
+        else if (!dansSalle)   reglerDuo(vSalle, vSalle2, "absent", manqueSalle(s));
+        else {
+            // Le nom seulement : le modele (« model_a ») ne dit rien a personne.
+            String n = NomSalle.nomValide(gp);
+            reglerDuo(vSalle, vSalle2, "ok", (n == null || n.isEmpty()) ? "Dans une salle" : n);
+        }
+
+        boolean fd = false;
+        try { fd = gp.getFurniDataTools() != null && gp.getFurniDataTools().isReady(); }
+        catch (Throwable ignored) { }
+        regler(vFurni, fd ? "ok" : "attente",
+                fd ? "Noms en français disponibles" : "Téléchargement depuis habbo.fr...");
+
+        String ei = "?";
+        try { ei = String.valueOf(gp.getInventory().getState()); } catch (Throwable ignored) { }
+        if ("LOADED".equals(ei))       reglerDuo(vInv, vInv2, "ok", "Chargé");
+        else if ("LOADING".equals(ei)) reglerDuo(vInv, vInv2, "attente", "Chargement en cours...");
+        else                           reglerDuo(vInv, vInv2, "absent", "Demande automatique en cours...");
+
+        String eb = "?";
+        try { eb = String.valueOf(gp.getCatalog().getState()); } catch (Throwable ignored) { }
+        if ("COLLECTED".equals(eb))              reglerDuo(vBc, vBc2, "ok", "Chargé");
+        else if ("AWAITING_INDEX".equals(eb))    reglerDuo(vBc, vBc2, "attente", "Lecture de l'index...");
+        else if ("COLLECTING_PAGES".equals(eb))  reglerDuo(vBc, vBc2, "attente", "Lecture des pages...");
+        else                                     reglerDuo(vBc, vBc2, "absent", "Demande automatique en cours...");
+
+        // Le contenu ne doit etre masque QUE par ce qui le rend inutilisable :
+        // etre hors d'une salle. La furnidata ne change que les noms affiches, le
+        // catalogue BC que la pose depuis le BC — ce sont des degradations, pas
+        // des blocages. Exiger les trois masquait le contenu en permanence des
+        // que l'un n'arrivait jamais.
+        if (!dansSalle) {
+            entreeSalle = 0;
+        } else if (entreeSalle == 0) {
+            entreeSalle = System.currentTimeMillis();
+        }
+        // On laisse quelques secondes aux voyants, puis le contenu passe devant.
+        boolean attenteCourte = dansSalle && !fd
+                && (System.currentTimeMillis() - entreeSalle) < 8000;
+        montrerEtat(!dansSalle || attenteCourte);
+    }
+
+    /**
+     * L'etat et le contenu s'excluent : tant que tout n'est pas charge, on ne
+     * montre que les voyants ; des que c'est pret, ils disparaissent et le
+     * contenu prend toute la place. Jamais les deux a la fois.
+     */
+    private Boolean dernierEtat = null;
+
+    private void montrerEtat(boolean enAttente) {
+        if (Boolean.valueOf(enAttente).equals(dernierEtat)) return;
+        dernierEtat = enAttente;
+        Platform.runLater(() -> {
+            if (blocEtat != null) {
+                blocEtat.setVisible(false);   // les Prérequis en haut du volet le disent deja
+                blocEtat.setManaged(false);
+            }
+            if (contenuSalle != null) {
+                contenuSalle.setVisible(!enAttente);
+                contenuSalle.setManaged(!enAttente);
+            }
+            if (contenuAppart != null) {
+                contenuAppart.setVisible(!enAttente);
+                contenuAppart.setManaged(!enAttente);
+            }
+            if (blocEtat2 != null) {
+                blocEtat2.setVisible(false);
+                blocEtat2.setManaged(false);
+            }
+        });
+    }
+
+    /** Regle les deux voyants de meme role, un par volet. */
+    private static void regler(Ui.Voyant v, String niveau, String raison) {
+        if (v == null) return;
+        // Rafraichi chaque seconde : ne rien poster quand rien n'a change.
+        String cle = niveau + "|" + raison;
+        if (cle.equals(dejaRegle.put(v, cle))) return;
+        Platform.runLater(() -> v.regler(niveau, raison));
+    }
+
+    private static final Map<Ui.Voyant, String> dejaRegle =
+            java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
+
+    /**
+     * Dit CE QUI manque a inRoom(), au lieu d'un « pas dans une salle » muet.
+     * inRoom() exige furnimap + wallIdToItem + floorplan : nommer le champ nul
+     * indique quel paquet n'est pas recu.
+     */
+    private static String manqueSalle(FloorState s) {
+        java.util.List<String> manque = new java.util.ArrayList<>();
+        for (String champ : new String[]{"furnimap", "wallIdToItem", "floorplan"}) {
+            try {
+                java.lang.reflect.Field f = FloorState.class.getDeclaredField(champ);
+                f.setAccessible(true);
+                if (f.get(s) == null) manque.add(champ);
+            } catch (Throwable ignored) { }
+        }
+        if (manque.isEmpty()) return "Pas dans une salle";
+        return "Paquet(s) non reçu(s) : " + String.join(", ", manque);
+    }
+
+    private void reglerDuo(Ui.Voyant a, Ui.Voyant b, String niveau, String raison) {
+        regler(a, niveau, raison);
+        regler(b, niveau, raison);
+    }
+
+    // ----------------------------------------------------- volet copier appart
+
+    private Pane voletAppart() {
+        salleActuelle2 = Ui.valeur("—");
+
+        nomNouvelAppart = new TextField();
+        nomNouvelAppart.setPromptText("Nom de la copie (par défaut : le nom de l'appart)");
+        nomNouvelAppart.setMaxWidth(Double.MAX_VALUE);
+        nomNouvelAppart.setOnAction(e -> copierSalleVersAppart());
+
+        // --- 1. copier : l'appart entier, ou une zone (choisie dans le jeu, grille a l'appui)
+        ToggleGroup gEtendue = new ToggleGroup();
+        etTout = radio("L'appart entier", gEtendue, true);
+        etZone = radio("Une zone", gEtendue, false);
+        coinsLbl = Ui.valeur(Zone.texte());
+        Zone.ecouter(() -> coinsLbl.setText(Zone.texte()));
+        Zone.ecouter(this::suivreZone);
+        Button choisirZone = new Button("Choisir la zone dans le jeu");
+        choisirZone.setOnAction(e -> choisirZone());
+        VBox blocZone = new VBox(6, coinsLbl, choisirZone);
+        blocZone.visibleProperty().bind(etZone.selectedProperty());
+        blocZone.managedProperty().bind(blocZone.visibleProperty());
+        etZone.setOnAction(e -> { if (!Zone.definie()) choisirZone(); });
+
+        cpSols  = new CheckBox("Sols");   cpSols.setSelected(true);
+        cpMurs  = new CheckBox("Murs");   cpMurs.setSelected(true);
+        cpWired = new CheckBox("Wired");  cpWired.setSelected(true);
+
+        Button copierSalle = plein("Copier", e -> copierSalleVersAppart());
+        copierSalle.getStyleClass().add("primaire");
+
+        // --- 2. mes copies : coller, renommer, supprimer
+        choixAppart = new ComboBox<>();             // garde la selection (lue partout) ; la liste l'affiche
+        choixAppart.valueProperty().addListener((o, a, b) -> { lireAppart(); majFloor(); });
+        ListView<String> liste = new ListView<>(choixAppart.getItems());
+        liste.setPrefHeight(220);
+        liste.setPlaceholder(Ui.discret("Aucune copie pour l'instant."));
+        liste.setCellFactory(lv -> new ListCell<>() {
+            @Override protected void updateItem(String nom, boolean vide) {
+                super.updateItem(nom, vide);
+                if (vide || nom == null) { setText(null); setGraphic(null); return; }
+                Label n = new Label(nom);
+                n.setStyle("-fx-font-weight: bold;");
+                Label d = Ui.discret(resumeCopie(nom));
+                setGraphic(new VBox(1, n, d));
+                setText(null);
+            }
+        });
+        liste.getSelectionModel().selectedItemProperty().addListener((o, a, b) -> { if (b != null) choixAppart.setValue(b); });
+        choixAppart.valueProperty().addListener((o, a, b) -> {
+            if (b != null && !b.equals(liste.getSelectionModel().getSelectedItem())) liste.getSelectionModel().select(b);
+        });
+
+        cptAppart = new Label("--");
+
+        ToggleGroup source = new ToggleGroup();
+        sInv   = radio("Inventaire", source, true);
+        sBc    = radio("BC", source, false);
+        sBcInv = radio("BC, puis inventaire", source, false);
+        sInvBc = radio("Inventaire, puis BC", source, false);
+
+        avecFloor = new CheckBox("Recréer aussi le floor d'origine (pose à la même place)");
+        avecFloor.setWrapText(true);
+        avecFloor.setSelected(true);
+
+        Button poser = plein("Coller ici", e -> collerAppart());
+        poser.getStyleClass().add("primaire");
+        Button renommer = new Button("Renommer…");
+        renommer.setOnAction(e -> renommerCopie());
+        Button supprimer = new Button("Supprimer");
+        supprimer.setOnAction(e -> supprimerCopie());
+        for (Button b : new Button[]{poser, renommer, supprimer})
+            b.disableProperty().bind(liste.getSelectionModel().selectedItemProperty().isNull());
+
+        contenuAppart = new VBox(14,
+                Ui.bloc("Copier",
+                        ligne("Salle actuelle :", salleActuelle2),
+                        Ui.ligne(etTout, etZone), blocZone,
+                        Ui.ligne(cpSols, cpMurs, cpWired),
+                        nomNouvelAppart,
+                        copierSalle,
+                        Ui.aide("L'appart entier garde aussi son floor. Une zone se choisit en cliquant deux cases "
+                                + "dans le jeu (les mobis laissent passer le clic, la grille s'affiche).")),
+                Ui.bloc("Mes copies",
+                        liste,
+                        ligne("Contenu :", cptAppart),
+                        Ui.ligne(renommer, supprimer),
+                        Ui.bloc("Coller dans l'appart où je suis",
+                                new VBox(4, sInv, sInvBc, sBc, sBcInv),
+                                avecFloor,
+                                poser,
+                                Ui.aide("Sans le floor (ou pour une zone), clique dans le jeu la case du coin "
+                                        + "haut-gauche. Les mobis introuvables sont signalés et le reste est collé."))));
+        contenuAppart.setFillWidth(true);
+
+        vSalle2 = new Ui.Voyant("Salle");
+        vFurni2 = new Ui.Voyant("Furnidata");
+        vInv2   = new Ui.Voyant("Inventaire");
+        vBc2    = new Ui.Voyant("Catalogue BC");
+        blocEtat2 = Ui.bloc("État", vSalle2, vFurni2, vInv2, vBc2);
+
+        VBox v = new VBox(14, blocEtat2, contenuAppart);
+        v.setFillWidth(true);
+        v.setPadding(new Insets(12, 14, 14, 14));
+
+        surveillerDossier();
+        return v;
+    }
+
+    private CheckBox avecFloor;
+    private volatile boolean choixZone = false, deuxiemeDit = false;
+
+    /** Zone de la copie : deux clics dans le jeu, guides par des messages du personnage. */
+    private void choisirZone() {
+        choixZone = true; deuxiemeDit = false;
+        Zone.demarrerChoix();
+        InfoJeu.consigne("Choisis le premier point de la zone.");
+    }
+
+    private void suivreZone() {
+        if (!choixZone) return;
+        if (!Zone.choixEnCours()) { choixZone = false; if (Zone.definie()) InfoJeu.consigne("Zone choisie : " + Zone.largeur() + " × " + Zone.longueur() + "."); return; }
+        if (Zone.premierCoinChoisi() && !deuxiemeDit) { deuxiemeDit = true; InfoJeu.consigne("Choisis le deuxième point de la zone."); }
+    }
+
+    /** La case « floor » ne vaut que pour une copie d'appart entier (qui a son floor). */
+    private void majFloor() {
+        if (avecFloor == null) return;
+        String nom = choixAppart.getValue();
+        boolean a = false;
+        if (nom != null) try {
+            a = lirePreset(new File(dossierApparts(), nom + ".json")).has("atelierFloor");
+        } catch (Throwable ignored) { }
+        avecFloor.setDisable(!a);
+        if (!a) avecFloor.setSelected(false); else avecFloor.setSelected(true);
+    }
+
+    /** « 120 mobis · appart entier · 3 oct. 10:12 » (lu une fois par fichier et date). */
+    private final Map<String, String> resumes = new HashMap<>();
+
+    private String resumeCopie(String nom) {
+        File f = new File(dossierApparts(), nom + ".json");
+        String cle = nom + "@" + f.lastModified();
+        return resumes.computeIfAbsent(cle, k -> {
+            try {
+                JSONObject o = lirePreset(f);
+                JSONArray a = o.optJSONArray("furni"), b = o.optJSONArray("wallFurni");
+                int n = (a == null ? 0 : a.length()) + (b == null ? 0 : b.length());
+                String quand = new java.text.SimpleDateFormat("d MMM HH:mm", java.util.Locale.FRANCE).format(new Date(f.lastModified()));
+                return n + " mobi(s) · " + (o.has("atelierFloor") ? "appart entier" : "zone") + " · " + quand;
+            } catch (Throwable t) { return "illisible"; }
+        });
+    }
+
+    private void renommerCopie() {
+        String nom = choixAppart.getValue();
+        if (nom == null) return;
+        TextInputDialog d = new TextInputDialog(nom);
+        d.setTitle("Renommer la copie");
+        d.setHeaderText(null);
+        d.setContentText("Nouveau nom :");
+        d.showAndWait().ifPresent(n -> {
+            n = n.replaceAll("[<>:\"/\\\\|?*]", "-").trim();
+            if (n.isEmpty() || n.equals(nom)) return;
+            File src = new File(dossierApparts(), nom + ".json"), dest = new File(dossierApparts(), n + ".json");
+            if (dest.exists()) { note("Une copie s'appelle déjà « " + n + " »."); return; }
+            if (!src.renameTo(dest)) { note("Impossible de renommer « " + nom + " »."); return; }
+            note("« " + nom + " » renommée en « " + n + " ».");
+            final String nouveau = n;
+            chargerListeApparts();
+            Platform.runLater(() -> choixAppart.setValue(nouveau));
+        });
+    }
+
+    private void supprimerCopie() {
+        String nom = choixAppart.getValue();
+        if (nom == null) return;
+        Alert a = new Alert(Alert.AlertType.CONFIRMATION, "Supprimer la copie « " + nom + " » ? C'est définitif.",
+                ButtonType.OK, ButtonType.CANCEL);
+        a.setHeaderText(null);
+        if (a.showAndWait().orElse(ButtonType.CANCEL) != ButtonType.OK) return;
+        File f = new File(dossierApparts(), nom + ".json");
+        if (!f.delete()) { note("Impossible de supprimer « " + nom + " »."); return; }
+        note("Copie « " + nom + " » supprimée.");
+        chargerListeApparts();
+    }
+
+    /**
+     * La liste se tient a jour toute seule : on surveille la date du dossier des
+     * apparts, ce qui evite un bouton « Recharger » a cliquer apres chaque export.
+     */
+    private void surveillerDossier() {
+        Thread t = new Thread(() -> {
+            long vue = 0;
+            while (true) {
+                try {
+                    File d = dossierApparts();
+                    long m = d.exists() ? d.lastModified() : 0;
+                    if (m != vue) {
+                        boolean premier = vue == 0;
+                        vue = m;
+                        Platform.runLater(() -> {
+                            chargerListeApparts();
+                            // G-Presets garde sa propre liste : on la lui fait relire aussi.
+                            GPresets gp = AtelierLauncher.gpresets();
+                            if (!premier && gp != null) try { gp.reloadPresetsClick(null); } catch (Throwable ignored) { }
+                        });
+                    }
+                } catch (Throwable ignored) { }
+                try { Thread.sleep(2000); } catch (InterruptedException e) { return; }
+            }
+        }, "atelier-dossier-apparts");
+        t.setDaemon(true);
+        t.start();
+    }
+
+    /** Retrait : pas encore branché, mais dit exactement ce qui serait retiré. */
+    private void retirer(String quoi) {
+        GPresets gp = AtelierLauncher.gpresets();
+        if (gp == null) { note("G-Presets pas encore prêt."); return; }
+        FloorState s = gp.getFloorState();
+        if (s == null || !s.inRoom()) { note("Tu n'es pas dans une salle."); return; }
+
+        int sols = 0, murs = 0, wired = 0;
+        try {
+            if (s.getItems() != null)
+                for (HFloorItem it : s.getItems()) {
+                    String cls = cls(gp, it.getTypeId(), false);
+                    if (Wired.estWired(cls)) wired++; else sols++;
+                }
+            if (s.getWallItems() != null) murs = s.getWallItems().size();
+        } catch (Throwable ignored) { }
+
+        int n = "les murs".equals(quoi) ? murs
+              : "les sols".equals(quoi) ? sols
+              : "les wired".equals(quoi) ? wired
+              : sols + murs + wired;
+
+        note("Retirer " + quoi + " : " + n + " objet(s) concerné(s) — "
+                + "pas encore branché (il me manque le paquet de ramassage).");
+    }
+
+    /**
+     * Pose l'appart choisi dans la salle courante.
+     *
+     * On reutilise l'import de G-Presets plutot que de le reecrire : il gere
+     * deja les dalles, les hauteurs, le wired et les etats.
+     *
+     * Avant, on selectionnait l'appart dans presetListView puis on envoyait
+     * :ip. Mais une selection ne CHARGE pas l'appart — G-Presets ne le charge
+     * qu'au double-clic —, donc c'etait l'appart charge precedemment qui etait
+     * pose. Desormais on lit le fichier nous-memes et on le donne directement a
+     * l'importeur (Generateur.importer), qui verifie aussi qu'aucun import
+     * n'est deja en cours et que G-Presets est pret.
+     */
+    private void collerAppart() {
+        // Pendant le collage, chaque message va aussi dans le chat du jeu :
+        // on a les yeux sur le jeu, pas sur le volet.
+        java.util.function.Consumer<String> dire = m -> { note(m); InfoJeu.dire(m); };
+        GPresets gp = AtelierLauncher.gpresets();
+        if (gp == null) { dire.accept("G-Presets pas encore prêt."); return; }
+        String nom = choixAppart.getValue();
+        if (nom == null) { dire.accept("Choisis d'abord un appart."); return; }
+
+        FloorState s = gp.getFloorState();
+        if (s == null || !s.inRoom()) { dire.accept("Tu n'es pas dans une salle."); return; }
+
+        Generateur.Source src = sBc.isSelected()    ? Generateur.Source.BC
+                              : sInv.isSelected()   ? Generateur.Source.INVENTAIRE
+                              : sBcInv.isSelected() ? Generateur.Source.BC_PUIS_INVENTAIRE
+                              : Generateur.Source.INVENTAIRE_PUIS_BC;
+
+        new Thread(() -> {
+            try {
+                File f = new File(dossierApparts(), nom + ".json");
+                if (!f.isFile()) { dire.accept("Fichier introuvable : " + f.getName()); return; }
+                JSONObject brut = lirePreset(f);
+                extension.tools.presetconfig.PresetConfig cfg =
+                        new extension.tools.presetconfig.PresetConfig(brut);
+                JSONObject floor = brut.optJSONObject("atelierFloor");
+
+                // Une classe inconnue de la furnidata fait planter l'import de
+                // G-Presets (getFloorTypeId(...).intValue()) : on le dit avant.
+                if (furnidataPrete()) {
+                    furnidata.FurniDataTools fd = gp.getFurniDataTools();
+                    for (extension.tools.presetconfig.furni.PresetFurni pf : cfg.getFurniture())
+                        if (fd.getFloorTypeId(pf.getClassName()) == null) {
+                            dire.accept("« " + pf.getClassName() + " » inconnu de la furnidata : pose annulée.");
+                            return;
+                        }
+                }
+
+                // Une pose deja en cours : G-Presets refuserait (« Already importing »).
+                extension.tools.GPresetImporter imp = gp.getImporter();
+                try {
+                    if (imp.getState() != extension.tools.GPresetImporter.BuildingImportState.NONE) {
+                        dire.accept("Une pose est déjà en cours : attends qu'elle finisse, ou tape :abort dans le jeu.");
+                        return;
+                    }
+                } catch (Throwable ignored) { }
+
+                // Tout s'enchaine, comme pour l'Escalier : un seul clic dans le
+                // jeu (le coin), puis l'Atelier pose la dalle magique lui-meme
+                // a cote, la donne a G-Presets, et la pose demarre.
+                List<Generateur.Mobi> mobis = new ArrayList<>();
+                for (extension.tools.presetconfig.furni.PresetFurni pf : cfg.getFurniture()) {
+                    gearth.extensions.parsers.HPoint l = pf.getLocation();
+                    mobis.add(new Generateur.Mobi(pf.getClassName(), pf.getState(),
+                            l.getX(), l.getY(), l.getZ(), pf.getRotation()));
+                }
+                int n = cfg.getFurniture().size() + cfg.getWallFurniture().size();
+                gearth.extensions.parsers.HPoint racine;
+                boolean floorVoulu = avecFloor == null || avecFloor.isSelected();
+                if (floor != null && floorVoulu) {
+                    // Copie d'un appart complet : son floor d'abord, puis tout
+                    // revient a sa place d'origine, sans clic.
+                    if (!appliquerFloor(floor, dire)) return;
+                    racine = new gearth.extensions.parsers.HPoint(floor.optInt("x0", 0), floor.optInt("y0", 0));
+                } else {
+                    dire.accept("« " + nom + " » : clique dans le jeu la case où mettre le coin haut-gauche de l'appart. "
+                            + "Ton avatar ne bougera pas.");
+                    racine = Generateur.Dalle.attendreClic(120_000);
+                    if (racine == null) { dire.accept("Pas de clic dans le jeu en 2 minutes : collage annulé."); return; }
+                }
+
+                // G-Presets pose chaque mobi en racine + sa position dans le fichier
+                // (sans retrancher le minimum) : le trace se calcule pareil.
+                List<int[]> trace = Generateur.Dalle.trace(mobis, 0, 0, racine);
+                int[] depart = new int[]{racine.getX(), racine.getY()};
+                Generateur.Dalle.Pret dalle = Generateur.Dalle.preparer(gp, mobis, trace, depart, dire);
+                if (dalle == null) { Generateur.Dalle.finIgnorer(); return; }
+
+                boolean ok = Generateur.importer(gp, imp, cfg, nom, src, racine, dire,
+                        "« " + nom + " » (" + n + " mobi(s)) envoyé à G-Presets. ", dalle.ou);
+                if (ok) Generateur.Dalle.apresImport(imp, dalle.poseeParAtelier, dire);
+                else if (dalle.poseeParAtelier > 0)
+                    Generateur.Dalle.ramasser(dalle.poseeParAtelier, dire,
+                            "La pose n'a pas démarré : j'ai ramassé la dalle magique.");
+                else Generateur.Dalle.finIgnorer();
+            } catch (Throwable t) {
+                dire.accept("Pose impossible : " + t);
+            }
+        }, "atelier-coller").start();
+    }
+
+    /** Remplit un champ prive de l'export de G-Presets ; dit dans le terminal s'il manque. */
+    private static void remplir(Object cible, String champ, Object valeur) {
+        try {
+            java.lang.reflect.Field f = cible.getClass().getDeclaredField(champ);
+            f.setAccessible(true);
+            f.set(cible, valeur);
+        } catch (Throwable t) {
+            System.out.println("[Atelier] copie : champ " + champ + " inaccessible (" + t + ")");
+        }
+    }
+
+    /**
+     * Applique le floor enregistre avec l'appart (UpdateFloorProperties), puis
+     * attend que la salle se recharge avec le nouveau plan. false = abandon
+     * (la raison est dite).
+     */
+    private boolean appliquerFloor(JSONObject f, java.util.function.Consumer<String> dire) {
+        FloorModele m = FloorModele.depuisTexte(f.optString("plan", null));
+        if (m == null) { dire.accept("Floor de l'appart illisible : collage annulé."); return false; }
+        FloorState s = Salle.etat();
+        String actuel = s == null ? null : s.getRawFloorplan();
+        if (actuel != null) {
+            FloorModele a = FloorModele.depuisTexte(actuel);
+            if (a != null && a.texte().equals(m.texte())) {
+                dire.accept("Le floor est déjà le bon : je passe directement aux mobis.");
+                return true;
+            }
+        }
+        m.porteX = f.optInt("porteX", -1); m.porteY = f.optInt("porteY", -1);
+        m.porteDir = f.optInt("porteDir", 2); m.porteConnue = f.optBoolean("porteConnue", m.porteX >= 0);
+        m.hauteurMur = f.optInt("hauteurMur", -1);
+        m.epMur = f.optInt("epMur", 0); m.epSol = f.optInt("epSol", 0);
+        if (!m.porteConnue || !m.existe(m.porteX, m.porteY)) {
+            dire.accept("Porte du floor inconnue : collage annulé (recopie l'appart d'origine avec l'Atelier).");
+            return false;
+        }
+        FloorReseau.installer();
+        long t0 = System.currentTimeMillis();
+        dire.accept("J'applique le floor de l'appart (" + m.largeur + "×" + m.longueur + ") : la salle va se recharger...");
+        if (!FloorReseau.envoyerPlan(m)) { dire.accept("Envoi du floor impossible : collage annulé."); return false; }
+        for (int i = 0; i < 100; i++) {          // 15 s au plus
+            Salle.sommeil(150);
+            if (FloorReseau.erreurRecue > t0) {
+                dire.accept("Le jeu refuse le floor : " + FloorReseau.erreur + ". Collage annulé.");
+                return false;
+            }
+            FloorState e = Salle.etat();
+            String p = e == null ? null : e.getRawFloorplan();
+            FloorModele r = p == null ? null : FloorModele.depuisTexte(p);
+            if (FloorReseau.planRecu > t0 && r != null && r.texte().equals(m.texte())) {
+                Salle.sommeil(2500);              // le temps que les mobis de la salle arrivent
+                dire.accept("Floor appliqué. Je pose les mobis...");
+                return true;
+            }
+        }
+        dire.accept("Le floor n'est pas revenu du jeu en 15 s (droits de la salle ?) : collage annulé.");
+        return false;
+    }
+
+    private static void sommeil(long ms) {
+        try { Thread.sleep(ms); } catch (InterruptedException ignored) { }
+    }
+
+    /** Enregistre la salle courante comme nouvel appart. */
+    /**
+     * Enregistre la salle courante (ou une zone) comme appart, par l'export de
+     * G-Presets : mobis au sol, muraux et wired, comme « :exportpreset ». Son
+     * attemptExport (prive) est appele directement avec le rectangle et le nom,
+     * sans ses questions dans le chat. Pour un appart complet, le floor (plan,
+     * porte, murs) est ajoute au fichier sous « atelierFloor » : G-Presets
+     * n'enregistre qu'une empreinte du plan, et ignore cette cle a la relecture.
+     * Chaque etape est dite dans le volet, dans le jeu et dans le terminal.
+     */
+    private void copierSalleVersAppart() {
+        java.util.function.Consumer<String> dire = m -> { note(m); InfoJeu.dire(m); };
+        GPresets gp = AtelierLauncher.gpresets();
+        if (gp == null) { dire.accept("G-Presets pas encore prêt."); return; }
+        FloorState s = gp.getFloorState();
+        if (s == null || !s.inRoom()) { dire.accept("Tu n'es pas dans une salle."); return; }
+
+        String saisi = nomNouvelAppart.getText() == null ? "" : nomNouvelAppart.getText().trim();
+        if (saisi.isEmpty()) {
+            // A defaut, le nom de la salle : plus parlant qu'un nom genere.
+            String n = NomSalle.nomValide(gp);
+            saisi = (n == null || n.isEmpty()) ? "Sans nom" : n;
+        }
+        boolean sols = cpSols.isSelected(), murs = cpMurs.isSelected(), wired = cpWired.isSelected();
+        if (!sols && !murs && !wired) { dire.accept("Coche au moins un type à copier."); return; }
+
+        int x0, y0, lx, ly;
+        boolean complet = !etZone.isSelected();
+        if (complet) {
+            x0 = 0; y0 = 0;
+            lx = Math.max(1, s.getFloorplanWidth()); ly = Math.max(1, s.getFloorplanHeight());
+        } else {
+            if (!Zone.definie()) { choisirZone(); dire.accept("Choisis d'abord la zone : clique ses deux coins dans le jeu."); return; }
+            x0 = Zone.minX(); y0 = Zone.minY();
+            lx = Zone.largeur(); ly = Zone.longueur();
+        }
+
+        // Caracteres refuses par G-Presets dans un nom ; un nom deja pris recoit (2), (3)...
+        String base = saisi.replaceAll("[<>:\"/\\\\|?*]", "-").trim();
+        String nom = base;
+        for (int k = 2; new File(dossierApparts(), nom + ".json").exists(); k++) nom = base + " (" + k + ")";
+        final String nomFinal = nom;
+        nomNouvelAppart.setText(nomFinal);
+
+        new Thread(() -> {
+            try {
+                extension.tools.GPresetExporter exp = gp.getExporter();
+                if (exp == null) { dire.accept("Copie impossible : l'export de G-Presets n'est pas prêt."); return; }
+                if (exp.getState() != extension.tools.GPresetExporter.PresetExportState.NONE) {
+                    dire.accept("Une copie est déjà en cours dans G-Presets : attends la fin, ou tape :abort.");
+                    return;
+                }
+
+                // les cases de G-Presets suivent celles du volet
+                CountDownLatch pret = new CountDownLatch(1);
+                Platform.runLater(() -> {
+                    try {
+                        if (gp.noExportWiredCbx != null) gp.noExportWiredCbx.setSelected(!wired);
+                        if (gp.noExportWallItemsCbx != null) gp.noExportWallItemsCbx.setSelected(!murs);
+                    } finally { pret.countDown(); }
+                });
+                pret.await(5, java.util.concurrent.TimeUnit.SECONDS);
+                try {
+                    java.lang.reflect.Field f = extension.tools.GPresetExporter.class.getDeclaredField("wallOnlyExport");
+                    f.setAccessible(true);
+                    f.setBoolean(exp, !sols && murs);
+                } catch (Throwable t) { System.out.println("[Atelier] copie : wallOnlyExport inaccessible (" + t + ")"); }
+
+                String quoi = (sols ? "sols" : "") + (murs ? (sols ? " + " : "") + "murs" : "")
+                        + (wired ? " + wired" : "") + (complet ? " + floor" : "");
+                dire.accept("Copie de « " + nomFinal + " » (" + (complet ? "appart complet" : "zone " + lx + "×" + ly)
+                        + ", " + quoi + ")... ne touche pas à la salle.");
+                System.out.println("[Atelier] copie : attemptExport(\"" + nomFinal + "\", " + x0 + ", " + y0
+                        + ", " + lx + ", " + ly + ")");
+                // Ce que le parcours dans le chat (:exportpreset, deux clics, le nom)
+                // aurait rempli : la fin de l'export (apres la lecture des wired et
+                // des variables) relit les deux coins et le nom. Vides, elle
+                // plantait sur rectCorner1 null.
+                remplir(exp, "rectCorner1", new gearth.extensions.parsers.HPoint(x0, y0));
+                remplir(exp, "rectCorner2", new gearth.extensions.parsers.HPoint(x0 + lx - 1, y0 + ly - 1));
+                remplir(exp, "exportName", nomFinal);
+                java.lang.reflect.Method m = extension.tools.GPresetExporter.class.getDeclaredMethod(
+                        "attemptExport", String.class, int.class, int.class, int.class, int.class);
+                m.setAccessible(true);
+                m.invoke(exp, nomFinal, x0, y0, lx, ly);
+
+                // Fini quand le fichier est la et que l'export est revenu au repos.
+                // Les wired se lisent un par un : ca peut prendre plusieurs minutes.
+                File fichier = new File(dossierApparts(), nomFinal + ".json");
+                long debut = System.currentTimeMillis(), dernierPoint = debut;
+                while (true) {
+                    Salle.sommeil(500);
+                    boolean repos = exp.getState() == extension.tools.GPresetExporter.PresetExportState.NONE;
+                    if (repos && fichier.isFile()) { Salle.sommeil(500); break; }
+                    long ecoule = System.currentTimeMillis() - debut;
+                    if (repos && ecoule > 5000) {
+                        dire.accept("G-Presets a arrêté la copie sans écrire « " + nomFinal + " » : regarde son message dans le jeu.");
+                        return;
+                    }
+                    if (ecoule > 10 * 60_000L) { dire.accept("Copie trop longue (10 min) : abandon. Tape :abort dans le jeu."); return; }
+                    if (System.currentTimeMillis() - dernierPoint > 15_000) {
+                        dernierPoint = System.currentTimeMillis();
+                        note("Copie en cours (" + (ecoule / 1000) + " s, état G-Presets : " + exp.getState() + ")...");
+                    }
+                }
+
+                JSONObject o = new JSONObject(new String(Files.readAllBytes(fichier.toPath()), StandardCharsets.UTF_8));
+                String floor = "";
+                if (complet) {
+                    FloorReseau.installer();
+                    FloorReseau.demanderPorte();
+                    Salle.sommeil(900);
+                    FloorSession.Lecture l = FloorSession.lire();
+                    if (l.modele == null) {
+                        floor = " Floor NON copié : " + l.erreur;
+                    } else {
+                        FloorModele fm = l.modele;
+                        JSONObject f = new JSONObject();
+                        f.put("plan", fm.texte());
+                        f.put("porteX", fm.porteX); f.put("porteY", fm.porteY); f.put("porteDir", fm.porteDir);
+                        f.put("porteConnue", fm.porteConnue);
+                        f.put("hauteurMur", fm.hauteurMur);
+                        f.put("epMur", fm.epMur); f.put("epSol", fm.epSol);
+                        f.put("x0", x0); f.put("y0", y0);
+                        o.put("atelierFloor", f);
+                        Files.write(fichier.toPath(), o.toString(2).getBytes(StandardCharsets.UTF_8));
+                        floor = " Floor copié (" + fm.largeur + "×" + fm.longueur + (fm.porteConnue ? "" : ", porte inconnue") + ").";
+                    }
+                }
+                JSONArray fs = o.optJSONArray("furni"), ws = o.optJSONArray("wallFurni");
+                int nWired = 0;
+                JSONObject w = o.optJSONObject("wired");
+                if (w != null) for (String k : w.keySet()) { JSONArray a = w.optJSONArray(k); if (a != null) nWired += a.length(); }
+                dire.accept("Appart « " + nomFinal + " » enregistré : " + (fs == null ? 0 : fs.length()) + " sols, "
+                        + (ws == null ? 0 : ws.length()) + " murs, " + nWired + " réglages wired." + floor);
+            } catch (Throwable t) {
+                Throwable c = t instanceof java.lang.reflect.InvocationTargetException && t.getCause() != null ? t.getCause() : t;
+                c.printStackTrace();
+                dire.accept("Copie impossible : " + c);
+            }
+        }, "atelier-copier").start();
+    }
+
+    private String sourceChoisie() {
+        if (sBc.isSelected())    return "BC seul";
+        if (sBcInv.isSelected()) return "BC puis inventaire";
+        if (sInvBc.isSelected()) return "inventaire puis BC";
+        return "inventaire seul";
+    }
+
+    // ------------------------------------------------------------- lectures
+
+    /**
+     * Ecoute les clics au sol pour recuperer les coins d'une zone.
+     * Reconnaissance par CONTENU : un intercept par nom echoue en silence quand
+     * le nom ne se resout plus.
+     */
+    private void ecouterCoins() {
+        Thread t = new Thread(() -> {
+            boolean pose = false;
+            for (int i = 0; i < 600 && !pose; i++) {
+                GPresets gp = AtelierLauncher.gpresets();
+                if (gp != null) {
+                    try {
+                        gp.intercept(gearth.protocol.HMessage.Direction.TOSERVER, m -> {
+                            if (!attenteCoins) return;
+                            try {
+                                gearth.protocol.HPacket p =
+                                        new gearth.protocol.HPacket(m.getPacket());
+                                int taille = p.getBytesLength();
+                                if (taille < 14 || taille > 20) return;
+                                int a = p.readInteger(6), b = p.readInteger(10);
+                                if (a >= 0 && a < 200 && b >= 0 && b < 200)
+                                    coinClique(new gearth.extensions.parsers.HPoint(a, b));
+                            } catch (Throwable ignored) { }
+                        });
+                        pose = true;
+                    } catch (Throwable ignored) { }
+                }
+                if (!pose) { try { Thread.sleep(1000); } catch (InterruptedException e) { return; } }
+            }
+        }, "atelier-coins");
+        t.setDaemon(true);
+        t.start();
+    }
+
+    /** Appelé par la sélection au clic quand on attend les coins d'une zone. */
+    void coinClique(gearth.extensions.parsers.HPoint c) {
+        if (!attenteCoins || c == null) return;
+        if (coin1 == null) {
+            coin1 = c;
+            Platform.runLater(() -> coinsLbl.setText("(" + c.getX() + "," + c.getY()
+                    + ") → clique le second coin..."));
+        } else {
+            coin2 = c;
+            attenteCoins = false;
+            Platform.runLater(() -> coinsLbl.setText("(" + coin1.getX() + "," + coin1.getY()
+                    + ") → (" + c.getX() + "," + c.getY() + ")"));
+            note("Zone définie.");
+        }
+    }
+
+    /**
+     * Suit la salle en temps reel.
+     *
+     * Toutes les 300 ms, une empreinte bon marche de la salle : identifiant,
+     * nombre de mobis et somme melangee des (id, type). Elle ne bouge que si
+     * l'ENSEMBLE des mobis change (pose, retrait) : un deplacement ne change
+     * rien a la liste, donc ne coute rien. Les changements sont regroupes
+     * (350 ms de calme, 1 s au plus) : une pose de centaines de mobis met la
+     * liste a jour une fois par seconde, sans saccade. Le comptage se fait
+     * hors du fil JavaFX, avec un cache type -> nom/origine ; le tableau n'est
+     * touche que si son contenu change.
+     */
+    private void demarrerSuiviSalle() {
+        Thread t = new Thread(() -> {
+            WiredLecteur.Regroupeur reg = new WiredLecteur.Regroupeur(350, 1000);
+            int salleVue = Integer.MIN_VALUE;
+            String nomVu = null;
+            while (true) {
+                try {
+                    GPresets gp = AtelierLauncher.gpresets();
+                    FloorState s = gp == null ? null : gp.getFloorState();
+                    boolean dedans = s != null && s.inRoom();
+                    int salle = dedans ? s.getRoomId() : -1;
+                    if (salle != salleVue) { salleVue = salle; reg.forcer(); }
+                    List<HFloorItem> so = dedans ? s.getItems() : null;
+                    List<HWallItem> mu = dedans ? s.getWallItems() : null;
+                    String sig = empreinte(salle, so, mu, furnidataPrete());
+                    if (reg.tic(sig, System.currentTimeMillis())) calculerSalle(gp, so, mu, dedans);
+                    // Le nom arrive parfois apres les mobis : suivi a part, sans recalcul.
+                    String n = texteNomSalle(gp);
+                    if (!n.equals(nomVu)) { nomVu = n; Platform.runLater(this::majNomSalle); }
+                } catch (Throwable ignored) { }
+                try { Thread.sleep(300); } catch (InterruptedException e) { return; }
+            }
+        }, "atelier-suivi-salle");
+        t.setDaemon(true);
+        t.start();
+    }
+
+    /** Empreinte de l'ensemble des mobis, independante de l'ordre. Logique pure. */
+    static String empreinte(int salle, List<HFloorItem> so, List<HWallItem> mu, boolean fd) {
+        if (salle < 0) return "hors";
+        long h = 0;
+        if (so != null) for (HFloorItem it : so) h += WiredLecteur.melange(((long) it.getId() << 20) ^ it.getTypeId());
+        if (mu != null) for (HWallItem it : mu) h += WiredLecteur.melange(~(((long) it.getId() << 20) ^ it.getTypeId()));
+        return empreinte(salle, so == null ? 0 : so.size(), mu == null ? 0 : mu.size(), h, fd);
+    }
+
+    static String empreinte(int salle, int nSols, int nMurs, long somme, boolean fd) {
+        return salle + "/" + nSols + "/" + nMurs + "/" + Long.toHexString(somme) + (fd ? "/fd" : "");
+    }
+
+    /** Cache type -> {nom, origine}, cle (typeId << 1 | mur). Rempli seulement furnidata prete. */
+    private final Map<Long, String[]> cacheTypes = new java.util.concurrent.ConcurrentHashMap<>();
+
+    private String[] nomOrigine(GPresets gp, int typeId, boolean mur, boolean fd) {
+        long k = ((long) typeId << 1) | (mur ? 1 : 0);
+        String[] r = cacheTypes.get(k);
+        if (r != null) return r;
+        r = new String[]{ nom(gp, cls(gp, typeId, mur), mur), origine(gp, typeId, mur) };
+        if (fd) cacheTypes.put(k, r);
+        return r;
+    }
+
+    /** Compte la salle hors du fil JavaFX, puis met le tableau a jour. */
+    private void calculerSalle(GPresets gp, List<HFloorItem> sols, List<HWallItem> murs, boolean dedans) {
+        if (!dedans) {
+            Platform.runLater(() -> {
+                brutSalle.clear();
+                cptSalle.setText("Pas dans une salle");
+                majNomSalle();
+                majProprietaires();
+                filtrerSalle();
+            });
+            return;
+        }
+        boolean fd = furnidataPrete();
+        if (!fd) cacheTypes.clear();
+        Map<String, int[]> compte = new LinkedHashMap<>();
+        Map<String, Integer> types = new HashMap<>();   // « nom|mur » -> typeId, pour le prix
+        int nSols = 0, nMurs = 0;
+        if (sols != null) for (HFloorItem it : sols) {
+            nSols++;
+            String[] no = nomOrigine(gp, it.getTypeId(), false, fd);
+            cle(compte, no[0], no[1], poseur(it.getOwnerName()), false);
+            types.putIfAbsent(no[0] + "|sol", it.getTypeId());
+        }
+        if (murs != null) for (HWallItem it : murs) {
+            nMurs++;
+            String[] no = nomOrigine(gp, it.getTypeId(), true, fd);
+            cle(compte, no[0], no[1], poseur(it.getOwnerName()), true);
+            types.putIfAbsent(no[0] + "|mur", it.getTypeId());
+        }
+        List<Ligne> lignes = new ArrayList<>();
+        versLignes(compte, lignes);
+        Map<String, Integer> prixConnus = new HashMap<>();
+        for (Ligne l : lignes) {
+            Integer t = types.get(l.getNom() + "|" + l.getType());
+            if (t == null) continue;
+            int u = prixConnus.computeIfAbsent(l.getNom() + "|" + l.getType(),
+                    k -> OngletValeur.prixUnitaire(gp, "mur".equals(l.getType()), t));
+            if (u >= 0) l.prix = (long) u * l.getQuantite();
+        }
+        final int a = nSols, b = nMurs;
+        Platform.runLater(() -> {
+            brutSalle.clear();
+            brutSalle.addAll(lignes);
+            cptSalle.setText(a + " sols · " + b + " murs · " + (a + b) + " mobis"
+                    + (fd ? "" : " (noms techniques : furnidata en chargement)"));
+            majProprietaires();
+            filtrerSalle();
+        });
+    }
+
+    private static String texteNomSalle(GPresets gp) {
+        String n = (gp == null) ? null : NomSalle.nomValide(gp);
+        String prop = NomSalle.proprietaire();
+        return (n == null || n.isEmpty()) ? "—"
+                : (prop == null || prop.isEmpty()) ? n : n + "  —  à " + prop;
+    }
+
+    /** « Nom de la salle — à Pseudo », ou un tiret hors d'une salle. */
+    private void majNomSalle() {
+        String txt = texteNomSalle(AtelierLauncher.gpresets());
+        if (salleActuelle  != null) salleActuelle.setText(txt);
+        if (salleActuelle2 != null) salleActuelle2.setText(txt);
+    }
+
+    private void lireAppart() {
+        brutAppart.clear();
+        String nom = choixAppart.getValue();
+        if (nom == null) {
+            cptAppart.setText("--");
+            if (tableAppart != null) tableAppart.setItems(FXCollections.observableArrayList());
+            return;
+        }
+
+        JSONObject o;
+        try {
+            File f = new File(dossierApparts(), nom + ".json");
+            o = new JSONObject(new String(Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8));
+        } catch (Exception e) { note("Erreur de lecture : " + e); return; }
+
+        GPresets gp = AtelierLauncher.gpresets();
+        JSONArray sols = o.optJSONArray("furni"), murs = o.optJSONArray("wallFurni");
+        int nSols = sols == null ? 0 : sols.length(), nMurs = murs == null ? 0 : murs.length();
+        cptAppart.setText(nSols + " sols · " + nMurs + " murs · " + (nSols + nMurs) + " mobis");
+
+        Map<String, int[]> compte = new LinkedHashMap<>();
+        agreger(gp, sols, false, compte);
+        agreger(gp, murs, true, compte);
+        versLignes(compte, brutAppart);
+        // Ce tableau n'est pas (encore) affiche dans le volet : sans ce test,
+        // la lecture s'arretait ici sur une NullPointerException.
+        if (tableAppart != null) tableAppart.setItems(FXCollections.observableArrayList(brutAppart));
+
+        note("Appart « " + nom + " » : " + nSols + " sols, " + nMurs + " murs.");
+        if (!furnidataPrete()) {
+            note("Attention : furnidata pas encore chargée, noms techniques.");
+            attendreFurnidata(this::lireAppart);
+        }
+    }
+
+    private void agreger(GPresets gp, JSONArray arr, boolean mur, Map<String, int[]> compte) {
+        if (arr == null) return;
+        for (int i = 0; i < arr.length(); i++) {
+            JSONObject w = arr.optJSONObject(i);
+            if (w == null) continue;
+            String c = w.optString("className", null);
+            if (c == null || c.isEmpty()) c = w.optString("name", null);
+            Integer tid = null;
+            try {
+                furnidata.FurniDataTools fd = gp.getFurniDataTools();
+                if (fd != null && fd.isReady())
+                    tid = mur ? fd.getWallTypeId(base(c)) : fd.getFloorTypeId(base(c));
+            } catch (Throwable ignored) { }
+            // Un appart enregistre ne retient pas qui avait pose quoi.
+            cle(compte, nom(gp, base(c), mur),
+                    tid == null ? "inventaire" : origine(gp, tid, mur), "—", mur);
+        }
+    }
+
+    private static void cle(Map<String, int[]> m, String nom, String origine,
+                            String proprietaire, boolean mur) {
+        int[] c = m.computeIfAbsent(nom + "\0" + origine + "\0" + proprietaire,
+                                    k -> new int[2]);
+        c[mur ? 1 : 0]++;
+    }
+
+    /** Le pseudo du poseur tel que le serveur l'a donne, ou « inconnu ». */
+    private static String poseur(String s) {
+        return (s == null || s.trim().isEmpty()) ? INCONNU : s.trim();
+    }
+
+    private static void versLignes(Map<String, int[]> compte, List<Ligne> sortie) {
+        List<Map.Entry<String, int[]>> l = new ArrayList<>(compte.entrySet());
+        // A egalite, ordre alphabetique : stable d'une mise a jour a l'autre.
+        l.sort((a, b) -> {
+            int c = Integer.compare(b.getValue()[0] + b.getValue()[1],
+                                    a.getValue()[0] + a.getValue()[1]);
+            return c != 0 ? c : a.getKey().compareTo(b.getKey());
+        });
+        for (Map.Entry<String, int[]> e : l) {
+            String[] p = e.getKey().split("\0", 3);
+            String nom = p[0];
+            String orig = p.length > 1 ? p[1] : "?";
+            String pr   = p.length > 2 ? p[2] : "—";
+            if (e.getValue()[0] > 0)
+                sortie.add(new Ligne(nom, e.getValue()[0], "sol", orig, pr));
+            if (e.getValue()[1] > 0)
+                sortie.add(new Ligne(nom, e.getValue()[1], "mur", orig, pr));
+        }
+    }
+
+    private void filtrerSalle() {
+        String orig = oBc.isSelected() ? "BC" : oInv.isSelected() ? "inventaire" : null;
+        String type = tSols.isSelected() ? "sol" : tMurs.isSelected() ? "mur" : null;
+        String qui = choixProprio.getValue();
+        if (TOUT_LE_MONDE.equals(qui)) qui = null;
+        List<Ligne> vue = new ArrayList<>();
+        for (Ligne l : brutSalle)
+            if ((orig == null || orig.equals(l.getOrigine()))
+                    && (type == null || type.equals(l.getType()))
+                    && (qui == null || qui.equals(l.getProprietaire()))) vue.add(l);
+
+        // Mise a jour EN PLACE et seulement si quelque chose a change : le suivi
+        // en temps reel ne fait donc sauter ni l'ascenseur ni la selection.
+        if (tableSalle.getItems() == null)
+            tableSalle.setItems(FXCollections.observableArrayList());
+        ObservableList<Ligne> items = tableSalle.getItems();
+        if (memesLignes(items, vue)) return;
+
+        Ligne sel = tableSalle.getSelectionModel().getSelectedItem();
+        String choisi = sel == null ? null : cleLigne(sel, false);
+        for (int i = 0; i < vue.size(); i++) {
+            if (i < items.size()) {
+                if (!cleLigne(items.get(i), true).equals(cleLigne(vue.get(i), true))) items.set(i, vue.get(i));
+            } else items.add(vue.get(i));
+        }
+        if (items.size() > vue.size()) items.remove(vue.size(), items.size());
+
+        if (choisi != null) {
+            Ligne actuel = tableSalle.getSelectionModel().getSelectedItem();
+            if (actuel == null || !choisi.equals(cleLigne(actuel, false))) {
+                tableSalle.getSelectionModel().clearSelection();
+                for (Ligne l : items)
+                    if (choisi.equals(cleLigne(l, false))) { tableSalle.getSelectionModel().select(l); break; }
+            }
+        }
+    }
+
+    /** Cle d'une ligne : avec ou sans la quantite (la selection suit le mobi). */
+    static String cleLigne(Ligne l, boolean avecQuantite) {
+        return l.getNom() + "\0" + l.getType() + "\0" + l.getOrigine() + "\0" + l.getProprietaire()
+                + (avecQuantite ? "\0" + l.getQuantite() : "");
+    }
+
+    static boolean memesLignes(List<Ligne> a, List<Ligne> b) {
+        if (a.size() != b.size()) return false;
+        for (int i = 0; i < a.size(); i++)
+            if (!cleLigne(a.get(i), true).equals(cleLigne(b.get(i), true))) return false;
+        return true;
+    }
+
+    /**
+     * Remplit la liste des poseurs a partir de ce qui vient d'etre lu.
+     *
+     * Le choix en cours est conserve s'il existe encore : sans ca, chaque
+     * relecture automatique de la salle remettrait le filtre a zero.
+     */
+    private void majProprietaires() {
+        java.util.TreeSet<String> noms = new java.util.TreeSet<>(
+                String.CASE_INSENSITIVE_ORDER);
+        for (Ligne l : brutSalle) noms.add(l.getProprietaire());
+
+        String garde = choixProprio.getValue();
+        List<String> items = new ArrayList<>();
+        items.add(TOUT_LE_MONDE);
+        items.addAll(noms);
+
+        if (!items.equals(choixProprio.getItems())) {
+            choixProprio.getItems().setAll(items);
+            choixProprio.setValue(items.contains(garde) ? garde : TOUT_LE_MONDE);
+        }
+    }
+
+    // ------------------------------------------------------------------ noms
+
+    /**
+     * BC ou non, d'apres le drapeau isBC de la furnidata.
+     *
+     * La date d'expiration ne marchait pas : les murs posés depuis le BC ne
+     * l'ont pas toujours renseignée, et tout se retrouvait classé « inventaire ».
+     * isBC est une propriété du mobi lui-même, donc fiable.
+     */
+    private static String origine(GPresets gp, int typeId, boolean mur) {
+        try {
+            furnidata.FurniDataTools fd = gp.getFurniDataTools();
+            if (fd != null && fd.isReady()) {
+                String cls = mur ? fd.getWallItemName(typeId) : fd.getFloorItemName(typeId);
+                if (cls != null) {
+                    // FurniDetails est package-private : on passe par les
+                    // sous-classes publiques, qui heritent du champ isBC.
+                    if (mur) {
+                        furnidata.details.WallItemDetails d = fd.getWallItemDetails(cls);
+                        if (d != null) return d.isBC ? "BC" : "inventaire";
+                    } else {
+                        furnidata.details.FloorItemDetails d = fd.getFloorItemDetails(cls);
+                        if (d != null) return d.isBC ? "BC" : "inventaire";
+                    }
+                }
+            }
+        } catch (Throwable ignored) { }
+        return "inventaire";
+    }
+
+    /** L'export ajoute un index d'instance : "classe[0]", "[1]"... a retirer, sinon rien ne se regroupe. */
+    private static String base(String cls) {
+        if (cls == null) return null;
+        int i = cls.indexOf('[');
+        if (i > 0) cls = cls.substring(0, i);
+        return cls.trim();
+    }
+
+    private static String cls(GPresets gp, int typeId, boolean mur) {
+        try {
+            furnidata.FurniDataTools fd = gp.getFurniDataTools();
+            if (fd != null && fd.isReady())
+                return mur ? fd.getWallItemName(typeId) : fd.getFloorItemName(typeId);
+        } catch (Throwable ignored) { }
+        return "type " + typeId;
+    }
+
+    private static String nom(GPresets gp, String className, boolean mur) {
+        String c = base(className);
+        if (c == null || c.isEmpty()) return "(inconnu)";
+        if (gp != null) try {
+            furnidata.FurniDataTools fd = gp.getFurniDataTools();
+            if (fd != null && fd.isReady()) {
+                String n = detail(fd, c, mur);
+                if (n == null && c.contains("*"))
+                    n = detail(fd, c.substring(0, c.indexOf('*')), mur);
+                if (n != null) return n;
+            }
+        } catch (Throwable ignored) { }
+        return c;
+    }
+
+    private static String detail(furnidata.FurniDataTools fd, String c, boolean mur) {
+        try {
+            Object d = mur ? fd.getWallItemDetails(c) : fd.getFloorItemDetails(c);
+            if (d == null) return null;
+            String n = mur ? ((furnidata.details.WallItemDetails) d).name
+                           : ((furnidata.details.FloorItemDetails) d).name;
+            return (n == null || n.isEmpty()) ? null : n;
+        } catch (Throwable t) { return null; }
+    }
+
+    // --------------------------------------------------------------- Discord
+
+    /** Format demande : "- Nom xQuantite", une ligne par mobi. */
+    private void copier(TableView<Ligne> t, String titre) {
+        if (t.getItems().isEmpty()) { note("Rien à copier."); return; }
+        // Les lignes sont detaillees par type et par poseur ; pour le client on
+        // regroupe par mobi, sinon un meme meuble pose par deux personnes
+        // apparaitrait deux fois.
+        Map<String, Integer> parMobi = new LinkedHashMap<>();
+        for (Ligne l : t.getItems())
+            parMobi.merge(l.getNom(), l.getQuantite(), Integer::sum);
+
+        StringBuilder sb = new StringBuilder();
+        int total = 0;
+        for (Map.Entry<String, Integer> e : parMobi.entrySet()) {
+            sb.append("- ").append(e.getKey()).append(" x").append(e.getValue()).append('\n');
+            total += e.getValue();
+        }
+        ClipboardContent c = new ClipboardContent();
+        c.putString(sb.toString());
+        Clipboard.getSystemClipboard().setContent(c);
+        note("Liste copiée (" + titre + ") : " + parMobi.size()
+                + " lignes, " + total + " objets.");
+    }
+
+    // ------------------------------------------------------------ diagnostic
+
+    private void diagnostiquer() {
+        GPresets gp = AtelierLauncher.gpresets();
+        note("--- diagnostic ---");
+        if (gp == null) { note("G-Presets : pas embarque"); return; }
+        FloorState s = gp.getFloorState();
+        note("FloorState : " + (s == null ? "null" : "present, inRoom=" + s.inRoom()));
+        if (s != null && s.inRoom()) {
+            Map<Integer, Integer> exp = new TreeMap<>();
+            if (s.getItems() != null) for (HFloorItem i : s.getItems())
+                exp.merge(i.getSecondsToExpiration(), 1, Integer::sum);
+            if (s.getWallItems() != null) for (HWallItem i : s.getWallItems())
+                exp.merge(i.getSecondsToExpiration(), 1, Integer::sum);
+            note("  repartition de secondsToExpiration :");
+            for (Map.Entry<Integer, Integer> e : exp.entrySet())
+                note("    " + e.getKey() + " -> " + e.getValue() + " objet(s)"
+                        + (e.getKey() > 0 ? "   (compte comme BC)" : "   (compte comme inventaire)"));
+        }
+        note("Inventaire : "   + sonde(() -> String.valueOf(gp.getInventory().getState())));
+        note("Catalogue BC : " + sonde(() -> String.valueOf(gp.getCatalog().getState())));
+        note("Furnidata : "    + sonde(() -> String.valueOf(gp.furniDataReady())));
+        note("--- fin ---");
+    }
+
+    // ---------------------------------------------------------------- apparts
+
+    /**
+     * Lit un appart enregistre et complete ce qu'exige G-Presets : un appart
+     * venu d'ailleurs (ou d'une ancienne version) peut avoir des mobis sans
+     * « id » ni « name », et PresetConfig s'arrete alors sur
+     * « JSONObject["id"] not found ». Chaque mobi sans id en recoit un, au-dela
+     * des ids existants pour ne pas en doubler un (le wired s'y refere).
+     */
+    static JSONObject lirePreset(File f) throws java.io.IOException {
+        JSONObject o = new JSONObject(new String(Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8));
+        int max = 0, ajoutes = 0;
+        for (String cle : new String[]{"furni", "wallFurni"}) {
+            JSONArray a = o.optJSONArray(cle);
+            if (a == null) continue;
+            for (int i = 0; i < a.length(); i++) {
+                JSONObject m = a.optJSONObject(i);
+                if (m != null && m.has("id")) max = Math.max(max, m.optInt("id", 0));
+            }
+        }
+        for (String cle : new String[]{"furni", "wallFurni"}) {
+            JSONArray a = o.optJSONArray(cle);
+            if (a == null) continue;
+            for (int i = 0; i < a.length(); i++) {
+                JSONObject m = a.optJSONObject(i);
+                if (m == null) continue;
+                if (!m.has("id") || m.isNull("id")) { m.put("id", ++max); ajoutes++; }
+                if (!m.has("name") || m.isNull("name")) m.put("name", m.optString("className", ""));
+            }
+        }
+        if (ajoutes > 0)
+            System.out.println("[Atelier] " + f.getName() + " : " + ajoutes + " mobi(s) sans id, numérotés à la lecture.");
+        return o;
+    }
+
+    static File dossierApparts() {
+        String os = System.getProperty("os.name", "").toLowerCase();
+        if (os.contains("win")) {
+            String ad = System.getenv("APPDATA");
+            if (ad == null) ad = System.getProperty("user.home") + "/AppData/Roaming";
+            return Paths.get(ad, "G-Presets", "presets").toFile();
+        }
+        return Paths.get(System.getProperty("user.home"),
+                "Library", "Application Support", "G-Presets", "presets").toFile();
+    }
+
+    private void chargerListeApparts() {
+        // Toujours sur le fil graphique : un setAll() concurrent faisait planter
+        // ListChangeBuilder pendant que la liste etait deja en cours de mise a jour.
+        if (!Platform.isFxApplicationThread()) {
+            Platform.runLater(this::chargerListeApparts);
+            return;
+        }
+        File[] fs = dossierApparts().listFiles((d, n) -> n.endsWith(".json"));
+        List<String> noms = new ArrayList<>();
+        if (fs != null) {
+            Arrays.sort(fs, Comparator.comparing(File::getName));
+            for (File f : fs) noms.add(f.getName().substring(0, f.getName().length() - 5));
+        }
+        String garde = choixAppart.getValue();
+        choixAppart.getItems().setAll(noms);
+        if (garde != null && noms.contains(garde)) choixAppart.setValue(garde);
+        else if (!noms.isEmpty()) choixAppart.setValue(noms.get(0));
+        note(noms.size() + " appart(s) disponibles.");
+    }
+
+    // ----------------------------------------------------------------- outils
+
+    private interface Action { void faire(GPresets gp) throws Throwable; }
+    private interface Sonde  { String lire() throws Throwable; }
+
+    private void appeler(String quoi, Action a) {
+        GPresets gp = AtelierLauncher.gpresets();
+        if (gp == null) { note("G-Presets pas encore prêt."); return; }
+        try { a.faire(gp); note("Action « " + quoi + " » lancee."); }
+        catch (Throwable t) { note("ERREUR (" + quoi + ") : " + t); }
+    }
+
+    private static String sonde(Sonde s) {
+        try { return s.lire(); } catch (Throwable t) { return "erreur : " + t; }
+    }
+
+    private static boolean furnidataPrete() {
+        try {
+            GPresets gp = AtelierLauncher.gpresets();
+            return gp != null && gp.getFurniDataTools() != null && gp.getFurniDataTools().isReady();
+        } catch (Throwable t) { return false; }
+    }
+
+    private volatile long entreeSalle = 0;
+    private volatile int dernierTotalLu = -1;
+    private volatile boolean attente = false;
+
+    private void attendreFurnidata(Runnable apres) {
+        if (attente) return;
+        attente = true;
+        Thread t = new Thread(() -> {
+            for (int i = 0; i < 120 && !furnidataPrete(); i++) {
+                try { Thread.sleep(1000); } catch (InterruptedException e) { attente = false; return; }
+            }
+            attente = false;
+            if (furnidataPrete()) {
+                note("Furnidata chargée — recalcul en français.");
+                Platform.runLater(apres);
+            }
+        }, "atelier-furnidata");
+        t.setDaemon(true);
+        t.start();
+    }
+
+    private static Button plein(String texte,
+                                javafx.event.EventHandler<javafx.event.ActionEvent> h) {
+        Button b = new Button(texte);
+        b.setMaxWidth(Double.MAX_VALUE);
+        b.setOnAction(h);
+        return b;
+    }
+
+    private static RadioButton radio(String t, ToggleGroup g, boolean sel) {
+        RadioButton r = new RadioButton(t);
+        r.setToggleGroup(g);
+        r.setSelected(sel);
+        return r;
+    }
+
+    /** Une ligne de filtre : son nom a gauche (largeur fixe), le choix a droite. */
+    private static HBox filtre(String nom, javafx.scene.Node choix) {
+        Label l = Ui.etiquette(nom);
+        l.setMinWidth(62); l.setPrefWidth(62);
+        HBox h = new HBox(8, l, choix);
+        h.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
+        HBox.setHgrow(choix, Priority.ALWAYS);
+        return h;
+    }
+
+    private static javafx.scene.layout.Pane ligne(String etiquette, javafx.scene.Node... n) {
+        javafx.scene.Node[] tout = new javafx.scene.Node[n.length + 1];
+        tout[0] = Ui.etiquette(etiquette);
+        System.arraycopy(n, 0, tout, 1, n.length);
+        return Ui.ligne(tout);
+    }
+
+    private static TableView<Ligne> table() {
+        TableView<Ligne> t = new TableView<>();
+        // Colonnes proportionnelles : en colonne etroite, rien ne sort du cadre.
+        t.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
+        // Colonnes courtes a largeur FIXE (leur contenu tient toujours sur une
+        // ligne) ; « Mobi » et « À qui » se partagent le reste et passent a la
+        // ligne si besoin — jamais en dessous d'une largeur lisible.
+        TableColumn<Ligne, String> cn = new TableColumn<>("Mobi");
+        cn.setCellValueFactory(new PropertyValueFactory<>("nom"));
+        cn.setMinWidth(140); cn.setPrefWidth(200); cn.setMaxWidth(4000);
+        TableColumn<Ligne, Integer> cq = new TableColumn<>("Qté");
+        cq.setCellValueFactory(new PropertyValueFactory<>("quantite"));
+        fixe(cq, 44);
+        TableColumn<Ligne, String> ct = new TableColumn<>("Type");
+        ct.setCellValueFactory(new PropertyValueFactory<>("type"));
+        fixe(ct, 52);
+        TableColumn<Ligne, String> co = new TableColumn<>("Origine");
+        co.setCellValueFactory(new PropertyValueFactory<>("origine"));
+        fixe(co, 84);
+        TableColumn<Ligne, String> cp = new TableColumn<>("À qui");
+        cp.setCellValueFactory(new PropertyValueFactory<>("proprietaire"));
+        cp.setMinWidth(90); cp.setPrefWidth(110); cp.setMaxWidth(2000);
+        TableColumn<Ligne, String> cx = new TableColumn<>("Prix");
+        cx.setCellValueFactory(new PropertyValueFactory<>("prix"));
+        fixe(cx, 84);
+        t.getColumns().add(cn); t.getColumns().add(cq);
+        t.getColumns().add(ct); t.getColumns().add(co);
+        t.getColumns().add(cp); t.getColumns().add(cx);
+        Ui.retourALaLigne(cn); Ui.retourALaLigne(cp);
+        t.setPrefHeight(220);
+        t.setMaxSize(Double.MAX_VALUE, Double.MAX_VALUE);
+        VBox.setVgrow(t, Priority.ALWAYS);
+        return t;
+    }
+
+    private static void fixe(TableColumn<Ligne, ?> c, double l) {
+        c.setMinWidth(l); c.setPrefWidth(l); c.setMaxWidth(l);
+        c.setResizable(false);
+    }
+
+    private void note(String s) {
+        Platform.runLater(() -> etat.setText(s));
+        System.out.println("[Atelier] " + s);   // detail complet dans le terminal
+    }
+}

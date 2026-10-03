@@ -1,0 +1,57 @@
+method
+name "setViewToState"
+returns QName(PackageNamespace(""),"void")
+
+body
+maxstack 2
+localcount 2
+initscopedepth 0
+maxscopedepth 1
+
+code
+getlocal0
+pushscope
+pushbyte 0
+setlocal1
+getlex QName(PrivateNamespace("com.sulake.habbo.inventory.furni:FurniView"),"_-w14")
+callproperty QName(PackageNamespace(""),"isListInited"), 0
+iftrue ofs0018
+pushbyte 1
+setlocal1
+jump ofs003e
+ofs0018:
+getlex QName(PrivateNamespace("com.sulake.habbo.inventory.furni:FurniView"),"_-w14")
+getproperty QName(PackageNamespace(""),"furniData")
+not
+dup
+iftrue ofs0030
+pop
+getlex QName(PrivateNamespace("com.sulake.habbo.inventory.furni:FurniView"),"_-w14")
+getproperty QName(PackageNamespace(""),"furniData")
+getproperty QName(PackageNamespace(""),"length")
+pushbyte 0
+equals
+ofs0030:
+iffalse ofs003b
+pushbyte 2
+setlocal1
+jump ofs003e
+ofs003b:
+pushbyte 3
+setlocal1
+ofs003e:
+getlex QName(PrivateNamespace("com.sulake.habbo.inventory.furni:FurniView"),"_-h1X")
+getlocal1
+ifne ofs0048
+returnvoid
+ofs0048:
+getlocal1
+findproperty QName(PrivateNamespace("com.sulake.habbo.inventory.furni:FurniView"),"_-h1X")
+swap
+setproperty QName(PrivateNamespace("com.sulake.habbo.inventory.furni:FurniView"),"_-h1X")
+findpropstrict QName(PrivateNamespace("com.sulake.habbo.inventory.furni:FurniView"),"updateContainerVisibility")
+callpropvoid QName(PrivateNamespace("com.sulake.habbo.inventory.furni:FurniView"),"updateContainerVisibility"), 0
+returnvoid
+end ; code
+end ; body
+end ; method
