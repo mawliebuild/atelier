@@ -10,7 +10,7 @@ l'identique et Flash la rejetait : onglet Mobilier vide). On remplace :
   - six images d'icones globales que le jeu n'utilise nulle part (forum et
     emotions de Frank) par nos dessins.
 
-Usage : python3 construire.py [sortie.swf] [--sans icones,categories,pagination]
+Usage : python3 construire.py [sortie.swf] [--sans icones,categories,pagination,bots]
 """
 import json
 import os, re, subprocess, sys, xml.dom.minidom
@@ -150,6 +150,7 @@ RECHERCHE = "recherche" not in SANS  # la recherche du haut trouve aussi categor
 CHAMP_RECHERCHE = False  # ancien champ a gauche de Categorie (retire : une seule recherche)
 GRILLE = "grille" not in SANS  # « Voir grille » : traits autour des cases, par-dessus les mobis
 SURLIGNAGE = "surlignage" not in SANS  # lueur sur les mobis selectionnes dans les calques
+BOTS = "bots" not in SANS  # onglet Bots : menu Type (casual / service / enregistreur)
 
 # ------------------------------------------------------------------ references P-code (forme d'origine)
 FV = 'PrivateNamespace("com.sulake.habbo.inventory.furni:FurniView")'
@@ -428,6 +429,8 @@ def mise_en_page():
     if debut_grille:
         rep('<scrollable_itemgrid_vertical', debut_grille + '                    <scrollable_itemgrid_vertical')
     s = s[:debut] + seg + s[fin:]
+    if BOTS:
+        s = mise_en_page_bots(s)
     s = curseur_main(s)
     xml.dom.minidom.parseString(s.encode("utf-8"))
     chemin = os.path.join(TRAVAIL, "inventory_xml.bin")
@@ -1922,6 +1925,211 @@ def annees_inventaire():
     return chemin
 
 
+# ================================================================== onglet Bots : type
+# L'inventaire ne dit pas le type d'un bot (id, nom, devise, sexe, tenue). Le
+# catalogue, lui, decrit chaque offre de bot : produit de type « r » dont
+# l'extraParam est la tenue, et le code / nom de l'offre dit le type. Quand le
+# jeu recoit une page du catalogue, on retient « tenue -> code et nom de
+# l'offre » dans un SharedObject (« atelier_bots », garde d'une partie a
+# l'autre). Dans l'inventaire, la tenue du bot y est cherchee ; les mots-cles
+# ci-dessous donnent le type. Tenue inconnue (ou changee) : Bot casual.
+BOTS_TYPES = ["Tous les types", "Bot casual", "Bot de service", "Enregistreur de visiteurs"]
+BOTS_MOTS = {3: ["visitor", "visiteur", "logger"],                                   # Enregistreur de visiteurs
+             2: ["bartender", "service", "serveur", "serveuse", "waiter", "barman"]}  # Bot de service
+BOTS_SO = "atelier_bots"
+BV = 'PrivateNamespace("com.sulake.habbo.inventory.bots:BotsView")'
+IGW = 'Namespace("com.sulake.core.window.components:IItemGridWindow")'
+SO = 'QName(PackageNamespace("flash.net"),"SharedObject")'
+PUB = lambda n: 'QName(PackageNamespace(""),"%s")' % n
+SET_L = 'setproperty MultinameL([PackageNamespace(""),Namespace("http://adobe.com/AS3/2006/builtin")])'
+
+
+def mise_en_page_bots(s):
+    """Onglet Bots : menu Type au-dessus de la grille, la grille descend d'autant."""
+    debut = s.index('name="bots" visible="false">')
+    fin = s.index('name="preview_container"', debut)
+    seg = s[debut:fin]
+    a = '<scrollable_itemgrid_vertical x="0" y="0" width="274" height="256" params="2193" style="3" name="grid">'
+    assert seg.count(a) == 1, a
+    seg = seg.replace(a, '<dropmenu x="0" y="2" width="180" height="21" params="17" style="0" name="atelier_bot_type"/>\n'
+                      '                    ' + a.replace('y="0"', 'y="27"').replace('height="256"', 'height="229"'))
+    return s[:debut] + seg + s[fin:]
+
+
+def figure_normale(r):
+    """Registre r (tenue) -> meme tenue, en minuscules, morceaux tries (l'ordre peut changer)."""
+    return ['getlocal %d' % r, LOWER, 'pushstring "."', 'callproperty QName(%s,"split"), 1' % AS3,
+            'callproperty QName(%s,"sort"), 0' % AS3, 'pushstring "."', 'callproperty QName(%s,"join"), 1' % AS3,
+            'coerce_s', 'setlocal %d' % r]
+
+
+def avec_garde(u, code, debut, fin):
+    """Insere « code » apres le premier pushscope, entoure d'un try (catch tout) :
+    une erreur dans notre ajout ne casse jamais la methode d'origine."""
+    i = u.index("pushscope")
+    garde = ['%s:' % debut] + code + ['%s:' % fin, 'jump %s_suite' % fin,
+             '%s_err:' % fin, 'getlocal0', 'pushscope', 'pop', '%s_suite:' % fin]
+    u = u[:i + 1] + garde + u[i + 1:]
+    k = u.index("end ; code")
+    u.insert(k + 1, 'try from %s to %s target %s_err type null name null end' % (debut, fin, fin))
+    return u
+
+
+def catalogue_bots():
+    """HabboCatalog.onCatalogPage : retient la tenue de chaque offre de bot."""
+    u = list(pcode_origine("com.sulake.habbo.catalog.HabboCatalog", "onCatalogPage"))
+    im = [k for k, l in enumerate(u) if l.startswith("maxstack ")][0]
+    il = [k for k, l in enumerate(u) if l.startswith("localcount ")][0]
+    R = int(u[il].split()[1])
+    u[im] = "maxstack %d" % (int(u[im].split()[1]) + 12)
+    u[il] = "localcount %d" % (R + 10)
+    P, OFF, SOR, I, OF, PRS, J, PR, FIG, TXT = range(R, R + 10)
+    c = ['getlocal1', 'callproperty %s, 0' % PUB("getParser"), 'coerce_a', 'setlocal %d' % P,
+         'getlocal %d' % P, 'iffalse atl_k_fin',
+         'getlocal %d' % P, 'getproperty ' + PUB("offers"), 'coerce_a', 'setlocal %d' % OFF,
+         'getlocal %d' % OFF, 'iffalse atl_k_fin',
+         'pushnull', 'setlocal %d' % SOR,
+         'pushbyte 0', 'setlocal %d' % I, 'jump atl_k_t1',
+         'atl_k_b1:', 'label',
+         'getlocal %d' % OFF, 'getlocal %d' % I, MULTI_L, 'coerce_a', 'setlocal %d' % OF,
+         'getlocal %d' % OF, 'iffalse atl_k_n1',
+         'getlocal %d' % OF, 'getproperty ' + PUB("products"), 'coerce_a', 'setlocal %d' % PRS,
+         'getlocal %d' % PRS, 'iffalse atl_k_n1',
+         'pushbyte 0', 'setlocal %d' % J, 'jump atl_k_t2',
+         'atl_k_b2:', 'label',
+         'getlocal %d' % PRS, 'getlocal %d' % J, MULTI_L, 'coerce_a', 'setlocal %d' % PR,
+         'getlocal %d' % PR, 'iffalse atl_k_n2',
+         'getlocal %d' % PR, 'getproperty ' + PUB("productType"), 'pushstring "r"', 'ifne atl_k_n2',
+         'getlocal %d' % PR, 'getproperty ' + PUB("extraParam"), 'coerce_s', 'setlocal %d' % FIG,
+         'getlocal %d' % FIG, 'iffalse atl_k_n2'] + figure_normale(FIG) + [
+         'getlocal %d' % SOR, 'iftrue atl_k_so',
+         'getlex ' + SO, 'pushstring "%s"' % BOTS_SO, 'callproperty %s, 1' % PUB("getLocal"), 'coerce_a', 'setlocal %d' % SOR,
+         'atl_k_so:',
+         # texte retenu : code de l'offre + nom de l'offre (productdata)
+         'getlocal %d' % OF, 'getproperty ' + PUB("localizationId"), 'coerce_s', 'setlocal %d' % TXT,
+         'getlocal0', 'getlocal %d' % TXT, 'callproperty %s, 1' % PUB("getProductData"), 'coerce_a', 'setlocal %d' % PR,
+         'getlocal %d' % PR, 'iffalse atl_k_nm',
+         'getlocal %d' % TXT, 'pushstring " "', 'add', 'getlocal %d' % PR, 'getproperty ' + PUB("name"), 'add',
+         'coerce_s', 'setlocal %d' % TXT,
+         'atl_k_nm:',
+         'getlocal %d' % SOR, 'getproperty ' + PUB("data"), 'getlocal %d' % FIG, 'getlocal %d' % TXT, SET_L,
+         'atl_k_n2:', 'inclocal_i %d' % J,
+         'atl_k_t2:', 'getlocal %d' % J, 'getlocal %d' % PRS, LENGTH, 'iflt atl_k_b2',
+         'atl_k_n1:', 'inclocal_i %d' % I,
+         'atl_k_t1:', 'getlocal %d' % I, 'getlocal %d' % OFF, LENGTH, 'iflt atl_k_b1',
+         'getlocal %d' % SOR, 'iffalse atl_k_fin',
+         'getlocal %d' % SOR, 'callpropvoid %s, 0' % PUB("flush"),
+         'atl_k_fin:']
+    u = avec_garde(u, c, 'atl_k_deb', 'atl_k_end')
+    chemin = os.path.join(TRAVAIL, "cat-bots.pcode")
+    open(chemin, "w", encoding="utf-8").write("\n".join(u))
+    return chemin
+
+
+def bots_filtre():
+    """
+    BotsView.windowEventHandler (vide a l'origine, procedure de l'onglet) :
+    choix dans le menu Type, ou appel sans evenement (apres updateGrid) ->
+    la grille ne garde que les bots du type choisi.
+    """
+    u = list(pcode_origine("com.sulake.habbo.inventory.bots.BotsView", "windowEventHandler"))
+    assert u[7] == "maxstack 1" and u[8] == "localcount 3", (u[7], u[8])
+    u[7] = "maxstack 12"; u[8] = "localcount 13"
+    u[10] = "maxscopedepth 1"
+    Y = 'getlex QName(%s,"_-y1")' % BV
+    G = 'getlex QName(%s,"_-L1Y")' % BV
+    GI = 'getlex QName(%s,"_gridItems")' % BV
+    c = ['getlocal0', 'pushscope',
+         'getlocal1', 'iffalse atl_b_go',
+         'getlocal1', TYPE, 'pushstring "WE_SELECTED"', 'ifne atl_b_fin',
+         'getlocal2', 'iffalse atl_b_fin',
+         'getlocal2', NAME, 'pushstring "atelier_bot_type"', 'ifne atl_b_fin',
+         'atl_b_go:',
+         Y, 'iffalse atl_b_fin', G, 'iffalse atl_b_fin', GI, 'iffalse atl_b_fin',
+         Y, 'pushstring "atelier_bot_type"', FIND, 'getlex ' + X6, 'astypelate', 'coerce_a', 'setlocal 3',
+         'getlocal 3', 'iffalse atl_b_fin',
+         'getlocal 3', SEL_GET, 'convert_i', 'setlocal 4',
+         # sans evenement et « Tous » : rien a refaire
+         'getlocal1', 'iftrue atl_b_x', 'getlocal 4', 'pushbyte 0', 'ifle atl_b_fin', 'atl_b_x:',
+         'newobject 0', 'setlocal 5',
+         'getlocal 4', 'pushbyte 0', 'ifle atl_b_so',
+         'atl_b_sd:',
+         'getlex ' + SO, 'pushstring "%s"' % BOTS_SO, 'callproperty %s, 1' % PUB("getLocal"), 'getproperty ' + PUB("data"),
+         'coerce_a', 'setlocal 5',
+         'atl_b_sf:', 'jump atl_b_so',
+         'atl_b_se:', 'getlocal0', 'pushscope', 'pop',
+         'atl_b_so:',
+         G, 'callpropvoid QName(%s,"lock"), 0' % IW,
+         'pushbyte 0', 'setlocal 6', 'jump atl_b_t',
+         'atl_b_b:', 'label',
+         GI, 'getlocal 6', 'callproperty %s, 1' % PUB("getWithIndex"), 'coerce_a', 'setlocal 7',
+         'getlocal 7', 'iffalse atl_b_n',
+         'getlocal 7', 'getproperty ' + PUB("window"), 'coerce_a', 'setlocal 8',
+         'getlocal 8', 'iffalse atl_b_n',
+         G, 'getlocal 8', 'callpropvoid QName(%s,"removeGridItem"), 1' % IGW,
+         'getlocal 4', 'pushbyte 0', 'ifle atl_b_add',
+         'pushbyte 1', 'setlocal 9',
+         'getlocal 7', 'getproperty ' + PUB("data"), 'coerce_a', 'setlocal 10',
+         'getlocal 10', 'iffalse atl_b_cmp',
+         'getlocal 10', 'getproperty ' + PUB("figure"), 'coerce_s', 'setlocal 11',
+         'getlocal 11', 'iffalse atl_b_cmp'] + figure_normale(11) + [
+         'getlocal 5', 'getlocal 11', MULTI_L, 'coerce_s', 'setlocal 12',
+         'getlocal 12', 'iffalse atl_b_cmp',
+         'getlocal 12', LOWER, 'coerce_s', 'setlocal 12']
+    for t in (3, 2):
+        for mot in BOTS_MOTS[t]:
+            c += ['getlocal 12', 'pushstring "%s"' % mot, INDEXOF, 'pushbyte 0', 'ifge atl_b_t%d' % t]
+    c += ['jump atl_b_cmp',
+          'atl_b_t3:', 'pushbyte 3', 'setlocal 9', 'jump atl_b_cmp',
+          'atl_b_t2:', 'pushbyte 2', 'setlocal 9',
+          'atl_b_cmp:',
+          'getlocal 9', 'getlocal 4', 'ifne atl_b_n',
+          'atl_b_add:',
+          G, 'getlocal 8', 'callpropvoid QName(%s,"addGridItem"), 1' % IGW,
+          'atl_b_n:', 'inclocal_i 6',
+          'atl_b_t:', 'getlocal 6', GI, LENGTH, 'iflt atl_b_b',
+          G, 'callpropvoid QName(%s,"unlock"), 0' % IW,
+          'atl_b_fin:', 'returnvoid']
+    k = u.index("code")
+    assert u[k + 1] == "returnvoid" and u[k + 2] == "end ; code", u[k:k + 3]
+    u = u[:k + 1] + c + u[k + 2:]
+    k = u.index("end ; code")
+    # lecture du SharedObject protegee (fichier illisible : tout est casual)
+    u.insert(k + 1, 'try from atl_b_sd to atl_b_sf target atl_b_se type null name null end')
+    chemin = os.path.join(TRAVAIL, "bots-filtre.pcode")
+    open(chemin, "w", encoding="utf-8").write("\n".join(u))
+    return chemin
+
+
+def bots_init():
+    """BotsView.init : remplit le menu Type (« Tous les types » choisi)."""
+    u = list(pcode_origine("com.sulake.habbo.inventory.bots.BotsView", "init"))
+    im, il = u.index("maxstack 3"), u.index("localcount 3")
+    u[im] = "maxstack 10"; u[il] = "localcount 4"
+    fin = len(u) - 1 - u[::-1].index("returnvoid")
+    aj = ['getlex QName(%s,"_-y1")' % BV, 'pushstring "atelier_bot_type"', FIND, 'getlex ' + X6, 'astypelate',
+          'coerce_a', 'setlocal3', 'getlocal3', 'iffalse atl_bi', 'getlocal3']
+    aj += ['pushstring "%s"' % v for v in BOTS_TYPES]
+    aj += ['newarray %d' % len(BOTS_TYPES), POP, 'getlocal3', 'pushbyte 0', SEL_SET, 'atl_bi:']
+    u = u[:fin] + aj + u[fin:]
+    chemin = os.path.join(TRAVAIL, "bots-init.pcode")
+    open(chemin, "w", encoding="utf-8").write("\n".join(u))
+    return chemin
+
+
+def bots_update_grid():
+    """BotsView.updateGrid : a la fin, le filtre Type est reapplique (nouveaux bots)."""
+    u = list(pcode_origine("com.sulake.habbo.inventory.bots.BotsView", "updateGrid"))
+    fin = len(u) - 1 - u[::-1].index("returnvoid")
+    im = [k for k, l in enumerate(u) if l.startswith("maxstack ")][0]
+    u[im] = "maxstack %d" % max(int(u[im].split()[1]), 8)
+    u = u[:fin] + ['getlocal0', 'pushnull', 'pushnull',
+                   'callpropvoid QName(%s,"windowEventHandler"), 2' % BV] + u[fin:]
+    chemin = os.path.join(TRAVAIL, "bots-ug.pcode")
+    open(chemin, "w", encoding="utf-8").write("\n".join(u))
+    return chemin
+
+
 # ================================================================== garde-fou
 def verifier_pile(chemin):
     """
@@ -1979,6 +2187,13 @@ def main():
     if SURLIGNAGE:
         rempl += [FVIS_C, filtres_couche(), corps(FVIS_C, "updateSpriteFilters")]
         rempl += [FVIS_C, contour(), corps(FVIS_C, "updateSprites")]
+    if BOTS:
+        bv = "com.sulake.habbo.inventory.bots.BotsView"
+        rempl += [bv, bots_filtre(), corps(bv, "windowEventHandler")]
+        rempl += [bv, bots_init(), corps(bv, "init")]
+        rempl += [bv, bots_update_grid(), corps(bv, "updateGrid")]
+        hc = "com.sulake.habbo.catalog.HabboCatalog"
+        rempl += [hc, catalogue_bots(), corps(hc, "onCatalogPage")]
     if ICONES or PAGINATION:
         for ident_mac, (dessin, _) in IMAGES.items():
             rempl += [ident(SYMBOLE_IMAGE[ident_mac]), os.path.join(ICI, "dessins", dessin), "lossless2"]

@@ -472,7 +472,7 @@ public final class WiredCollage {
 
     /** Les noms des copies, la plus recente d'abord. */
     static List<String> noms() {
-        File[] fs = dossierCopies().listFiles((d, n) -> n.endsWith(".json"));
+        File[] fs = dossierCopies().listFiles((d, n) -> n.endsWith(".json") && !n.startsWith("_atelier"));
         List<File> l = fs == null ? new ArrayList<>() : new ArrayList<>(Arrays.asList(fs));
         l.sort((a, b) -> Long.compare(b.lastModified(), a.lastModified()));
         List<String> r = new ArrayList<>();

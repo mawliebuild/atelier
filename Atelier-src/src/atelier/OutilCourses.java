@@ -216,7 +216,7 @@ public class OutilCourses {
         if (!Platform.isFxApplicationThread()) { Platform.runLater(this::chargerListe); return; }
         List<String> noms = new ArrayList<>();
         try {
-            File[] fs = OngletApparts.dossierApparts().listFiles((d, n) -> n.endsWith(".json"));
+            File[] fs = OngletApparts.dossierApparts().listFiles((d, n) -> n.endsWith(".json") && !n.startsWith("_atelier"));
             if (fs != null) {
                 Arrays.sort(fs, Comparator.comparing(File::getName));
                 for (File f : fs) noms.add(f.getName().substring(0, f.getName().length() - 5));

@@ -40,27 +40,31 @@ import java.util.TreeMap;
  * --porte-connue : marque la porte devinee comme connue (porteConnue = true) ;
  *   sans cela, OngletApparts.appliquerFloor refuse de coller avec ce floor.
  *
- * Ce que la copie contient (EnregistrementCopie.assembler) : x, y = position de
- * la case moins le coin de la zone (0,0 pour un appart complet, donc positions
- * absolues dans la salle d'origine) ; z = altitude absolue de la case du mobi
- * (getTile().getZ()) ; srcAnchorFloorHeight = sol le plus bas de la zone. Au
- * collage avec floor (OngletApparts.collerAppart) : racine = (x0, y0), mobi en
- * racine + (x, y), a z - ancre + hauteur de la case (x0, y0) (0 si pas de case).
+ * Ce que la copie contient : x, y = position de la case moins le coin de la
+ * zone exportee. G-Presets « :ep all » prend le coin (0,0) : positions
+ * absolues. « :ep » avec un rectangle (souvent tout l'appart, coin sur la
+ * premiere case de sol) les rend relatives : les muraux (TOUS ceux de la salle,
+ * meme pour une zone) tombent alors a x ou y = -1 devant le coin. Un mural
+ * negatif ne dit donc PAS « zone ». z = altitude du mobi (mobis en hauteur
+ * compris : dalle magique, @altitude). Au collage avec floor
+ * (OngletApparts.collerAppart) : racine = (x0, y0), mobi en racine + (x, y),
+ * a son z d'origine.
  *
- * Reconstitution :
- *   - cases = emprise des mobis de sol (furnidata du cache disque de l'Atelier,
- *     rotation 2/6 = dimensions echangees ; 1x1 si inconnu) ;
- *   - hauteur = partie entiere du plus petit z pose sur la case, 0..35 ;
- *   - murs : un mural sur le mur gauche (« l », w=X,Y) etend la ligne Y jusqu'a
- *     X+1 ; sur le mur droit/haut (« r », w=X,Y) la colonne X jusqu'a Y+1 (le mur
- *     est sur la case vide X, comme la porte du modele a) ; entre deux muraux du
- *     meme pan, les lignes intermediaires aussi ;
- *   - trous interieurs (vides non atteignables depuis le bord) : bouches avec la
- *     hauteur la plus frequente des voisines ;
- *   - taille : roomLayout (floorplanWidth/Height) s'il existe, sinon le
- *     rectangle englobant depuis (0,0) ;
- *   - porte : sur la case vide a gauche d'une case du bord gauche, sans mobi,
- *     direction 2 (vers +x), a la hauteur de sa voisine ; porteConnue = false.
+ * Reconstitution (reconstituer, marches) :
+ *   - interieur : mur gauche = colonne XL (plus petit x des muraux « l »), mur
+ *     haut = ligne YR (plus petit y des « r ») ; sol de XL+1, YR+1 jusqu'au bout
+ *     du roomLayout (positions absolues) ou des muraux et des mobis (relatives) ;
+ *     sans roomLayout ni mural : rectangle des mobis + 1 (--zones-aussi) ;
+ *   - zone (ignoree sans --zones-aussi) : mobis sur moins de la moitie de
+ *     l'interieur en largeur ET en longueur ;
+ *   - SOL PLAT a la hauteur la plus basse observee ; une marche a h n'est
+ *     retenue que sur une zone contigue >= 6 cases (20 au-dessus de 9) dont le
+ *     mobi le plus bas est pile a h, voisines coherentes, 3 niveaux au plus ;
+ *     hauteurs isolees, non entieres, petites : ecartees (et comptees) ;
+ *   - plan decale (x0, y0) si le mur gauche/haut tombe avant 0 ;
+ *   - porte : colonne du mur gauche, ligne sans mural ni mobi devant, au milieu,
+ *     direction 2 ; porteConnue = --porte-connue.
+ *   Fichiers « _atelier... » (calque...) : jamais traites ni listes.
  *
  * Ecriture : sauvegarde « nom.json.avant-floor » (une fois), .tmp + move
  * atomique, memes droits ; proprietaire = SUDO_USER dans le dossier de
@@ -103,7 +107,8 @@ public final class OutilFloorAnciennes {
             if (!vus.add(canon)) continue;
             System.out.println();
             System.out.println("######## Dossier : " + d);
-            File[] fs = d.listFiles((x, n) -> n.endsWith(".json"));
+            // « _atelier... » : fichiers internes de l'Atelier (calque...), jamais des copies
+            File[] fs = d.listFiles((x, n) -> n.endsWith(".json") && !n.startsWith("_atelier"));
             if (fs == null) {
                 System.out.println("  Introuvable ou illisible" + (d.exists() ? " (lance avec sudo ?)" : "") + ".");
                 continue;
@@ -168,11 +173,34 @@ public final class OutilFloorAnciennes {
         String ignoree;
         boolean doute;
         final List<String> notes = new ArrayList<>();
-        int mobis, muraux, cases, bouchees, parMurs, hors, inconnus, hMin, hMax;
-        int minX, minY, maxX, maxY;
+        int mobis, muraux, cases, inconnus, base, casesBase, casesMarches, bouchees;
+        int dx, dy;
+        /** Marches retenues : hauteur -> cases (dont bouchees). */
+        final Map<Integer, Integer> marches = new TreeMap<>();
+        /** Hauteurs ecartees : texte deja forme (« 7 : 3 cases, trop petite »). */
+        final List<String> ecartees = new ArrayList<>();
     }
 
-    /** Une copie sans « atelierFloor » : reconstitue son floor (sans rien modifier). */
+    /** Taille mini d'une zone pour retenir une marche ; au-dessus de 9, zone large. */
+    static final int MARCHE_MIN = 6, MARCHE_HAUTE_MIN = 20, NIVEAUX_MAX = 3;
+
+    /** Voisinage d'une zone de marche : jusqu'a 2 cases (diagonales comprises). */
+    static final int[][] PROCHES;
+    static {
+        List<int[]> l = new ArrayList<>();
+        for (int a = -2; a <= 2; a++) for (int b = -2; b <= 2; b++) if (a != 0 || b != 0) l.add(new int[]{a, b});
+        PROCHES = l.toArray(new int[0][]);
+    }
+
+    /**
+     * Une copie sans « atelierFloor » : reconstitue son floor (sans rien modifier).
+     *
+     * Reperes (coordonnees de la copie) : mur gauche = colonne XL (plus petit x
+     * des muraux « l ») ; mur haut = ligne YR (plus petit y des muraux « r ») ;
+     * le sol commence en XL+1, YR+1. Fin : roomLayout si la copie est en
+     * coordonnees absolues (« :ep all » de G-Presets, coin (0,0) : rien de
+     * negatif), sinon le plus loin des mobis et des muraux (fin des pans).
+     */
     static Resultat reconstituer(JSONObject brut) {
         Resultat r = new Resultat();
         CopieAppart c = CopieAppart.lire(brut);
@@ -180,7 +208,7 @@ public final class OutilFloorAnciennes {
         r.muraux = c.murs.size();
         if (c.sols.isEmpty()) { r.ignoree = "aucun mobi au sol"; return r; }
 
-        // --- appart complet ou zone ?
+        // --- emprise des mobis : z le plus bas par case
         int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE, maxX = Integer.MIN_VALUE, maxY = Integer.MIN_VALUE;
         Map<Long, Double> basse = new HashMap<>();
         for (CopieAppart.MobiSol m : c.sols) {
@@ -196,103 +224,106 @@ public final class OutilFloorAnciennes {
                     maxX = Math.max(maxX, x); maxY = Math.max(maxY, y);
                 }
         }
-        r.minX = minX; r.minY = minY; r.maxX = maxX; r.maxY = maxY;
-        int mursNegatifs = 0;
-        for (CopieAppart.MobiMur w : c.murs) if (w.position.x() < 0 || w.position.y() < 0) mursNegatifs++;
-        JSONObject rl = brut.optJSONObject("roomLayout");
-        int planW = rl == null ? 0 : rl.optInt("floorplanWidth", 0), planL = rl == null ? 0 : rl.optInt("floorplanHeight", 0);
 
-        String zone = null;
-        if (mursNegatifs > 0) zone = mursNegatifs + " mural(aux) à position négative (copie d'une zone)";
-        else if (minX < 0 || minY < 0) zone = "mobis à position négative";
-        else if (minX == 0 && minY == 0) zone = "mobis collés au coin (0,0) : copie d'une zone probable";
-        if (zone != null && !zonesAussi) { r.ignoree = zone + " ; --zones-aussi pour la traiter quand même"; return r; }
-        if (zone != null) { r.doute = true; r.notes.add("ressemble à une zone : " + zone); }
-        if (minX < 0 || minY < 0) { r.ignoree = "positions négatives : impossible sans décalage"; return r; }
-        if (minX == 0 || minY == 0) { r.doute = true; r.notes.add("mobis sur la ligne/colonne 0 (zone ?)"); }
-        if (c.murs.isEmpty()) { r.doute = true; r.notes.add("aucun mural : pas de repère de mur"); }
-        if (planW > 0 && planL > 0) {
-            if (maxX >= planW || maxY >= planL) { r.doute = true; r.notes.add("mobis hors du roomLayout " + planW + "×" + planL); }
-            else if ((maxX - minX + 1) * 2 < planW && (maxY - minY + 1) * 2 < planL) {
-                r.doute = true;
-                r.notes.add("mobis sur moins de la moitié du roomLayout " + planW + "×" + planL + " (zone ?)");
-            }
-        } else r.notes.add("pas de roomLayout : taille = rectangle des mobis");
-
-        // --- cases et hauteurs
-        Map<Long, Integer> h = new HashMap<>();
-        for (Map.Entry<Long, Double> e : basse.entrySet())
-            h.put(e.getKey(), Math.max(0, Math.min(35, (int) Math.floor(e.getValue() + 1e-6))));
-        Set<Long> meublees = new java.util.HashSet<>(h.keySet());
-
-        // --- murs : etendre jusqu'au pan de mur (case vide du mur + 1)
-        Map<Integer, int[]> panL = new HashMap<>(), panR = new HashMap<>();   // X du pan -> {yMin, yMax}
+        // --- murs : pan gauche (« l », x constant), pan haut (« r », y constant)
+        Integer xl = null, yr = null;
+        int finY = Integer.MIN_VALUE, finX = Integer.MIN_VALUE;      // bout des pans
+        Set<Integer> lignesMurGauche = new java.util.HashSet<>();
+        boolean negatif = minX < 0 || minY < 0;
         for (CopieAppart.MobiMur w : c.murs) {
             PositionMur p = w.position;
-            Map<Integer, int[]> pan = p.gauche() ? panL : panR;
-            int le = p.gauche() ? p.x() : p.y(), long_ = p.gauche() ? p.y() : p.x();
-            pan.merge(le, new int[]{long_, long_}, (a, b) -> new int[]{Math.min(a[0], b[0]), Math.max(a[1], b[1])});
+            if (p.x() < 0 || p.y() < 0) negatif = true;
+            if (p.gauche()) { xl = xl == null ? p.x() : Math.min(xl, p.x()); finY = Math.max(finY, p.y()); }
+            else { yr = yr == null ? p.y() : Math.min(yr, p.y()); finX = Math.max(finX, p.x()); }
         }
-        for (Map.Entry<Integer, int[]> e : panL.entrySet()) {
-            int X = e.getKey();
-            for (int y = e.getValue()[0]; y <= e.getValue()[1]; y++) {
-                int premier = Integer.MAX_VALUE;
-                for (long k : h.keySet()) if (ky(k) == y && kx(k) > X) premier = Math.min(premier, kx(k));
-                if (premier == Integer.MAX_VALUE) continue;
-                int hv = h.get(cle(premier, y));
-                for (int x = Math.max(0, X + 1); x < premier; x++) if (h.putIfAbsent(cle(x, y), hv) == null) r.parMurs++;
-            }
-        }
-        for (Map.Entry<Integer, int[]> e : panR.entrySet()) {
-            int Y = e.getKey();
-            for (int x = e.getValue()[0]; x <= e.getValue()[1]; x++) {
-                int premier = Integer.MAX_VALUE;
-                for (long k : h.keySet()) if (kx(k) == x && ky(k) > Y) premier = Math.min(premier, ky(k));
-                if (premier == Integer.MAX_VALUE) continue;
-                int hv = h.get(cle(x, premier));
-                for (int y = Math.max(0, Y + 1); y < premier; y++) if (h.putIfAbsent(cle(x, y), hv) == null) r.parMurs++;
-            }
+        if (xl != null) for (CopieAppart.MobiMur w : c.murs) if (w.position.gauche() && w.position.x() == xl) lignesMurGauche.add(w.position.y());
+        JSONObject rl = brut.optJSONObject("roomLayout");
+        int planW = rl == null ? 0 : rl.optInt("floorplanWidth", 0), planL = rl == null ? 0 : rl.optInt("floorplanHeight", 0);
+        boolean layout = planW > 0 && planL > 0;
+        // G-Presets « :ep all » : coin (0,0), positions absolues, tout tient dans le roomLayout.
+        boolean absolu = layout && !negatif && maxX < planW && maxY < planL
+                && (xl == null || xl < planW) && (yr == null || yr < planL);
+        if (!layout && c.murs.isEmpty()) {
+            r.ignoree = "ni roomLayout ni mural : rien ne dit que c'est un appart entier";
+            if (!zonesAussi) { r.ignoree += " ; --zones-aussi pour la traiter quand même"; return r; }
+            r.ignoree = null;
+            r.doute = true;
+            r.notes.add("ni roomLayout ni mural : rectangle des mobis + 1");
         }
 
-        // --- taille du plan (coordonnees absolues : le plan part de (0,0))
-        int W = 0, L = 0;
-        for (long k : h.keySet()) { W = Math.max(W, kx(k) + 1); L = Math.max(L, ky(k) + 1); }
-        if (planW > 0 && planL > 0) {
-            for (long k : new ArrayList<>(h.keySet()))
-                if (kx(k) >= planW || ky(k) >= planL) { h.remove(k); r.hors++; }
-            W = planW; L = planL;
-        } else { W += 1; L += 1; }   // une rangee vide a droite/en bas, comme les modeles du jeu
-        if (r.hors > 0) r.notes.add(r.hors + " case(s) hors du roomLayout retirée(s)");
+        // --- interieur des murs
+        int x1 = xl != null ? Math.min(minX, xl + 1) : minX;
+        int y1 = yr != null ? Math.min(minY, yr + 1) : minY;
+        int x2, y2;
+        if (absolu) { x2 = Math.max(maxX, planW - 1); y2 = Math.max(maxY, planL - 1); }
+        else {
+            x2 = Math.max(maxX, finX);
+            y2 = Math.max(maxY, finY);
+            if (xl == null && yr == null) { x2 = maxX + 1; y2 = maxY + 1; }
+            if (layout) {   // coordonnees relatives : le roomLayout borne quand meme la taille
+                x2 = Math.max(maxX, Math.min(x2, x1 + planW - 2));
+                y2 = Math.max(maxY, Math.min(y2, y1 + planL - 2));
+            }
+        }
+        r.notes.add(absolu ? "positions absolues (coin 0,0), taille du roomLayout " + planW + "×" + planL
+                : "positions relatives (copie par rectangle" + (negatif ? ", muraux devant le coin" : "")
+                + ") : taille d'après les muraux et les mobis" + (layout ? " (roomLayout " + planW + "×" + planL + ")" : ""));
+
+        // --- appart entier ou zone : les mobis couvrent-ils l'interieur ?
+        int iw = x2 - x1 + 1, il = y2 - y1 + 1, bw = maxX - minX + 1, bl = maxY - minY + 1;
+        if (bw * 2 < iw && bl * 2 < il) {
+            String zone = "mobis sur " + bw + "×" + bl + " cases seulement, intérieur " + iw + "×" + il + " (zone ?)";
+            if (!zonesAussi) { r.ignoree = zone + " ; --zones-aussi pour la traiter quand même"; return r; }
+            r.doute = true;
+            r.notes.add(zone);
+        }
+        if (c.murs.isEmpty()) { r.doute = true; r.notes.add("aucun mural : bords gauche/haut = ceux des mobis"); }
+
+        // --- decalage : colonne de la porte (x1-1) et ligne du mur (y1-1) dans le plan
+        r.dx = Math.max(0, 1 - x1);
+        r.dy = Math.max(0, 1 - y1);
+        int W = x2 + r.dx + 1, L = y2 + r.dy + 1;
+        if (W > 128 || L > 128) { r.ignoree = "plan trop grand (" + W + "×" + L + ")"; return r; }
+
+        // --- hauteurs : sol plat a la hauteur la plus basse, marches seulement si confirmees
+        double zMin = Double.MAX_VALUE;
+        for (double z : basse.values()) zMin = Math.min(zMin, z);
+        r.base = Math.max(0, Math.min(FloorModele.HAUTEUR_MAX, (int) Math.floor(zMin + 1e-6)));
+        int[][] niv = new int[W][L];                  // -1 = pas de case, sinon hauteur
+        for (int[] col : niv) Arrays.fill(col, -1);
+        boolean[][] ancre = new boolean[W][L];
+        for (int x = x1; x <= x2; x++) for (int y = y1; y <= y2; y++) niv[x + r.dx][y + r.dy] = r.base;
+        for (long k : basse.keySet()) niv[kx(k) + r.dx][ky(k) + r.dy] = r.base;
+        marches(basse, r, niv, ancre);
+
         FloorModele m = new FloorModele(W, L);
-        for (Map.Entry<Long, Integer> e : h.entrySet()) m.h[kx(e.getKey())][ky(e.getKey())] = e.getValue();
+        for (int x = 0; x < W; x++) for (int y = 0; y < L; y++) m.h[x][y] = niv[x][y];
 
-        // --- trous interieurs
-        r.bouchees = boucherTrous(m);
-
-        // --- porte : case vide a gauche d'une case du bord gauche, sans mobi
-        int[] porte = choisirPorte(m, meublees);
-        if (porte == null) { r.ignoree = "aucune place pour la porte"; return r; }
-        if (porte[3] == 1) {        // case ajoutee pour la porte
-            m.h[porte[0]][porte[1]] = porte[2];
-        } else r.notes.add("porte posée sur une case existante (pas de place à gauche)");
-        m.porteX = porte[0]; m.porteY = porte[1]; m.porteDir = 2;
+        // --- porte : colonne du mur gauche, sur une ligne sans mural ni mobi devant, au milieu
+        int px = x1 - 1 + r.dx, py = -1, meilleur = Integer.MAX_VALUE;
+        for (int passe = 0; passe < 3 && py < 0; passe++)
+            for (int y = y1; y <= y2; y++) {
+                int yy = y + r.dy;
+                if (!m.existe(px + 1, yy) || m.existe(px, yy)) continue;
+                if (passe < 2 && basse.containsKey(cle(x1, y))) continue;
+                if (passe < 1 && (lignesMurGauche.contains(y) || m.at(px + 1, yy) != r.base)) continue;
+                int d = Math.abs(2 * y - (y1 + y2));
+                if (d < meilleur) { meilleur = d; py = yy; }
+            }
+        if (py < 0) { r.ignoree = "aucune place pour la porte"; return r; }
+        m.h[px][py] = m.at(px + 1, py);
+        m.porteX = px; m.porteY = py; m.porteDir = 2;
         m.porteConnue = porteConnue;
         m.hauteurMur = rl != null && rl.has("wallHeight") ? rl.optInt("wallHeight", -1) : -1;
         // epMur, epSol : valeurs par defaut de FloorModele (0)
 
-        // --- verification du collage (z = z - ancre + sol(0,0))
-        double ancre = c.ancre == null ? 0 : c.ancre;
-        int sol0 = m.existe(0, 0) ? m.at(0, 0) : 0;
-        if (Math.abs(sol0 - ancre) > 1e-6)
-            r.notes.add("au collage, les mobis seraient décalés de " + fmt(sol0 - ancre)
-                    + " en hauteur (srcAnchorFloorHeight " + fmt(ancre) + ", case (0,0) " + sol0 + ")");
-
         r.modele = m;
         r.cases = m.nbCases();
-        r.hMin = Integer.MAX_VALUE; r.hMax = 0;
         for (int x = 0; x < W; x++) for (int y = 0; y < L; y++)
-            if (m.h[x][y] >= 0) { r.hMin = Math.min(r.hMin, m.h[x][y]); r.hMax = Math.max(r.hMax, m.h[x][y]); }
+            if (m.h[x][y] == r.base && !(x == px && y == py)) r.casesBase++;
+        for (int v : r.marches.values()) r.casesMarches += v;
         if (r.inconnus > 0) r.notes.add(r.inconnus + " mobi(s) inconnu(s) de la furnidata : comptés 1×1");
+        if (r.dx != 0 || r.dy != 0) r.notes.add("plan décalé de " + r.dx + "," + r.dy + " (x0,y0) : les mobis gardent leur place relative");
 
         // --- meme format que OngletApparts.copierSalleVersAppart
         JSONObject f = new JSONObject();
@@ -301,76 +332,174 @@ public final class OutilFloorAnciennes {
         f.put("porteConnue", m.porteConnue);
         f.put("hauteurMur", m.hauteurMur);
         f.put("epMur", m.epMur); f.put("epSol", m.epSol);
-        f.put("x0", 0); f.put("y0", 0);
+        f.put("x0", r.dx); f.put("y0", r.dy);
         f.put("atelierFloorReconstitue", true);
         r.floor = f;
         return r;
     }
 
     /**
-     * Bouche les vides non atteignables depuis le bord (4-voisinage), avec la
-     * hauteur la plus frequente des voisines (la plus basse en cas d'egalite).
+     * Marches : une hauteur entiere h > base n'est retenue que sur une zone
+     * contigue (cases a 2 au plus l'une de l'autre) d'au moins MARCHE_MIN cases (MARCHE_HAUTE_MIN
+     * au-dessus de 9) dont le mobi le plus bas est pile a h, et dont les
+     * voisines meublees sont surtout a une hauteur entiere <= h (un plateau
+     * pose sur dalle magique est entoure de mobis a des hauteurs quelconques).
+     * Au plus NIVEAUX_MAX hauteurs (les plus etendues). Le rectangle de la
+     * marche (hors cases a mobis plus bas) et les vides enclos par elle prennent
+     * sa hauteur.
      */
-    static int boucherTrous(FloorModele m) {
-        int W = m.largeur, L = m.longueur;
-        boolean[][] dehors = new boolean[W + 2][L + 2];   // grille bordee d'un cran
-        ArrayDeque<int[]> f = new ArrayDeque<>();
-        dehors[0][0] = true;
-        f.add(new int[]{0, 0});
+    static void marches(Map<Long, Double> basse, Resultat r, int[][] niv, boolean[][] ancre) {
+        int W = niv.length, L = niv[0].length;
         int[][] v4 = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
-        while (!f.isEmpty()) {
-            int[] p = f.poll();
-            for (int[] d : v4) {
-                int a = p[0] + d[0], b = p[1] + d[1];
-                if (a < 0 || b < 0 || a >= W + 2 || b >= L + 2 || dehors[a][b]) continue;
-                if (a >= 1 && b >= 1 && a <= W && b <= L && m.h[a - 1][b - 1] >= 0) continue;
-                dehors[a][b] = true;
-                f.add(new int[]{a, b});
+        // hauteur entiere exacte du mobi le plus bas, par case (null = non entiere ou base)
+        Map<Long, Integer> entiere = new HashMap<>();
+        Map<String, Integer> nonEntieres = new TreeMap<>();
+        for (Map.Entry<Long, Double> e : basse.entrySet()) {
+            double z = e.getValue();
+            long hz = Math.round(z);
+            if (z < r.base + 1 - 1e-6) continue;
+            if (Math.abs(z - hz) < 1e-3) entiere.put(e.getKey(), (int) hz);
+            else nonEntieres.merge(fmt(Math.floor(z * 100) / 100), 1, Integer::sum);
+        }
+        // zones contigues par hauteur
+        Map<Integer, List<List<Long>>> zones = new TreeMap<>();
+        Set<Long> vu = new java.util.HashSet<>();
+        for (long k : entiere.keySet()) {
+            if (!vu.add(k)) continue;
+            int h = entiere.get(k);
+            List<Long> zone = new ArrayList<>();
+            ArrayDeque<Long> f = new ArrayDeque<>();
+            f.add(k);
+            while (!f.isEmpty()) {
+                long p = f.poll();
+                zone.add(p);
+                for (int[] d : PROCHES) {   // un trou d'une case (mobis espaces) ne coupe pas la zone
+                    long q = cle(kx(p) + d[0], ky(p) + d[1]);
+                    Integer hq = entiere.get(q);
+                    if (hq != null && hq == h && vu.add(q)) f.add(q);
+                }
+            }
+            zones.computeIfAbsent(h, x -> new ArrayList<>()).add(zone);
+        }
+        Map<Integer, List<List<Long>>> retenues = new HashMap<>();
+        Map<Integer, Integer> aire = new HashMap<>();
+        for (Map.Entry<Integer, List<List<Long>>> e : zones.entrySet()) {
+            int h = e.getKey(), petites = 0, isolees = 0, incoherentes = 0, clairsemees = 0, plusGrande = 0;
+            for (List<Long> zone : e.getValue()) {
+                plusGrande = Math.max(plusGrande, zone.size());
+                int min = h > 9 ? MARCHE_HAUTE_MIN : MARCHE_MIN;
+                if (zone.size() < min) { if (zone.size() == 1) isolees++; else petites++; continue; }
+                if (h > FloorModele.HAUTEUR_MAX) { incoherentes += zone.size(); continue; }
+                int a1 = Integer.MAX_VALUE, b1 = Integer.MAX_VALUE, a2 = Integer.MIN_VALUE, b2 = Integer.MIN_VALUE;
+                for (long p : zone) { a1 = Math.min(a1, kx(p)); b1 = Math.min(b1, ky(p)); a2 = Math.max(a2, kx(p)); b2 = Math.max(b2, ky(p)); }
+                if (zone.size() * 10 < 4 * (a2 - a1 + 1) * (b2 - b1 + 1)) { clairsemees += zone.size(); continue; }   // < 40 % : mobis epars
+                // voisines meublees hors zone : entieres et <= h pour au moins la moitie
+                Set<Long> dedans = new java.util.HashSet<>(zone);
+                int vois = 0, ok = 0;
+                for (long p : zone)
+                    for (int[] d : v4) {
+                        long q = cle(kx(p) + d[0], ky(p) + d[1]);
+                        if (dedans.contains(q) || !basse.containsKey(q)) continue;
+                        vois++;
+                        double z = basse.get(q);
+                        if (z <= h + 1e-6 && Math.abs(z - Math.rint(z)) < 1e-3) ok++;
+                    }
+                if (vois > 0 && ok * 2 < vois) { incoherentes += zone.size(); continue; }
+                retenues.computeIfAbsent(h, x -> new ArrayList<>()).add(zone);
+                aire.merge(h, zone.size(), Integer::sum);
+            }
+            int ecartees = 0;
+            for (List<Long> zone : e.getValue()) ecartees += zone.size();
+            ecartees -= aire.getOrDefault(h, 0);
+            if (ecartees > 0) {
+                List<String> pourquoi = new ArrayList<>();
+                if (isolees > 0) pourquoi.add(isolees + " isolée(s)");
+                if (petites > 0) pourquoi.add("zones trop petites (" + plusGrande + " cases au plus, " + (h > 9 ? MARCHE_HAUTE_MIN : MARCHE_MIN) + " voulues)");
+                if (clairsemees > 0) pourquoi.add(clairsemees + " case(s) trop éparses (mobis espacés, pas un sol)");
+                if (incoherentes > 0) pourquoi.add(incoherentes + " case(s) incohérentes avec les voisines");
+                r.ecartees.add(FloorModele.car(Math.min(35, h)) + " (" + h + ") : " + ecartees + " case(s), " + String.join(", ", pourquoi));
             }
         }
-        int n = 0;
-        boolean change = true;
-        while (change) {
-            change = false;
-            List<int[]> lot = new ArrayList<>();
-            for (int x = 0; x < W; x++)
-                for (int y = 0; y < L; y++) {
-                    if (m.h[x][y] >= 0 || dehors[x + 1][y + 1]) continue;
-                    Map<Integer, Integer> freq = new TreeMap<>();
-                    for (int[] d : v4) { int hv = m.at(x + d[0], y + d[1]); if (hv >= 0) freq.merge(hv, 1, Integer::sum); }
-                    if (freq.isEmpty()) continue;
-                    int best = -1, bn = 0;
-                    for (Map.Entry<Integer, Integer> e : freq.entrySet()) if (e.getValue() > bn) { best = e.getKey(); bn = e.getValue(); }
-                    lot.add(new int[]{x, y, best});
-                }
-            for (int[] t : lot) { m.h[t[0]][t[1]] = t[2]; n++; change = true; }
+        // au plus NIVEAUX_MAX hauteurs, les plus etendues
+        List<Integer> niveaux = new ArrayList<>(retenues.keySet());
+        niveaux.sort((a, b) -> aire.get(b) - aire.get(a));
+        for (int i = NIVEAUX_MAX; i < niveaux.size(); i++) {
+            int h = niveaux.get(i);
+            r.ecartees.add(FloorModele.car(Math.min(35, h)) + " (" + h + ") : " + aire.get(h) + " case(s), trop de niveaux distincts");
+            retenues.remove(h);
         }
-        return n;
+        if (!nonEntieres.isEmpty()) {
+            int n = 0;
+            for (int v : nonEntieres.values()) n += v;
+            r.ecartees.add(n + " case(s) à hauteur non entière (mobis surélevés : " + abrege(nonEntieres.keySet()) + ")");
+        }
+        int dx = r.dx, dy = r.dy;
+        for (Map.Entry<Integer, List<List<Long>>> e : retenues.entrySet())
+            for (List<Long> zone : e.getValue())
+                for (long p : zone) {
+                    niv[kx(p) + dx][ky(p) + dy] = e.getKey();
+                    ancre[kx(p) + dx][ky(p) + dy] = true;
+                    r.marches.merge(e.getKey(), 1, Integer::sum);
+                }
+        // rectangle de chaque marche : ses cases vides (ou meublees plus haut) suivent,
+        // sauf si trop de cases y portent des mobis plus bas (forme non rectangulaire)
+        for (Map.Entry<Integer, List<List<Long>>> e : retenues.entrySet())
+            for (List<Long> zone : e.getValue()) {
+                int h = e.getKey(), a1 = Integer.MAX_VALUE, b1 = Integer.MAX_VALUE, a2 = Integer.MIN_VALUE, b2 = Integer.MIN_VALUE;
+                for (long p : zone) { a1 = Math.min(a1, kx(p)); b1 = Math.min(b1, ky(p)); a2 = Math.max(a2, kx(p)); b2 = Math.max(b2, ky(p)); }
+                int plusBas = 0, aireR = (a2 - a1 + 1) * (b2 - b1 + 1);
+                for (int x = a1; x <= a2; x++) for (int y = b1; y <= b2; y++) {
+                    Double z = basse.get(cle(x, y));
+                    if (z != null && z < h - 1e-6) plusBas++;
+                }
+                if (plusBas * 10 > aireR) continue;
+                for (int x = a1; x <= a2; x++) for (int y = b1; y <= b2; y++) {
+                    int gx = x + dx, gy = y + dy;
+                    Double z = basse.get(cle(x, y));
+                    if (niv[gx][gy] < 0 || ancre[gx][gy] || (z != null && z < h - 1e-6)) continue;
+                    niv[gx][gy] = h;
+                    ancre[gx][gy] = true;
+                    r.marches.merge(h, 1, Integer::sum);
+                    r.bouchees++;
+                }
+            }
+
+        // vides enclos par une seule marche : sa hauteur
+        boolean[][] vuG = new boolean[W][L];
+        for (int x = 0; x < W; x++)
+            for (int y = 0; y < L; y++) {
+                if (vuG[x][y] || niv[x][y] < 0 || ancre[x][y]) continue;
+                List<int[]> region = new ArrayList<>();
+                Set<Integer> bords = new java.util.HashSet<>();
+                double plusBas = Double.MAX_VALUE;
+                ArrayDeque<int[]> f = new ArrayDeque<>();
+                f.add(new int[]{x, y});
+                vuG[x][y] = true;
+                while (!f.isEmpty()) {
+                    int[] p = f.poll();
+                    region.add(p);
+                    Double z = basse.get(cle(p[0] - dx, p[1] - dy));
+                    if (z != null) plusBas = Math.min(plusBas, z);
+                    for (int[] d : v4) {
+                        int a = p[0] + d[0], b = p[1] + d[1];
+                        if (a < 0 || b < 0 || a >= W || b >= L || niv[a][b] < 0) { bords.add(-1); continue; }
+                        if (ancre[a][b]) { bords.add(niv[a][b]); continue; }
+                        if (!vuG[a][b]) { vuG[a][b] = true; f.add(new int[]{a, b}); }
+                    }
+                }
+                if (bords.size() != 1 || bords.contains(-1)) continue;
+                int h = bords.iterator().next();
+                if (region.size() > r.marches.getOrDefault(h, 0) || plusBas < h - 1e-6) continue;
+                for (int[] p : region) niv[p[0]][p[1]] = h;
+                r.marches.merge(h, region.size(), Integer::sum);
+                r.bouchees += region.size();
+            }
     }
 
-    /**
-     * {x, y, hauteur, ajoutee(1/0)} : de preference la case vide juste a gauche
-     * (x-1) d'une case existante sans mobi... puis d'une case avec mobi ; a
-     * defaut, une case existante sans mobi du bord gauche. null si rien.
-     */
-    static int[] choisirPorte(FloorModele m, Set<Long> meublees) {
-        for (int passe = 0; passe < 2; passe++) {
-            List<int[]> cand = new ArrayList<>();
-            int meilleurX = Integer.MAX_VALUE;
-            for (int y = 0; y < m.longueur; y++)
-                for (int x = 1; x < m.largeur; x++) {
-                    if (!m.existe(x, y) || m.existe(x - 1, y)) continue;
-                    if (m.existe(x - 1, y - 1) || m.existe(x - 1, y + 1)) continue;   // la porte depasse seule
-                    if (passe == 0 && meublees.contains(cle(x, y))) continue;
-                    if (x - 1 < meilleurX) { meilleurX = x - 1; cand.clear(); }
-                    if (x - 1 == meilleurX) cand.add(new int[]{x - 1, y, m.at(x, y), 1});
-                }
-            if (!cand.isEmpty()) return cand.get(cand.size() / 2);
-        }
-        for (int x = 0; x < m.largeur; x++)
-            for (int y = 0; y < m.longueur; y++)
-                if (m.existe(x, y) && !m.existe(x - 1, y) && !meublees.contains(cle(x, y))) return new int[]{x, y, m.at(x, y), 0};
-        return null;
+    static String abrege(Set<String> s) {
+        List<String> l = new ArrayList<>(s);
+        if (l.size() <= 8) return String.join(" ", l);
+        return String.join(" ", l.subList(0, 8)) + " …";
     }
 
     static long cle(int x, int y) { return ((long) x << 32) ^ (y & 0xffffffffL); }
@@ -423,20 +552,22 @@ public final class OutilFloorAnciennes {
     static void resumer(String nom, Resultat r) {
         FloorModele m = r.modele;
         System.out.println("« " + nom + " »" + (r.doute ? "  [À VÉRIFIER]" : "") + " : " + r.mobis + " mobis au sol, "
-                + r.muraux + " muraux ; plan " + m.largeur + "×" + m.longueur + ", " + r.cases + " cases, hauteurs "
-                + r.hMin + ".." + r.hMax + ", " + r.bouchees + " case(s) bouchée(s), " + r.parMurs
-                + " ajoutée(s) jusqu'aux murs ; porte " + m.porteX + "," + m.porteY + " dir " + m.porteDir
-                + (m.porteConnue ? "" : " (porteConnue=false)") + ", hauteur des murs " + m.hauteurMur + ".");
+                + r.muraux + " muraux ; plan " + m.largeur + "×" + m.longueur + ", " + r.cases + " cases ; porte "
+                + m.porteX + "," + m.porteY + " dir " + m.porteDir + (m.porteConnue ? "" : " (porteConnue=false)")
+                + ", hauteur des murs " + m.hauteurMur + ".");
+        StringBuilder mar = new StringBuilder();
+        for (Map.Entry<Integer, Integer> e : r.marches.entrySet())
+            mar.append(mar.length() == 0 ? "" : ", ").append(FloorModele.car(e.getKey())).append(" : ").append(e.getValue());
+        System.out.println("  " + r.casesBase + " case(s) à hauteur de base " + r.base + " ; marches retenues : "
+                + (r.marches.isEmpty() ? "aucune" : mar + " case(s)" + (r.bouchees > 0 ? " (dont " + r.bouchees + " vides enclos)" : ""))
+                + " ; hauteurs écartées : " + (r.ecartees.isEmpty() ? "aucune" : r.ecartees.size()) + ".");
+        for (String e : r.ecartees) System.out.println("    écartée " + e);
         for (String n : r.notes) System.out.println("  ! " + n);
-        // apercu : rectangle des cases, P = porte, . = vide
-        int x1 = m.largeur, y1 = m.longueur, x2 = -1, y2 = -1;
-        for (int x = 0; x < m.largeur; x++) for (int y = 0; y < m.longueur; y++)
-            if (m.existe(x, y)) { x1 = Math.min(x1, x); y1 = Math.min(y1, y); x2 = Math.max(x2, x); y2 = Math.max(y2, y); }
-        System.out.println("  aperçu (cases " + x1 + ".." + x2 + " × " + y1 + ".." + y2 + ", P = porte) :");
-        for (int y = y1; y <= y2; y++) {
+        System.out.println("  aperçu (plan entier, x = vide, P = porte) :");
+        for (int y = 0; y < m.longueur; y++) {
             StringBuilder b = new StringBuilder("    ");
-            for (int x = x1; x <= x2; x++)
-                b.append(x == m.porteX && y == m.porteY ? 'P' : m.existe(x, y) ? FloorModele.car(Math.min(35, m.at(x, y) == 33 ? 32 : m.at(x, y))) : '.');
+            for (int x = 0; x < m.largeur; x++)
+                b.append(x == m.porteX && y == m.porteY ? 'P' : m.existe(x, y) ? FloorModele.car(Math.min(35, m.at(x, y))) : 'x');
             System.out.println(b);
         }
     }

@@ -1677,7 +1677,8 @@ public class OngletApparts {
             Platform.runLater(this::chargerListeApparts);
             return;
         }
-        File[] fs = dossierApparts().listFiles((d, n) -> n.endsWith(".json"));
+        // les fichiers internes de l'Atelier (« _atelier_… », ex. _atelier_calque) ne sont pas des copies
+        File[] fs = dossierApparts().listFiles((d, n) -> n.endsWith(".json") && !n.startsWith("_atelier"));
         List<String> noms = new ArrayList<>();
         if (fs != null) {
             Arrays.sort(fs, Comparator.comparing(File::getName));
