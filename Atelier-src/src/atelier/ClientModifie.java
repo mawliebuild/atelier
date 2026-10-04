@@ -95,7 +95,44 @@ public final class ClientModifie {
     }
 
     /** Le client modifie deja construit (livre dans le paquet) : toutes les modifs. */
-    public static File swfPret() { return new File(dossierSwf(), "travail/HabboAir-atelier.swf"); }
+    public static File swfPret() {
+        if (WINDOWS) { String v = versionWindows(); if (v != null) return new File(dossierSwf(), "travail/HabboAir-atelier-win-" + v + ".swf"); }
+        return new File(dossierSwf(), "travail/HabboAir-atelier.swf");
+    }
+
+    /**
+     * Windows : le client Habbo n'a pas la meme version que sur Mac (15 au lieu de 16).
+     * Le paquet fournit, pour chaque version Windows prevue, l'original
+     * (origines/HabboAir-win-N.swf) et sa version modifiee (travail/HabboAir-atelier-win-N.swf).
+     * On prend la version dont l'un ou l'autre est identique au client installe ;
+     * a defaut, la plus recente fournie.
+     */
+    private static volatile String versionWin = null;
+
+    static String versionWindows() {
+        if (versionWin != null) return versionWin;
+        File[] l = new File(dossierSwf(), "origines").listFiles((d, n) -> n.matches("HabboAir-win-\\d+\\.swf"));
+        if (l == null || l.length == 0) return null;
+        String recente = null;
+        for (File o : l) {
+            String v = o.getName().replaceAll("\\D", "");
+            if (recente == null || Integer.parseInt(v) > Integer.parseInt(recente)) recente = v;
+        }
+        File[] dossiers = new File(dossierLauncher(), "downloads/air").listFiles(File::isDirectory);
+        if (dossiers != null) for (File d : dossiers) {
+            File swf = new File(d, "HabboAir.swf");
+            if (!swf.isFile()) swf = chercher(d, "HabboAir.swf", 4);
+            if (swf == null) continue;
+            String e = empreinte(swf);
+            for (File o : l) {
+                String v = o.getName().replaceAll("\\D", "");
+                if (e != null && (e.equals(empreinte(o))
+                        || e.equals(empreinte(new File(dossierSwf(), "travail/HabboAir-atelier-win-" + v + ".swf")))))
+                    return versionWin = v;
+            }
+        }
+        return versionWin = recente;
+    }
 
     /** Le client installe est-il celui pour lequel les modifs sont faites (d'origine ou deja modifie par nous) ? */
     public static boolean clientPrevu() {
@@ -227,6 +264,7 @@ public final class ClientModifie {
     }
 
     public static File swfOrigine() {
+        if (WINDOWS) { String v = versionWindows(); if (v != null) return new File(dossierSwf(), "origines/HabboAir-win-" + v + ".swf"); }
         return new File(dossierSwf(), "Habbo.app.origine/Contents/Resources/HabboAir.swf");
     }
 
@@ -380,6 +418,7 @@ public final class ClientModifie {
         c.add(python());
         c.add(new File(dossierSwf(), "construire.py").getPath());
         c.add(swfConstruit().getPath());
+        if (WINDOWS) { c.add("--origine"); c.add(swfOrigine().getPath()); }
         if (!sans.isEmpty()) { c.add("--sans"); c.add(String.join(",", sans)); }
         return lancer(c, ligne);
     }

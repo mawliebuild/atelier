@@ -44,8 +44,101 @@ i = 0
 while i < len(args):
     if args[i] == "--sans":
         SANS |= set(x for x in args[i + 1].split(",") if x); i += 2
+    elif args[i] == "--origine":
+        ORIGINE = os.path.abspath(args[i + 1]); i += 2
     else:
         SORTIE = os.path.abspath(args[i]); i += 1
+# ------------------------------------------------------------------ version du client
+# Le meme code de jeu existe en plusieurs versions (Mac 16, Windows 15...) : memes
+# classes, memes noms, mais d'autres numeros internes (corps de methodes, images).
+# On les retrouve dans le SWF d'origine choisi, par leur nom ; tout est mis en
+# cache par empreinte du fichier.
+import hashlib
+
+def _empreinte(f):
+    h = hashlib.sha256()
+    with open(f, "rb") as x:
+        for b in iter(lambda: x.read(1 << 20), b""):
+            h.update(b)
+    return h.hexdigest()[:12]
+
+CACHE = os.path.join(TRAVAIL, "origines", _empreinte(ORIGINE))
+
+
+def _ffdec(*a):
+    subprocess.run([JAVA, "-Xmx6g", "-jar", FFDEC] + list(a), capture_output=True, text=True)
+
+
+def _export_classe(classe, forme):
+    d = os.path.join(CACHE, forme, re.sub(r"[^A-Za-z0-9_.-]", "_", classe))
+    if not os.path.isdir(d) or not any(f.endswith((".as", ".pcode")) for _, _, l in os.walk(d) for f in l):
+        if forme == "as":
+            _ffdec("-config", "showMethodBodyId=true", "-selectclass", classe, "-export", "script", d, ORIGINE)
+        else:
+            _ffdec("-format", "script:pcode", "-selectclass", classe, "-export", "script", d, ORIGINE)
+    for racine, _, l in os.walk(d):
+        for f in l:
+            if f.endswith((".as", ".pcode")):
+                return os.path.join(racine, f)
+    sys.exit("Classe introuvable dans le client : %s" % classe)
+
+
+def corps(classe, methode):
+    """Numero du corps de la methode dans ce client (lu dans l'export avec showMethodBodyId)."""
+    l = open(_export_classe(classe, "as"), encoding="utf-8").read().split("\n")
+    for k, x in enumerate(l):
+        if re.search(r"function (get |set )?%s\(" % re.escape(methode), x):
+            for y in l[k:k + 4]:
+                m = re.search(r"method body index: (\d+)", y)
+                if m:
+                    return m.group(1)
+    sys.exit("Methode introuvable : %s.%s" % (classe, methode))
+
+
+def pcode_origine(classe, methode):
+    """Le P-code d'origine d'une methode (bloc « method ... end ; method »), lignes sans retrait."""
+    l = [x.strip() for x in open(_export_classe(classe, "pcode"), encoding="utf-8").read().split("\n")]
+    for k in range(1, len(l)):
+        if l[k] == 'name "%s"' % methode and l[k - 1] == "method":
+            fin = l.index("end ; method", k)
+            return l[k - 1:fin + 1]
+    sys.exit("P-code introuvable : %s.%s" % (classe, methode))
+
+
+def _symboles():
+    """{nom de symbole : id} des images et donnees binaires de ce client."""
+    f = os.path.join(CACHE, "symboles.json")
+    if os.path.isfile(f):
+        return json.load(open(f, encoding="utf-8"))
+    d = os.path.join(CACHE, "ressources")
+    _ffdec("-export", "image,binaryData", d, ORIGINE)
+    r = {}
+    for racine, _, l in os.walk(d):
+        for x in l:
+            m = re.match(r"(\d+)_(.+?)(\$[0-9a-f]+)?\.(png|jpg|gif|bin)$", x)
+            if m:
+                r.setdefault(m.group(2), []).append(m.group(1))
+    json.dump(r, open(f, "w", encoding="utf-8"))
+    return r
+
+
+def ident(symbole):
+    ids = _symboles().get(symbole, [])
+    if len(ids) != 1:
+        sys.exit("Symbole %s : %d trouve(s) dans le client" % (symbole, len(ids)))
+    return ids[0]
+
+
+def fichier_binaire(symbole):
+    """Le fichier exporte d'une donnee binaire (la mise en page de l'inventaire...)."""
+    _symboles()
+    for racine, _, l in os.walk(os.path.join(CACHE, "ressources")):
+        for x in l:
+            if re.match(r"\d+_%s(\$[0-9a-f]+)?\.bin$" % re.escape(symbole), x):
+                return os.path.join(racine, x)
+    sys.exit("Donnee binaire introuvable : %s" % symbole)
+
+
 ICONES = "icones" not in SANS          # 4 boutons-icones a la place du menu Tous/Sol/...
 CATEGORIES = "categories" not in SANS  # menus Categorie / Annee (filtres de l'Atelier)
 PAGINATION = "pagination" not in SANS  # ◀ Page [n] / N ▶
@@ -113,6 +206,9 @@ ANNEES = ["Toutes les années"]   # complete par annees_inventaire(), d'apres le
 IMAGES = {1167: ("tous.png", "forum_forum_list0"), 1264: ("sol.png", "forum_forum_list1"),
           1082: ("mur.png", "forum_forum_list2"), 1307: ("dispo.png", "forum_forum_edit"),
           1518: ("gauche.png", "franks_emotions_angry"), 1388: ("droite.png", "franks_emotions_poop")}
+# symbole de chaque image dans le SWF (l'id change d'une version a l'autre)
+SYMBOLE_IMAGE = {1167: "forum_list0_png", 1264: "forum_list1_png", 1082: "forum_list2_png",
+                 1307: "forum_edit_png", 1518: "angry_png", 1388: "poop_png"}
 ICONE = {k: v[1] for k, v in [("tous", IMAGES[1167]), ("sol", IMAGES[1264]), ("mur", IMAGES[1082]),
                                ("dispo", IMAGES[1307]), ("gauche", IMAGES[1518]), ("droite", IMAGES[1388])]}
 
@@ -152,8 +248,7 @@ def curseur_main(s):
 
 
 def mise_en_page():
-    src = [f for f in os.listdir(os.path.join(ICI, "export-bin")) if "inventory_xml" in f][0]
-    s = open(os.path.join(ICI, "export-bin", src), encoding="utf-8").read()
+    s = open(fichier_binaire("inventory_xml"), encoding="utf-8").read()
     debut = s.index('name="furni" visible="false">')
     fin = s.index('name="preview_container"', debut)
     seg = s[debut:fin]
@@ -466,7 +561,7 @@ def annees_de_la_famille():
 
 
 def window_event_proc():
-    w = open(os.path.join(TRAVAIL, "wep.orig.pcode"), encoding="utf-8").read().split("\n")
+    w = list(pcode_origine("com.sulake.habbo.inventory.furni.FurniView", "windowEventProc"))
     assert w[7] == "maxstack 4" and w[8] == "localcount 11", (w[7], w[8])
     w[7] = "maxstack 48"; w[8] = "localcount 26"
     p = []
@@ -581,7 +676,7 @@ def window_event_proc():
 
 
 def populate_filter_options():
-    p = open(os.path.join(TRAVAIL, "pf.orig.pcode"), encoding="utf-8").read().split("\n")
+    p = list(pcode_origine("com.sulake.habbo.inventory.furni.FurniView", "populateFilterOptions"))
     assert p[5] == "maxstack 3" and p[6] == "localcount 6", (p[5], p[6])
     p[5] = "maxstack 48"; p[6] = "localcount 15"
     fin = len(p) - 1 - p[::-1].index("returnvoid")
@@ -603,7 +698,7 @@ def populate_filter_options():
 
 def update_paging():
     """Garde la liste de numeros d'origine cachee ; met a jour « Page [n] / N »."""
-    u = open(os.path.join(TRAVAIL, "up.orig.pcode"), encoding="utf-8").read().split("\n")
+    u = list(pcode_origine("com.sulake.habbo.inventory.furni.FurniGridView", "updatePaging"))
     assert u[5] == "maxstack 3" and u[6] == "localcount 7", (u[5], u[6])
     u[5] = "maxstack 12"; u[6] = "localcount 10"
     fin = len(u) - 1 - u[::-1].index("returnvoid")
@@ -749,7 +844,7 @@ def rendu_grille():
     V3 = 'QName(PackageNamespace("com.sulake.room.utils"),"Vector3d")'
     GEOM = 'getlex QName(%s,"_geometry")' % RSC
     DISP = 'getlex QName(%s,"_display")' % RSC
-    u = open(os.path.join(TRAVAIL, "render.orig.pcode"), encoding="utf-8").read().split("\n")
+    u = list(pcode_origine("com.sulake.room.renderer.§_-b2M§", "render"))
     im, il = u.index("maxstack 7"), u.index("localcount 11")
     u[im] = "maxstack 16"; u[il] = "localcount 20"
     c = ['getlex QName(%s,"_-Tr")' % RSC, 'pushstring "atelier_grille"',
@@ -949,7 +1044,7 @@ def chat_salle():
     CMF = 'QName(PackageNamespace("flash.filters"),"ColorMatrixFilter")'
     GLOW = 'QName(PackageNamespace("flash.filters"),"GlowFilter")'
     FILTRES = 'setproperty QName(PackageNamespace(""),"filters")'
-    c = open(os.path.join(TRAVAIL, "chat.orig.pcode"), encoding="utf-8").read().split("\n")
+    c = list(pcode_origine("com.sulake.habbo.freeflowchat.data.ChatEventHandler", "onRoomChat"))
     im, il = c.index("maxstack 6"), c.index("localcount 6")
     c[im] = "maxstack 40"; c[il] = "localcount 13"
     p = ['getlocal1', 'getproperty QName(PackageNamespace(""),"text")', 'coerce_s', 'setlocal 6']
@@ -1030,7 +1125,7 @@ def filtres_couche():
     SPR = 'Namespace("com.sulake.room.object.visualization:IRoomObjectSprite")'
     FVN = 'PrivateNamespace("com.sulake.habbo.room.object.visualization.furniture:FurnitureVisualization")'
     GLOWQ = 'QName(PackageNamespace("flash.filters"),"GlowFilter")'
-    u = open(os.path.join(TRAVAIL, "usf.orig.pcode"), encoding="utf-8").read().split("\n")
+    u = list(pcode_origine("com.sulake.habbo.room.object.visualization.furniture.FurnitureVisualization", "updateSpriteFilters"))
     im, il = u.index("maxstack 4"), u.index("localcount 6")
     u[im] = "maxstack 12"; u[il] = "localcount 8"
     p = ['getlex QName(%s,"_filters")' % FVN, 'coerce_a', 'setlocal 6',
@@ -1099,7 +1194,7 @@ def pass_filter():
     IFD = 'Namespace("com.sulake.habbo.session.furniture:IFurnitureData")'
     RX = 'QName(PackageNamespace(""),"RegExp")'
     TEST = 'callproperty QName(%s,"test"), 1' % AS3
-    u = open(os.path.join(TRAVAIL, "pfi.orig.pcode"), encoding="utf-8").read().split("\n")
+    u = list(pcode_origine("com.sulake.habbo.inventory.furni.FurniGridView", "passFilter"))
     im, il = u.index("maxstack 2"), u.index("localcount 5")
     u[im] = "maxstack 12"; u[il] = "localcount 13"
     E26 = 'getlex QName(%s,"_-E26")' % FGV
@@ -1194,7 +1289,7 @@ def contour():
     def P(n): return 'QName(PackageNamespace(""),"%s")' % n
     def S(n): return 'QName(%s,"%s")' % (SPR, n)
     OMBRE = 'getlex QName(%s,"_-7i")' % FVR
-    u = open(os.path.join(TRAVAIL, "us.orig.pcode"), encoding="utf-8").read().split("\n")
+    u = list(pcode_origine("com.sulake.habbo.room.object.visualization.furniture.FurnitureVisualization", "updateSprites"))
     im, il = u.index("maxstack 3"), u.index("localcount 6")
     u[im] = "maxstack 24"; u[il] = "localcount 15"
     c = ['getlex QName(%s,"_filters")' % FVP, 'coerce_a', 'setlocal 6',
@@ -1283,7 +1378,7 @@ def annees_inventaire():
     """
     IFD = 'Namespace("com.sulake.habbo.session.furniture:IFurnitureData")'
     RX = 'QName(PackageNamespace(""),"RegExp")'
-    u = open(os.path.join(TRAVAIL, "svs.orig.pcode"), encoding="utf-8").read().split("\n")
+    u = list(pcode_origine("com.sulake.habbo.inventory.furni.FurniView", "setViewToState"))
     im, il = u.index("maxstack 2"), u.index("localcount 2")
     u[im] = "maxstack 16"; u[il] = "localcount 24"
     c = ['getlocal1', 'pushbyte 3', 'ifne atl_a_fin',
@@ -1418,31 +1513,38 @@ def verifier_pile(chemin):
 
 
 # ================================================================== assemblage
+FGV_C = "com.sulake.habbo.inventory.furni.FurniGridView"
+CEH_C = "com.sulake.habbo.freeflowchat.data.ChatEventHandler"
+RSC_C = "com.sulake.room.renderer.§_-b2M§"
+S9_C = "com.sulake.room.renderer.utils.§_-s9§"
+FVIS_C = "com.sulake.habbo.room.object.visualization.furniture.FurnitureVisualization"
+
+
 def main():
     os.makedirs(TRAVAIL, exist_ok=True)
-    rempl = ["2330", mise_en_page()]
+    rempl = [ident("inventory_xml"), mise_en_page()]
     fv = "com.sulake.habbo.inventory.furni.FurniView"
     if ICONES or CATEGORIES or PAGINATION:
-        rempl += [fv, window_event_proc(), "29880"]
+        rempl += [fv, window_event_proc(), corps(fv, "windowEventProc")]
     if ICONES or CATEGORIES:
-        rempl += [fv, populate_filter_options(), "29882"]
+        rempl += [fv, populate_filter_options(), corps(fv, "populateFilterOptions")]
     if PAGINATION:
-        rempl += ["com.sulake.habbo.inventory.furni.FurniGridView", update_paging(), "60336"]
+        rempl += [FGV_C, update_paging(), corps(FGV_C, "updatePaging")]
     if CATEGORIES or RECHERCHE:
-        rempl += ["com.sulake.habbo.inventory.furni.FurniGridView", pass_filter(), "60338"]
+        rempl += [FGV_C, pass_filter(), corps(FGV_C, "passFilter")]
     if CATEGORIES:
-        rempl += ["com.sulake.habbo.inventory.furni.FurniView", annees_inventaire(), "29863"]
+        rempl += [fv, annees_inventaire(), corps(fv, "setViewToState")]
     if SURLIGNAGE or GRILLE:
-        rempl += ["com.sulake.habbo.freeflowchat.data.ChatEventHandler", chat_salle(), "24437"]
+        rempl += [CEH_C, chat_salle(), corps(CEH_C, "onRoomChat")]
     if GRILLE:
-        rempl += ["com.sulake.room.renderer.§_-b2M§", rendu_grille(), "37144"]
-        rempl += ["com.sulake.room.renderer.utils.§_-s9§", ecrire_clic_sol(), "54531"]
+        rempl += [RSC_C, rendu_grille(), corps(RSC_C, "render")]
+        rempl += [S9_C, ecrire_clic_sol(), corps(S9_C, "hitTestPoint")]
     if SURLIGNAGE:
-        rempl += ["com.sulake.habbo.room.object.visualization.furniture.FurnitureVisualization", filtres_couche(), "13794"]
-        rempl += ["com.sulake.habbo.room.object.visualization.furniture.FurnitureVisualization", contour(), "13792"]
+        rempl += [FVIS_C, filtres_couche(), corps(FVIS_C, "updateSpriteFilters")]
+        rempl += [FVIS_C, contour(), corps(FVIS_C, "updateSprites")]
     if ICONES or PAGINATION:
-        for ident, (dessin, _) in IMAGES.items():
-            rempl += [str(ident), os.path.join(ICI, "dessins", dessin), "lossless2"]
+        for ident_mac, (dessin, _) in IMAGES.items():
+            rempl += [ident(SYMBOLE_IMAGE[ident_mac]), os.path.join(ICI, "dessins", dessin), "lossless2"]
     for k in range(len(rempl)):
         if rempl[k].endswith(".pcode"):
             verifier_pile(rempl[k])

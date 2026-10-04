@@ -11,7 +11,6 @@ if %errorlevel% neq 0 (
 cd /d "%~dp0"
 set "ICI=%~dp0"
 set "DOCS=%USERPROFILE%\Documents"
-set "HABBO=%APPDATA%\Habbo Launcher\downloads\air\16"
 echo ================  L'ATELIER  ================
 echo.
 
@@ -36,23 +35,18 @@ if not defined JAVA (
 )
 echo OK  Java pret
 
-rem 3. Habbo et les modifs du jeu : seulement sur le client prevu (meme fichier que l'original fourni)
-set "ORIG=%DOCS%\Atelier-swf\Habbo.app.origine\Contents\Resources\HabboAir.swf"
-set "MOD=%DOCS%\Atelier-swf\travail\HabboAir-atelier.swf"
+rem 3. Habbo et les modifs du jeu : pour chaque version Windows fournie (origines\HabboAir-win-N.swf),
+rem    si le client installe est cet original, on met la version modifiee (travail\HabboAir-atelier-win-N.swf).
 set "TROUVE="
+set "MODV="
 set "DEJA="
-for /r "%APPDATA%\Habbo Launcher\downloads\air" %%F in (HabboAir.swf) do (
-  if exist "%%F" (
-    fc /b "%%F" "%MOD%" >nul 2>&1 && set "DEJA=%%F"
-    fc /b "%%F" "%ORIG%" >nul 2>&1 && set "TROUVE=%%F"
-  )
-)
+for %%O in ("%DOCS%\Atelier-swf\origines\HabboAir-win-*.swf") do call :comparer "%%~fO" "%%~nO"
 if defined DEJA (
   echo OK  Modifs du jeu deja installees
   goto lancer
 )
 if not defined TROUVE (
-  echo !   Ton client Habbo n'est pas la version prevue pour les modifs du jeu ^(grille, categories...^).
+  echo !   Ton client Habbo n'est pas une version prevue pour les modifs du jeu ^(grille, categories...^).
   echo     Elles ne sont pas installees : ton jeu reste intact. L'Atelier marche quand meme.
   goto lancer
 )
@@ -62,7 +56,20 @@ if %errorlevel% equ 0 (
   goto lancer
 )
 if not exist "%DOCS%\Atelier-swf\HabboAir-origine-windows.swf" copy /Y "%TROUVE%" "%DOCS%\Atelier-swf\HabboAir-origine-windows.swf" >nul
-copy /Y "%MOD%" "%TROUVE%" >nul && echo OK  Modifs du jeu installees || echo !   Les modifs du jeu n'ont pas pu s'installer.
+copy /Y "%MODV%" "%TROUVE%" >nul && echo OK  Modifs du jeu installees || echo !   Les modifs du jeu n'ont pas pu s'installer.
+goto lancer
+
+:comparer
+set "ORIG=%~1"
+set "NOM=%~2"
+set "MODF=%DOCS%\Atelier-swf\travail\HabboAir-atelier-win-%NOM:HabboAir-win-=%.swf"
+for /r "%APPDATA%\Habbo Launcher\downloads\air" %%F in (HabboAir.swf) do (
+  if exist "%%F" (
+    fc /b "%%F" "%MODF%" >nul 2>&1 && set "DEJA=%%F"
+    fc /b "%%F" "%ORIG%" >nul 2>&1 && set "TROUVE=%%F" && set "MODV=%MODF%"
+  )
+)
+exit /b
 
 :lancer
 echo.
