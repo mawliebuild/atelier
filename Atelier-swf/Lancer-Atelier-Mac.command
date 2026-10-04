@@ -36,25 +36,13 @@ JAVA="$(ls -d "$DOCS"/Atelier/java/*/Contents/Home 2>/dev/null | head -1)/bin/ja
 [ "$(uname -m)" = "arm64" ] || probleme "Ce Mac est un Mac Intel." "L'Atelier est prévu pour les Mac Apple Silicon (M1, M2…)."
 ok "Java prêt"
 
-# 3. Habbo et les modifs du jeu
-if [ ! -d "$APP" ]; then
-  echo "! Habbo (client version 16) introuvable : ouvre le Habbo Launcher, lance Habbo une fois, ferme-le, puis relance ce fichier."
-  echo "  L'Atelier s'ouvre quand même, sans les modifs du jeu (grille, catégories…)."
-elif pgrep -f "Habbo.app/Contents/MacOS/Habbo" >/dev/null; then
-  echo "! Habbo est ouvert : les modifs du jeu ne peuvent pas s'installer maintenant."
-  echo "  Ferme Habbo puis relance ce fichier pour les avoir (l'Atelier s'ouvre quand même)."
+# 3. Les modifs du jeu, adaptees a la version de Habbo de cet ordinateur (et aux mises a jour)
+PY="$DOCS/Atelier/python/python/bin/python3"
+if [ -x "$PY" ]; then
+  export JAVA_HOME="$(cd "$(dirname "$JAVA")/.." && pwd)"
+  "$PY" "$DOCS/Atelier-swf/modifier-jeu.py"
 else
-  SWF="$DOCS/Atelier-swf/travail/HabboAir-atelier.swf"
-  if [ -f "$SWF" ]; then
-    if cmp -s "$SWF" "$APP/Contents/Resources/HabboAir.swf"; then
-      ok "Modifs du jeu déjà installées"
-    elif sh "$DOCS/Atelier-swf/installer-mod.sh" "$SWF" >/tmp/atelier-install.log 2>&1; then
-      ok "Modifs du jeu installées"
-    else
-      echo "! Les modifs du jeu n'ont pas pu s'installer :"; tail -3 /tmp/atelier-install.log
-      echo "  L'Atelier s'ouvre quand même."
-    fi
-  fi
+  echo "! Python embarqué introuvable : les modifs du jeu ne sont pas installées (l'Atelier marche quand même)."
 fi
 
 # 4. Lancement (droits administrateur : G-Earth se branche sur la connexion de Habbo)

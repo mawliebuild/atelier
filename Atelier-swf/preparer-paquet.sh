@@ -7,32 +7,26 @@ B="$HOME/Desktop"
 T=$(mktemp -d)
 A="$HOME/Documents/Atelier"; S="$HOME/Documents/Atelier-swf"
 [ -d "$S/jre/mac" ] && [ -d "$S/jre/win" ] || { echo "Java embarque manquant dans $S/jre (mac/ et win/)."; exit 1; }
+[ -d "$S/python/mac" ] && [ -d "$S/python/win" ] || { echo "Python embarque manquant dans $S/python (mac/ et win/)."; exit 1; }
 for os in Mac Windows; do
   R="$T/$os"
-  mkdir -p "$R/Atelier/java" "$R/Atelier-swf/travail" "$R/Atelier-swf/donnees" "$R/Atelier-swf/export-bin"
+  mkdir -p "$R/Atelier/java" "$R/Atelier/python" "$R/Atelier-swf/donnees"
   cp "$A/Atelier.jar" "$R/Atelier/"
   cp -R "$A/Dependencies" "$R/Atelier/"
-  cp "$S/construire.py" "$R/Atelier-swf/"
+  # Les modifs du jeu se construisent sur chaque ordinateur, a partir de SON client Habbo :
+  # aucun fichier de Habbo dans le paquet, et chaque nouvelle version est prise en charge.
+  cp "$S/construire.py" "$S/modifier-jeu.py" "$R/Atelier-swf/"
   cp -R "$S/ffdec" "$S/dessins" "$R/Atelier-swf/"
   cp "$S/donnees/collections_fr.json" "$R/Atelier-swf/donnees/"
-  cp "$S"/export-bin/*inventory_xml* "$R/Atelier-swf/export-bin/"
-  cp "$S"/travail/*.orig.pcode "$R/Atelier-swf/travail/"
-  cp "$S/travail/HabboAir-atelier.swf" "$R/Atelier-swf/travail/"     # client modifie pret a installer
   if [ "$os" = Mac ]; then
     cp "$A/G-MemZ" "$R/Atelier/"
-    cp "$S/installer-mod.sh" "$S/restaurer.sh" "$R/Atelier-swf/"
-    cp -R "$S/Habbo.app.origine" "$R/Atelier-swf/"
     cp -R "$S"/jre/mac/* "$R/Atelier/java/"
+    cp -R "$S"/python/mac/* "$R/Atelier/python/"
     cp "$S/Lancer-Atelier-Mac.command" "$R/Lancer l'Atelier.command"
     cp "$S/LISEZMOI-Mac.txt" "$R/LISEZMOI.txt"
   else
-    mkdir -p "$R/Atelier-swf/Habbo.app.origine/Contents/Resources"
-    cp "$S/Habbo.app.origine/Contents/Resources/HabboAir.swf" "$R/Atelier-swf/Habbo.app.origine/Contents/Resources/"
     cp -R "$S"/jre/win/* "$R/Atelier/java/"
-    mkdir -p "$R/Atelier-swf/origines"
-    cp "$S"/origines/HabboAir-win-*.swf "$R/Atelier-swf/origines/"
-    cp "$S"/travail/HabboAir-atelier-win-*.swf "$R/Atelier-swf/travail/"
-    [ -f "$S/G-MemZ.exe" ] && cp "$S/G-MemZ.exe" "$R/Atelier/"
+    cp -R "$S"/python/win/* "$R/Atelier/python/"
     cp "$S/Lancer-Atelier-Windows.bat" "$R/Lancer l'Atelier.bat"
     cp "$S/LISEZMOI-Windows.txt" "$R/LISEZMOI.txt"
   fi

@@ -9,3 +9,5 @@ L'ATELIER — Windows
 Tout s'installe tout seul (dans Documents), Java est fourni.
 S'il y a un problème, la fenêtre l'explique.
 Pour les modifs du jeu (grille, catégories…), Habbo doit être FERMÉ au moment du double-clic.
+La première fois, et après chaque mise à jour de Habbo, la fenêtre prépare les modifs pour ta
+version de Habbo : ça prend une minute environ, c'est automatique.

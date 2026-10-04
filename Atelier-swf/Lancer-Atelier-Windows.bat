@@ -35,41 +35,14 @@ if not defined JAVA (
 )
 echo OK  Java pret
 
-rem 3. Habbo et les modifs du jeu : pour chaque version Windows fournie (origines\HabboAir-win-N.swf),
-rem    si le client installe est cet original, on met la version modifiee (travail\HabboAir-atelier-win-N.swf).
-set "TROUVE="
-set "MODV="
-set "DEJA="
-for %%O in ("%DOCS%\Atelier-swf\origines\HabboAir-win-*.swf") do call :comparer "%%~fO" "%%~nO"
-if defined DEJA (
-  echo OK  Modifs du jeu deja installees
-  goto lancer
+rem 3. Les modifs du jeu, adaptees a la version de Habbo de cet ordinateur (et aux mises a jour)
+for %%J in ("%JAVA%") do set "JBIN=%%~dpJ"
+for %%H in ("%JBIN%..") do set "JAVA_HOME=%%~fH"
+if exist "%DOCS%\Atelier\python\python.exe" (
+  "%DOCS%\Atelier\python\python.exe" "%DOCS%\Atelier-swf\modifier-jeu.py"
+) else (
+  echo !   Python embarque introuvable : les modifs du jeu ne sont pas installees ^(l'Atelier marche quand meme^).
 )
-if not defined TROUVE (
-  echo !   Ton client Habbo n'est pas une version prevue pour les modifs du jeu ^(grille, categories...^).
-  echo     Elles ne sont pas installees : ton jeu reste intact. L'Atelier marche quand meme.
-  goto lancer
-)
-tasklist /FI "IMAGENAME eq Habbo.exe" /NH | find /I "Habbo.exe" >nul
-if %errorlevel% equ 0 (
-  echo !   Habbo est ouvert : ferme-le puis relance ce fichier pour avoir les modifs du jeu.
-  goto lancer
-)
-if not exist "%DOCS%\Atelier-swf\HabboAir-origine-windows.swf" copy /Y "%TROUVE%" "%DOCS%\Atelier-swf\HabboAir-origine-windows.swf" >nul
-copy /Y "%MODV%" "%TROUVE%" >nul && echo OK  Modifs du jeu installees || echo !   Les modifs du jeu n'ont pas pu s'installer.
-goto lancer
-
-:comparer
-set "ORIG=%~1"
-set "NOM=%~2"
-set "MODF=%DOCS%\Atelier-swf\travail\HabboAir-atelier-win-%NOM:HabboAir-win-=%.swf"
-for /r "%APPDATA%\Habbo Launcher\downloads\air" %%F in (HabboAir.swf) do (
-  if exist "%%F" (
-    fc /b "%%F" "%MODF%" >nul 2>&1 && set "DEJA=%%F"
-    fc /b "%%F" "%ORIG%" >nul 2>&1 && set "TROUVE=%%F" && set "MODV=%MODF%"
-  )
-)
-exit /b
 
 :lancer
 echo.
