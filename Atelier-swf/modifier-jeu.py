@@ -73,7 +73,7 @@ def deja_modifie(f):
 def habbo_ouvert():
     try:
         if WIN:
-            o = subprocess.run(["tasklist", "/FI", "IMAGENAME eq Habbo.exe", "/NH"], capture_output=True, text=True).stdout
+            o = subprocess.run(["tasklist", "/FI", "IMAGENAME eq Habbo.exe", "/NH"], capture_output=True, text=True, errors="replace").stdout
             return "habbo.exe" in o.lower()
         return subprocess.run(["pgrep", "-f", "Habbo.app/Contents/MacOS/Habbo"], capture_output=True).returncode == 0
     except Exception:
@@ -145,7 +145,7 @@ def modifier():
             if not maj:
                 dire("… Nouvelle version de Habbo (%s) : préparation des modifs (une minute environ)" % version)
             r = subprocess.run([sys.executable, os.path.join(ICI, "construire.py"), sortie, "--origine", orig],
-                               capture_output=True, text=True, cwd=ICI)
+                               capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=ICI)
             if r.returncode != 0 or not os.path.isfile(sortie):
                 dire("! Les modifs n'ont pas pu être adaptées à cette version de Habbo : ton jeu reste normal, "
                      "l'Atelier marche quand même.")

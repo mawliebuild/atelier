@@ -34,6 +34,8 @@ def _java():
 
 
 JAVA = _java()
+# FFDec : une part de la memoire de l'ordinateur (6 Go d'office echouait sur un petit PC)
+MEMOIRE = "-XX:MaxRAMPercentage=70"
 TRAVAIL = os.path.join(ICI, "travail")
 
 # ------------------------------------------------------------------ options
@@ -66,11 +68,13 @@ CACHE = os.path.join(TRAVAIL, "origines", _empreinte(ORIGINE))
 
 
 def _ffdec(*a):
-    subprocess.run([JAVA, "-Xmx6g", "-jar", FFDEC] + list(a), capture_output=True, text=True)
+    subprocess.run([JAVA, MEMOIRE, "-jar", FFDEC] + list(a), capture_output=True, text=True, encoding="utf-8", errors="replace")
 
 
 def _export_classe(classe, forme):
-    d = os.path.join(CACHE, forme, re.sub(r"[^A-Za-z0-9_.-]", "_", classe))
+    # nom court (empreinte du nom de classe) : les chemins des exports depassaient
+    # 260 caracteres sous Windows, ou Python ne pouvait plus les lire
+    d = os.path.join(CACHE, forme, hashlib.sha1(classe.encode("utf-8")).hexdigest()[:10])
     if not os.path.isdir(d) or not any(f.endswith((".as", ".pcode")) for _, _, l in os.walk(d) for f in l):
         if forme == "as":
             _ffdec("-config", "showMethodBodyId=true", "-selectclass", classe, "-export", "script", d, ORIGINE)
@@ -1762,8 +1766,8 @@ def main():
     for k in range(len(rempl)):
         if rempl[k].endswith(".pcode"):
             verifier_pile(rempl[k])
-    cmd = [JAVA, "-Xmx6g", "-jar", FFDEC, "-replace", ORIGINE, SORTIE] + rempl
-    r = subprocess.run(cmd, capture_output=True, text=True)
+    cmd = [JAVA, MEMOIRE, "-jar", FFDEC, "-replace", ORIGINE, SORTIE] + rempl
+    r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
     sortie = "\n".join(l for l in (r.stdout + r.stderr).splitlines()
                        if "WARNING" not in l and "checkUnique" not in l)
     if r.returncode != 0 or not os.path.isfile(SORTIE):
@@ -1773,14 +1777,15 @@ def main():
     classes = sorted(set(rempl[k] for k in range(len(rempl)) if rempl[k].startswith("com.sulake.")))
     import tempfile, glob
     d = tempfile.mkdtemp(prefix="relecture-", dir=TRAVAIL)
-    subprocess.run([JAVA, "-Xmx6g", "-jar", FFDEC, "-selectclass", ",".join(classes), "-export", "script", d, SORTIE],
-                   capture_output=True, text=True)
+    subprocess.run([JAVA, MEMOIRE, "-jar", FFDEC, "-selectclass", ",".join(classes), "-export", "script", d, SORTIE],
+                   capture_output=True, text=True, encoding="utf-8", errors="replace")
     fautes = []
     for f in glob.glob(os.path.join(d, "**", "*.as"), recursive=True):
         for n, l in enumerate(open(f, encoding="utf-8", errors="ignore"), 1):
             if "\u00a7\u00a7pop" in l or "\u00a7\u00a7push" in l:
                 fautes.append("%s:%d" % (os.path.basename(f), n))
-    subprocess.run(["rm", "-rf", d])
+    import shutil
+    shutil.rmtree(d, ignore_errors=True)
     if fautes:
         os.remove(SORTIE)
         sys.exit("Pile desequilibree (SWF refuse) : " + ", ".join(fautes[:10]))

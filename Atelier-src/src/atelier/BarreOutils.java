@@ -204,7 +204,7 @@ public class BarreOutils implements Ancrage.Ancrable {
      * si rien n'est ouvert) ; le resume de la salle se cache aussi.
      */
     private void appliquerReduite() {
-        fleche.setGraphic(Icones.trace(BarreIcones.trace(false, !reduite), "icone-barre"));
+        fleche.setGraphic(Icones.trace(BarreIcones.trace(false, reduite), "icone-barre"));
         for (javafx.scene.Node n : barre.getChildren()) {
             if (n == fleche) continue;
             boolean voir = !reduite || (n instanceof ToggleButton && ((ToggleButton) n).isSelected());
