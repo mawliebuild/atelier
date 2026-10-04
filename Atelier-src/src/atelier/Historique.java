@@ -542,8 +542,10 @@ public final class Historique {
         if (gp == null) return;
         try {
             if (gp.getInventory().getState() == game.Inventory.InventoryState.LOADED) return;
-            if (gp.getInventory().getState() != game.Inventory.InventoryState.LOADING)
+            if (gp.getInventory().getState() != game.Inventory.InventoryState.LOADING) {
+                ChargementAuto.inventaireDemande();
                 gp.getInventory().requestInventory();
+            }
             for (int i = 0; i < 30; i++) {
                 if (gp.getInventory().getState() == game.Inventory.InventoryState.LOADED) return;
                 Salle.sommeil(100);

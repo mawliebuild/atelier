@@ -23,7 +23,10 @@ import java.util.prefs.Preferences;
  * laisse l'inventaire libre a gauche. Deplacee a la main, elle garde sa place
  * PAR RAPPORT A LA FENETRE DU JEU : si Habbo bouge, elle suit, au meme endroit.
  *
- * Sa hauteur suit le contenu, sans depasser la barre d'outils du jeu en bas.
+ * Sa hauteur suit le contenu, sans depasser la barre d'outils du jeu en bas,
+ * ni 70 % de la hauteur du jeu (720 px au plus) : au-dela, le contenu defile
+ * a l'interieur. Sa largeur depend du menu ; le bord gauche se tire a la
+ * souris pour l'elargir, et la largeur choisie est retenue pour ce menu.
  * A sa place par defaut, elle s'arrete aussi au-dessus des barres du bas de
  * l'Atelier ; une fois deplacee a la main, elle passe librement PAR-DESSUS
  * (les menus fixes sont a un niveau macOS plus bas : voir BarrePremierPlan).
@@ -44,6 +47,10 @@ public class Fenetre implements Ancrage.Ancrable {
     /** Barre d'outils du jeu, en bas, a laisser libre. */
     private static final double BAS_LIBRE = 56;
     private static final double TITRE = 30, OMBRE = 3;
+    /** Plafond de hauteur : une part de la hauteur du jeu (ou de l'ecran), et jamais plus de HAUT_MAX. */
+    private static final double PART_MAX = 0.70, HAUT_MAX = 720, HAUT_MIN = 160;
+    /** Poignee de largeur, sur le bord gauche (la fenetre s'ancre par la droite). */
+    private static final double POIGNEE = 6;
 
     private static Fenetre instance;
     public static Fenetre instance() { return instance; }
@@ -70,6 +77,10 @@ public class Fenetre implements Ancrage.Ancrable {
     private final ChangeListener<Number> surHauteur = (o, a, b) -> ajuster();
     private Runnable surFermeture = () -> { };
     private double prisX, prisY, avantX, avantY;
+    /** Menu affiche (cle de la Navigation) et sa largeur par defaut : la largeur tiree a la main est retenue par menu. */
+    private String cleMenu;
+    private double largeurDefaut = LARGEUR;
+    private double tireX, tireLargeur, tireDroite;
 
     public Fenetre(String css, Region zone) {
         this.zone = zone;
@@ -85,7 +96,17 @@ public class Fenetre implements Ancrage.Ancrable {
         cadre.getChildren().addAll(barreTitre, zone);
         cadre.getStyleClass().add("fenetre");
 
-        StackPane racine = new StackPane(cadre);
+        Region poignee = new Region();
+        poignee.getStyleClass().add("fenetre-poignee");
+        poignee.setCursor(Cursor.H_RESIZE);
+        poignee.setMinWidth(POIGNEE); poignee.setPrefWidth(POIGNEE); poignee.setMaxWidth(POIGNEE);
+        poignee.setMaxHeight(Double.MAX_VALUE);
+        StackPane.setAlignment(poignee, Pos.CENTER_LEFT);
+        // sous la barre de titre : celle-ci reste la prise pour deplacer
+        StackPane.setMargin(poignee, new Insets(TITRE, 0, 8, 0));
+        brancherPoignee(poignee);
+
+        StackPane racine = new StackPane(cadre, poignee);
         racine.setStyle("-fx-background-color: transparent;");
         racine.setPadding(new Insets(0, 0, OMBRE, 0));
         racine.setOnMouseEntered(e -> stage.setOpacity(1));
@@ -99,6 +120,11 @@ public class Fenetre implements Ancrage.Ancrable {
         placerParDefaut();
         // Au-dessus des menus fixes et du panneau des calques.
         BarrePremierPlan.fenetre(stage);
+        // Bulles rapides partout dans la fenetre.
+        Ui.bullesRapides(scene);
+        // Le contenu change de largeur (poignee, menu plus large) : les textes
+        // repassent a la ligne, la hauteur suit.
+        zone.widthProperty().addListener((o, a, b) -> Platform.runLater(this::ajuster));
     }
 
     public Stage fenetre() { return stage; }
@@ -137,8 +163,32 @@ public class Fenetre implements Ancrage.Ancrable {
      * vers la gauche). 0 = largeur par defaut.
      */
     public void largeur(double l) {
-        double voulue = l <= 0 ? LARGEUR : l;
-        if (Math.abs(voulue - largeur) < 0.5) return;
+        largeurDefaut = l <= 0 ? LARGEUR : l;
+        cleMenu = null;
+        appliquerLargeur(largeurDefaut);
+    }
+
+    /**
+     * Largeur du menu cle : celle tiree a la main pour lui (retenue), sinon
+     * sa largeur par defaut (0 = LARGEUR). Jamais plus etroite que le defaut,
+     * choisi pour que rien ne soit coupe.
+     */
+    public void largeur(String cle, double defaut) {
+        largeurDefaut = defaut <= 0 ? LARGEUR : defaut;
+        cleMenu = cle;
+        double l = cle == null ? largeurDefaut : prefs.getDouble("fenetre.largeur." + cle, largeurDefaut);
+        appliquerLargeur(Math.max(largeurDefaut, l));
+    }
+
+    /** Largeur maximale : celle du jeu (ou de l'ecran), moins une marge. */
+    private double largeurMax() {
+        double w = habbo != null ? habbo[2] : javafx.stage.Screen.getPrimary().getVisualBounds().getWidth();
+        return Math.max(largeurDefaut, w - 40);
+    }
+
+    private void appliquerLargeur(double voulue) {
+        voulue = Math.min(voulue, largeurMax());
+        if (Math.abs(voulue - largeur) < 0.5) { ajuster(); return; }
         double droiteEcran = stage.getX() + largeur;
         largeur = voulue;
         stage.setWidth(largeur);
@@ -146,6 +196,41 @@ public class Fenetre implements Ancrage.Ancrable {
         double minX = javafx.stage.Screen.getPrimary().getVisualBounds().getMinX() + 8;
         stage.setX(Math.max(minX, droiteEcran - largeur));
         ajuster();
+    }
+
+    /**
+     * Le bord gauche se tire : le bord droit reste en place, la fenetre
+     * s'elargit vers la gauche. Double-clic : retour a la largeur du menu.
+     */
+    private void brancherPoignee(Region p) {
+        p.setOnMousePressed(e -> {
+            tireX = e.getScreenX();
+            tireLargeur = largeur;
+            tireDroite = stage.getX() + largeur;
+            e.consume();
+        });
+        p.setOnMouseDragged(e -> {
+            double l = Math.max(largeurDefaut, Math.min(largeurMax(), tireLargeur + (tireX - e.getScreenX())));
+            if (Math.abs(l - largeur) < 0.5) return;
+            largeur = l;
+            stage.setX(tireDroite - largeur);
+            stage.setWidth(largeur);
+            e.consume();
+        });
+        p.setOnMouseReleased(e -> {
+            if (cleMenu != null) {
+                if (largeur - largeurDefaut < 1) prefs.remove("fenetre.largeur." + cleMenu);
+                else prefs.putDouble("fenetre.largeur." + cleMenu, largeur);
+            }
+            ajuster();
+            e.consume();
+        });
+        p.setOnMouseClicked(e -> {
+            if (e.getClickCount() != 2) return;
+            if (cleMenu != null) prefs.remove("fenetre.largeur." + cleMenu);
+            appliquerLargeur(largeurDefaut);
+            e.consume();
+        });
     }
 
     /** Idem, avec l'aide de toute la fenetre (un « i » dans la barre de titre), ou null. */
@@ -254,22 +339,33 @@ public class Fenetre implements Ancrage.Ancrable {
         ajuster();
     }
 
-    /** Hauteur : celle du contenu, bornee par le bas de la fenetre du jeu. */
+    /**
+     * Hauteur : celle du contenu, bornee par le bas de la fenetre du jeu (sa
+     * barre d'outils reste libre) et par un plafond raisonnable (70 % du jeu,
+     * 720 px au plus) : au-dela, le contenu defile a l'interieur.
+     */
     private void ajuster() {
         double voulue = TITRE + 2 + OMBRE;
         if (!reduite) {
-            double contenu = (suivie == null) ? 300 : suivie.prefHeight(largeur - 2);
-            voulue += contenu + 2;
+            // la largeur reellement offerte au contenu : celle de la zone, sans son rembourrage
+            double dispo = zone.getWidth() > 0
+                    ? zone.getWidth() - zone.snappedLeftInset() - zone.snappedRightInset()
+                    : largeur - 6;
+            double contenu = (suivie == null) ? 300 : suivie.prefHeight(dispo);
+            voulue += Math.ceil(contenu) + 2 + zone.snappedBottomInset();
         }
+        javafx.geometry.Rectangle2D ecran = javafx.stage.Screen.getPrimary().getVisualBounds();
         double max = (habbo == null)
-                ? javafx.stage.Screen.getPrimary().getVisualBounds().getMaxY() - stage.getY() - 20
+                ? ecran.getMaxY() - stage.getY() - 20
                 : habbo[1] + habbo[3] - BAS_LIBRE - stage.getY();
+        double hauteurVue = habbo == null ? ecran.getHeight() : habbo[3];
+        max = Math.min(max, Math.min(HAUT_MAX, hauteurVue * PART_MAX));
         if (!deplacee) for (Stage o : obstacles) {
             if (!o.isShowing() || o.getY() <= stage.getY()) continue;
             boolean croise = o.getX() < stage.getX() + largeur && o.getX() + o.getWidth() > stage.getX();
             if (croise) max = Math.min(max, o.getY() - 6 - stage.getY());
         }
-        double h = reduite ? voulue : Math.max(160, Math.min(voulue, max));
+        double h = reduite ? voulue : Math.max(HAUT_MIN, Math.min(voulue, max));
         if (Math.abs(stage.getHeight() - h) > 0.5) stage.setHeight(h);
     }
 }

@@ -10,7 +10,7 @@ import java.util.*;
  * relatives, reglage des wired) est preparee pour pouvoir coller ailleurs.
  *
  * Ctrl+V :
- *   - meme appart  : comme Dupliquer (copie posee sur place, nouveau calque,
+ *   - meme appart  : comme Dupliquer (copie fantome a placer puis posee, nouveau calque,
  *                    puis les fleches) ; on peut coller plusieurs fois ;
  *   - autre appart : la copie portable est posee par le moteur de pose apres un clic
  *                    sur la case du coin haut-gauche (sols seulement) ;

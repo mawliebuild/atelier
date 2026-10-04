@@ -134,7 +134,7 @@ public class BarreMesure implements Ancrage.Ancrable {
 
     public Stage fenetre() { return stage; }
 
-    private Runnable surPhoto = OutilCapture::declencher;
+    private Runnable surPhoto = () -> { };
     private Runnable surInventaire = () -> { }, surSalle = () -> { }, surFloor = () -> { };
     public void surSalle(Runnable r) { surSalle = r; }
     public void surFloor(Runnable r) { surFloor = r; }

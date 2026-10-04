@@ -100,11 +100,13 @@ public class OutilHauteur {
 
         etat = Ui.etat();
         resume = Ui.valeur("");
+        resume.setWrapText(true);
         couvrir = Generateur.principal(libelleCouvrir(), () -> {
             if (occupe) { arret = true; dire("Arrêt demandé…"); }
             else file.submit(OutilHauteur::couvrir);
         });
-        ramasser = new Button("Ramasser toutes les dalles de l'appart");
+        Icones.sur(couvrir, Icones.COUVRIR);
+        ramasser = Icones.sur(new Button("Ramasser toutes les dalles de l'appart"), Icones.RAMASSER);
         ramasser.setMaxWidth(Double.MAX_VALUE);
         ramasser.setOnAction(e -> { if (!occupe) file.submit(OutilHauteur::ramasserTout); });
 
@@ -113,6 +115,7 @@ public class OutilHauteur {
         RadioButton avec = new RadioButton("Avec dalles");
         RadioButton sans = new RadioButton("Sans dalles");
         avec.setToggleGroup(g); sans.setToggleGroup(g);
+        Icones.sur(avec, Icones.AVEC_DALLE); Icones.sur(sans, Icones.SANS_DALLE);
         (sansDalles ? sans : avec).setSelected(true);
 
         // --- ou : tout l'appart, ou la zone choisie (deux clics dans le jeu)
@@ -122,9 +125,9 @@ public class OutilHauteur {
         toutAppart.setToggleGroup(gz); dansZone.setToggleGroup(gz);
         (zoneSeule ? dansZone : toutAppart).setSelected(true);
         Label zoneTexte = Ui.valeur(Zone.texte());
-        Button zoneChoisir = new Button("Choisir dans le jeu");
+        Button zoneChoisir = Icones.sur(new Button("Choisir dans le jeu"), Icones.CIBLE);
         zoneChoisir.setOnAction(e -> choisirZone());
-        Button zoneEffacer = new Button("Effacer");
+        Button zoneEffacer = Icones.sur(new Button("Effacer"), Icones.VIDER);
         zoneEffacer.setOnAction(e -> Zone.effacer());
         Zone.ecouter(() -> zoneTexte.setText(Zone.texte()));
         Zone.ecouter(OutilHauteur::suivreZone);
@@ -151,13 +154,17 @@ public class OutilHauteur {
                 Ui.aide("« Ramasser » reprend toutes les dalles magiques de l'appart, celles posées par l'Atelier comme les tiennes."));
 
         etatSans = Ui.valeur("");
+        etatSans.setWrapText(true);
         interrupteur = new Button("Activer");
         interrupteur.getStyleClass().add("primaire");
+        Icones.sur(interrupteur, Icones.MARCHE);
         interrupteur.setMaxWidth(Double.MAX_VALUE);
         interrupteur.setOnAction(e -> {
             if (HauteurSansDalles.actif()) HauteurSansDalles.arreter(); else HauteurSansDalles.activer();
         });
-        dejaPoses = new Button("Appliquer aux mobis déjà posés pendant ce mode");
+        dejaPoses = Icones.sur(new Button("Appliquer aux mobis déjà posés"), Icones.HAUTEUR);
+        dejaPoses.setTooltip(new Tooltip("Remet à la hauteur les mobis posés depuis que le mode est actif."));
+        dejaPoses.getTooltip().setShowDelay(javafx.util.Duration.millis(150));
         dejaPoses.setMaxWidth(Double.MAX_VALUE);
         dejaPoses.setOnAction(e -> HauteurSansDalles.appliquerDejaPoses());
         VBox blocSans = Ui.bloc("Sans dalles",
@@ -187,6 +194,7 @@ public class OutilHauteur {
                 Ui.bloc("Hauteur fixe",
                         Ui.ligne(avec, sans),
                         Ui.ligne(Ui.etiquette("Hauteur"), valeur),
+                        Ui.discret("Dans le jeu : tape :h 10 pour la changer."),
                         Ui.aide("Comme :setz sur les rétros. 0,25 = un quart de case ; une case pleine = 1.")),
                 blocAvec, blocSans,
                 etat);
@@ -330,7 +338,8 @@ public class OutilHauteur {
             if (etatSans != null) {
                 etatSans.setText(t);
                 etatSans.getStyleClass().removeAll("etat-ok", "etat-absent");
-                etatSans.getStyleClass().add(a ? "etat-ok" : "etat-absent");
+                // arrete n'est pas une erreur : texte neutre ; actif en vert
+                if (a) etatSans.getStyleClass().add("etat-ok");
             }
             if (interrupteur != null) interrupteur.setText(a ? "Arrêter" : "Activer");
             if (dejaPoses != null) dejaPoses.setDisable(rien);
@@ -669,13 +678,23 @@ public class OutilHauteur {
         Set<Integer> types = Generateur.Dalle.typesDalles();
         for (int type : types) Historique.ignorerType(type, 30 * 60_000L);
         try {
+            // En rafale : un envoi toutes les 150 ms (rythme commun), sans attendre
+            // la disparition de chaque dalle ; une 2e passe reprend celles restees.
             int n = 0;
-            for (int id : ids) {
-                if (arret || Salle.salleId() != salle) break;
-                Salle.ramasser(id, false);
-                for (int i = 0; i < 10 && Salle.sol(id) != null; i++) Salle.sommeil(100);
-                n++;
-                dire("Ramassage : " + n + " / " + ids.size());
+            for (int passe = 1; passe <= 2 && !arret; passe++) {
+                List<Integer> encore = new ArrayList<>();
+                for (int id : ids) if (Salle.sol(id) != null) encore.add(id);
+                if (encore.isEmpty()) break;
+                for (int id : encore) {
+                    if (arret || Salle.salleId() != salle) break;
+                    Salle.espacer();
+                    Salle.ramasser(id, false);
+                    if (passe == 1) n++;
+                    dire("Ramassage" + (passe > 1 ? " (2e passe)" : "") + " : " + n + " / " + ids.size());
+                }
+                if (Salle.salleId() != salle) break;
+                PoseDirecte.suivre(() -> { int r = 0; for (int id : encore) if (Salle.sol(id) != null) r++; return r; },
+                        800, 3000);
             }
             if (Salle.salleId() != salle) {
                 echec("Ramassage interrompu : tu as changé de salle (" + n + " / " + ids.size() + ").");

@@ -12,13 +12,19 @@ import java.util.function.Consumer;
 
 /**
  * Pose de copies mobi par mobi, SANS dalle magique ni moteur de pose :
- * on pose un mobi (inventaire ou BC selon la source), on attend qu'il
- * apparaisse, on lui donne son altitude (@altitude), puis le suivant. Du bas
- * vers le haut ; a la fin, une verification remet les altitudes qui ne
- * seraient pas prises. La dalle magique reste pour construire (Hauteur fixe).
+ * rafale suivie (inventaire ou BC selon la source) : les poses partent au
+ * rythme commun (Salle.espacer), chaque mobi recoit son altitude (@altitude)
+ * des qu'il apparait, pendant que les suivants partent. Du bas vers le haut ;
+ * a la fin, une verification groupee remet les altitudes qui ne seraient pas
+ * prises. La dalle magique reste pour construire (Hauteur fixe).
  *
- * Les reglages des wired ne sont pas poses ici (la copie avec wired passe par
- * le collage wired du moteur de pose).
+ * Les reglages des wired ne sont pas poses ici : ReglagesWired les applique
+ * ensuite, grace a Resultat.cles (furniId du preset -> id reel).
+ *
+ * Pose hybride (PoseHybride) : le Resultat dit, mobi par mobi, ce qui est
+ * pose (solsPoses : id -> Sol) et ce que le jeu a refuse (solsRefuses,
+ * mursRefuses) ; seuls ceux-la, et ceux restes a une mauvaise hauteur, sont
+ * ensuite repris avec la dalle magique.
  */
 final class PoseDirecte {
 
@@ -29,9 +35,12 @@ final class PoseDirecte {
         final String classe, etat;
         final int x, y, rot;
         final double z;
+        /** Cle libre (ex. furniId du preset), -1 = sans cle ; voir Resultat.cles. */
+        final int cle;
         Sol(String classe, int x, int y, double z, int rot) { this(classe, x, y, z, rot, null); }
-        Sol(String classe, int x, int y, double z, int rot, String etat) {
-            this.classe = classe; this.x = x; this.y = y; this.z = z; this.rot = rot & 7; this.etat = etat;
+        Sol(String classe, int x, int y, double z, int rot, String etat) { this(classe, x, y, z, rot, etat, -1); }
+        Sol(String classe, int x, int y, double z, int rot, String etat, int cle) {
+            this.classe = classe; this.x = x; this.y = y; this.z = z; this.rot = rot & 7; this.etat = etat; this.cle = cle;
         }
     }
 
@@ -43,7 +52,14 @@ final class PoseDirecte {
 
     static final class Resultat {
         final List<Integer> sols = new ArrayList<>(), murs = new ArrayList<>();
+        /** Cle du Sol (s'il en a une) -> id reel du mobi pose. */
+        final Map<Integer, Integer> cles = new LinkedHashMap<>();
         int manquants, hauteursFausses, etatsFaux;
+        /** Mobis de sol apparus : id reel -> Sol voulu. */
+        final Map<Integer, Sol> solsPoses = new LinkedHashMap<>();
+        /** Poses envoyees mais refusees par le jeu (jamais apparues) : a reprendre avec la dalle. */
+        final List<Sol> solsRefuses = new ArrayList<>();
+        final List<Mur> mursRefuses = new ArrayList<>();
     }
 
     /** Attente maxi qu'un mobi pose apparaisse. */
@@ -51,6 +67,16 @@ final class PoseDirecte {
 
     static Resultat poser(List<Sol> sols, List<Mur> murs, Generateur.Source source, Consumer<String> dire,
                           BooleanSupplier stop, java.util.function.BiConsumer<Integer, Integer> progres) {
+        return poser(sols, murs, source, dire, stop, progres, true);
+    }
+
+    /**
+     * @param avecAltitude false : aucune @altitude n'est envoyee (variable
+     *                     inconnue) ; les hauteurs fausses sont seulement comptees
+     */
+    static Resultat poser(List<Sol> sols, List<Mur> murs, Generateur.Source source, Consumer<String> dire,
+                          BooleanSupplier stop, java.util.function.BiConsumer<Integer, Integer> progres,
+                          boolean avecAltitude) {
         Resultat r = new Resultat();
         GPresets gp = Salle.gp();
         if (gp == null) return r;
@@ -62,68 +88,91 @@ final class PoseDirecte {
         Map<Integer, Double> voulu = new LinkedHashMap<>();
         Map<Integer, String> etats = new LinkedHashMap<>();
 
+        // Rafale suivie : les poses partent l'une apres l'autre (espacees, voir
+        // espacer) ; des qu'un mobi apparait, il recoit son altitude, pendant que
+        // les suivants partent. On ne pose pas tout avant de regler les hauteurs.
+        Deque<Attente> attente = new ArrayDeque<>();
+        Set<Integer> connus = new HashSet<>();
+        for (HFloorItem it : Salle.sols()) connus.add(it.getId());
+        List<Object[]> aTourner = new ArrayList<>();          // {id, Sol} dont la rotation est a redonner
+        int[] faits = {0};
         for (Sol s : ordre) {
             if (stop.getAsBoolean() || !Salle.dansUneSalle()) break;
             Integer type = fd.getFloorTypeId(s.classe);
             if (type == null) { r.manquants++; continue; }
-            Set<Integer> avant = new HashSet<>();
-            for (HFloorItem it : Salle.sols()) avant.add(it.getId());
             if (!envoyerSol(gp, type, s, source, invPris)) { r.manquants++; continue; }
-            int id = attendreSol(avant, type, s.x, s.y);
-            if (id < 0) { r.manquants++; continue; }
-            r.sols.add(id);
-            voulu.put(id, s.z);
-            if (s.etat != null) etats.put(id, s.etat);
-            HFloorItem it = Salle.sol(id);
-            // rotation refusee a la pose (mobi a 2 orientations...) : on la redonne, puis son equivalente
-            if (it != null && !GroupeCalcul.rotationAcceptee(Salle.rotation(it), s.rot, s.rot, false)) {
-                for (int rot : new int[]{s.rot, GroupeCalcul.rotationRepli(s.rot)}) {
-                    espacer();
-                    Salle.deplacerSol(id, s.x, s.y, rot);
-                    dernierEnvoi = System.currentTimeMillis();
-                    for (int i = 0; i < 6; i++) {
-                        Salle.sommeil(80);
-                        it = Salle.sol(id);
-                        if (it != null && Salle.rotation(it) == rot) break;
-                    }
-                    if (it != null && Salle.rotation(it) == rot) break;
-                }
-            }
-            // son altitude tout de suite (au-dessus de ce qui est deja pose)
-            if (it != null && Math.abs(it.getTile().getZ() - s.z) > 0.01) altitude(id, s.z);
-            progres.accept(++fait, total);
+            attente.add(new Attente(s, type, System.currentTimeMillis()));
+            rattraper(attente, connus, r, voulu, etats, aTourner, faits, total, progres, avecAltitude);
         }
+        long fin = System.currentTimeMillis() + ATTENTE_MS;
+        while (!attente.isEmpty() && System.currentTimeMillis() < fin && !stop.getAsBoolean()) {
+            Salle.sommeil(60);
+            rattraper(attente, connus, r, voulu, etats, aTourner, faits, total, progres, avecAltitude);
+        }
+        r.manquants += attente.size();
+        for (Attente a : attente) r.solsRefuses.add(a.s);
+        fait = faits[0];
+        // rotations refusees a la pose (mobi a 2 orientations...) : en rafale, la
+        // rotation voulue pour tous, puis l'equivalente pour ceux qui l'ont refusee
+        if (!aTourner.isEmpty() && !stop.getAsBoolean()) {
+            List<Object[]> reste = new ArrayList<>(aTourner);
+            for (int essai = 0; essai < 2 && !reste.isEmpty() && !stop.getAsBoolean(); essai++) {
+                Map<Integer, Integer> envoye = new HashMap<>();
+                for (Object[] o : reste) {
+                    if (stop.getAsBoolean()) break;
+                    Sol s = (Sol) o[1];
+                    int rot = essai == 0 ? s.rot : GroupeCalcul.rotationRepli(s.rot);
+                    Salle.espacer();
+                    Salle.deplacerSol((Integer) o[0], s.x, s.y, rot);
+                    envoye.put((Integer) o[0], rot);
+                }
+                final List<Object[]> l = reste;
+                suivre(() -> tournes(l, envoye).size(), 500, 1200);
+                reste = tournes(reste, envoye);
+            }
+            // l'altitude, que la rotation a pu changer
+            for (Object[] o : aTourner) {
+                if (stop.getAsBoolean()) break;
+                HFloorItem it = Salle.sol((Integer) o[0]);
+                Sol s = (Sol) o[1];
+                if (avecAltitude && it != null && Math.abs(it.getTile().getZ() - s.z) > 0.01) altitude(it.getId(), s.z);
+            }
+        }
+
+        // muraux : en rafale aussi, chacun reconnu a son type des qu'il apparait
+        Deque<Object[]> mursAttendus = new ArrayDeque<>();           // {type, Mur}
+        Set<Integer> mursConnus = new HashSet<>();
+        for (HWallItem w : Salle.murs()) mursConnus.add(w.getId());
         for (Mur m : murs) {
             if (stop.getAsBoolean() || !Salle.dansUneSalle()) break;
             Integer type = fd.getWallTypeId(m.classe);
             if (type == null) { r.manquants++; continue; }
-            Set<Integer> avant = new HashSet<>();
-            for (HWallItem w : Salle.murs()) avant.add(w.getId());
             if (!envoyerMur(gp, type, m, source, invPris)) { r.manquants++; continue; }
-            int id = attendreMur(avant, type);
-            if (id < 0) { r.manquants++; continue; }
-            r.murs.add(id);
-            progres.accept(++fait, total);
+            mursAttendus.add(new Object[]{type, m});
+            fait = rattraperMurs(mursAttendus, mursConnus, r, fait, total, progres);
         }
+        fin = System.currentTimeMillis() + ATTENTE_MS;
+        while (!mursAttendus.isEmpty() && System.currentTimeMillis() < fin && !stop.getAsBoolean()) {
+            Salle.sommeil(60);
+            fait = rattraperMurs(mursAttendus, mursConnus, r, fait, total, progres);
+        }
+        r.manquants += mursAttendus.size();
+        for (Object[] o : mursAttendus) r.mursRefuses.add((Mur) o[1]);
 
-        // verification : les altitudes que le serveur n'aurait pas prises
-        if (!voulu.isEmpty() && !stop.getAsBoolean()) {
-            Salle.sommeil(600);
-            for (int passe = 0; passe < 2; passe++) {
-                List<Integer> faux = new ArrayList<>();
-                for (Map.Entry<Integer, Double> e : voulu.entrySet()) {
-                    HFloorItem it = Salle.sol(e.getKey());
-                    if (it != null && Math.abs(it.getTile().getZ() - e.getValue()) > 0.02) faux.add(e.getKey());
-                }
+        // verification : les altitudes que le serveur n'aurait pas prises ; on
+        // attend seulement que les dernieres envoyees arrivent (suivi), puis on
+        // renvoie en rafale celles qui manquent
+        if (!avecAltitude) r.hauteursFausses = hauteursFausses(voulu).size();
+        else if (!voulu.isEmpty() && !stop.getAsBoolean()) {
+            suivre(() -> hauteursFausses(voulu).size(), 500, 1200);
+            for (int passe = 0; passe < 2 && !stop.getAsBoolean(); passe++) {
+                List<Integer> faux = hauteursFausses(voulu);
                 if (faux.isEmpty()) break;
-                dire.accept("Altitudes à reprendre : " + faux.size() + "…");
+                Journal.debug("pose directe : " + faux.size() + " altitude(s) renvoyee(s), passe " + (passe + 1));
                 for (int id : faux) altitude(id, voulu.get(id));   // altitude() espace les envois
-                Salle.sommeil(700);
+                suivre(() -> hauteursFausses(voulu).size(), 500, 1200);
             }
-            for (Map.Entry<Integer, Double> e : voulu.entrySet()) {
-                HFloorItem it = Salle.sol(e.getKey());
-                if (it != null && Math.abs(it.getTile().getZ() - e.getValue()) > 0.02) r.hauteursFausses++;
-            }
+            r.hauteursFausses = hauteursFausses(voulu).size();
         }
         if (!etats.isEmpty() && !stop.getAsBoolean()) r.etatsFaux = etats(gp, etats, stop);
         return r;
@@ -152,11 +201,18 @@ final class PoseDirecte {
             }
             if (reste.isEmpty()) return 0;
             for (int id : reste.keySet()) {
-                espacer();
+                Salle.espacer();
                 gp.sendToServer(new HPacket("UseFurniture", HMessage.Direction.TOSERVER, id, 0));
-                dernierEnvoi = System.currentTimeMillis();
             }
-            Salle.sommeil(500);
+            // jusqu'a ce que tous aient change d'etat (au plus 700 ms)
+            suivre(() -> {
+                int n = 0;
+                for (int id : reste.keySet()) {
+                    HFloorItem it = Salle.sol(id);
+                    if (it != null && Generateur.etatDe(it).equals(avant.get(id))) n++;
+                }
+                return n;
+            }, 700, 700);
             // ceux que l'utilisation ne change pas ne changeront jamais
             for (Iterator<Map.Entry<Integer, String>> i = reste.entrySet().iterator(); i.hasNext(); ) {
                 Map.Entry<Integer, String> e = i.next();
@@ -173,27 +229,114 @@ final class PoseDirecte {
         return faux;
     }
 
+    /** Une pose envoyee, en attente de son mobi. */
+    private static final class Attente {
+        final Sol s; final int type; final long envoye;
+        Attente(Sol s, int type, long envoye) { this.s = s; this.type = type; this.envoye = envoye; }
+    }
+
+    /**
+     * Les mobis apparus depuis le dernier passage : chacun est rattache a la
+     * plus ancienne pose en attente de meme type sur sa case, et recoit tout de
+     * suite son altitude. Les poses sans reponse depuis ATTENTE_MS sont perdues.
+     */
+    private static void rattraper(Deque<Attente> attente, Set<Integer> connus, Resultat r,
+                                  Map<Integer, Double> voulu, Map<Integer, String> etats, List<Object[]> aTourner,
+                                  int[] faits, int total, java.util.function.BiConsumer<Integer, Integer> progres,
+                                  boolean avecAltitude) {
+        if (attente.isEmpty()) return;
+        for (HFloorItem it : Salle.sols()) {
+            if (!connus.add(it.getId())) continue;
+            Attente trouve = null;
+            for (Attente a : attente)
+                if (a.type == it.getTypeId() && a.s.x == it.getTile().getX() && a.s.y == it.getTile().getY()) { trouve = a; break; }
+            if (trouve == null) continue;
+            attente.remove(trouve);
+            Sol s = trouve.s;
+            int id = it.getId();
+            r.sols.add(id);
+            r.solsPoses.put(id, s);
+            if (s.cle != -1) r.cles.put(s.cle, id);
+            voulu.put(id, s.z);
+            if (s.etat != null) etats.put(id, s.etat);
+            if (!GroupeCalcul.rotationAcceptee(Salle.rotation(it), s.rot, s.rot, false)) aTourner.add(new Object[]{id, s});
+            if (avecAltitude && Math.abs(it.getTile().getZ() - s.z) > 0.01) altitude(id, s.z);
+            progres.accept(++faits[0], total);
+        }
+        long trop = System.currentTimeMillis() - 4 * ATTENTE_MS;
+        attente.removeIf(a -> {
+            boolean perdu = a.envoye < trop;
+            if (perdu) { r.manquants++; r.solsRefuses.add(a.s); }
+            return perdu;
+        });
+    }
+
+    private static int rattraperMurs(Deque<Object[]> attendus, Set<Integer> connus, Resultat r, int fait, int total,
+                                     java.util.function.BiConsumer<Integer, Integer> progres) {
+        if (attendus.isEmpty()) return fait;
+        for (HWallItem w : Salle.murs()) {
+            if (!connus.add(w.getId())) continue;
+            Object[] trouve = null;
+            for (Object[] o : attendus) if ((Integer) o[0] == w.getTypeId()) { trouve = o; break; }
+            if (trouve != null) { attendus.remove(trouve); r.murs.add(w.getId()); progres.accept(++fait, total); }
+        }
+        return fait;
+    }
+
     /** @altitude : lue dans la liste du jeu ou retenue, cherchee seulement en dernier recours. */
     private static void altitude(int id, double z) {
-        espacer();
-        try { OutilMiroir.Altitude.mettre(id, z); } finally { dernierEnvoi = System.currentTimeMillis(); }
+        Salle.espacer();
+        try { OutilMiroir.Altitude.mettre(id, z); } finally { Salle.envoiFait(); }
     }
 
-    /** Au moins ECART_MS entre deux envois au serveur (pose ou altitude). */
-    static final long ECART_MS = 150;
-    private static volatile long dernierEnvoi = 0;
+    /** Ecart minimal entre deux envois au serveur (le rythme commun est dans Salle). */
+    static final long ECART_MS = Salle.ECART_MS;
 
-    private static void espacer() {
-        long attente = ECART_MS - (System.currentTimeMillis() - dernierEnvoi);
-        if (attente > 0) Salle.sommeil(attente);
-    }
-
-    /** Envoie un paquet en respectant l'ecart ; false si la connexion le refuse. */
+    /** Envoie un paquet a son tour dans le rythme des rafales ; false si la connexion le refuse. */
     private static boolean envoyer(GPresets gp, HPacket p) {
-        espacer();
+        Salle.espacer();
         try { return gp.sendToServer(p); }
         catch (Throwable t) { return false; }
-        finally { dernierEnvoi = System.currentTimeMillis(); }
+    }
+
+    /** Les mobis poses dont l'altitude n'est pas (encore) la bonne. */
+    private static List<Integer> hauteursFausses(Map<Integer, Double> voulu) {
+        List<Integer> faux = new ArrayList<>();
+        for (Map.Entry<Integer, Double> e : voulu.entrySet()) {
+            HFloorItem it = Salle.sol(e.getKey());
+            if (it != null && Math.abs(it.getTile().getZ() - e.getValue()) > 0.02) faux.add(e.getKey());
+        }
+        return faux;
+    }
+
+    /** Ceux de la liste {id, Sol} qui n'ont pas (encore) la rotation envoyee. */
+    private static List<Object[]> tournes(List<Object[]> l, Map<Integer, Integer> envoye) {
+        List<Object[]> r = new ArrayList<>();
+        for (Object[] o : l) {
+            Integer rot = envoye.get((Integer) o[0]);
+            HFloorItem it = Salle.sol((Integer) o[0]);
+            if (it == null) continue;                      // disparu : rien a tourner
+            if (rot == null || Salle.rotation(it) != rot) r.add(o);
+        }
+        return r;
+    }
+
+    /**
+     * Suivi d'une rafale : attend que « restants » tombe a 0, sans attendre
+     * pour rien : on s'arrete aussi quand plus rien n'a bouge depuis calmeMs
+     * (les restants sont refuses), et au plus maxMs. Rend le dernier compte.
+     */
+    static int suivre(java.util.function.IntSupplier restants, long calmeMs, long maxMs) {
+        long debut = System.currentTimeMillis(), change = debut;
+        int r = restants.getAsInt();
+        while (r > 0) {
+            long t = System.currentTimeMillis();
+            if (t - debut >= maxMs || t - change >= calmeMs) break;
+            Salle.sommeil(50);
+            int n = restants.getAsInt();
+            if (n != r) { r = n; change = System.currentTimeMillis(); }
+        }
+        return r;
     }
 
     // ---------------------------------------------------------------- envoi
@@ -270,24 +413,4 @@ final class PoseDirecte {
 
     // -------------------------------------------------------------- attente
 
-    private static int attendreSol(Set<Integer> avant, int type, int x, int y) {
-        long fin = System.currentTimeMillis() + ATTENTE_MS;
-        while (System.currentTimeMillis() < fin) {
-            Salle.sommeil(60);
-            for (HFloorItem it : Salle.sols())
-                if (!avant.contains(it.getId()) && it.getTypeId() == type
-                        && it.getTile().getX() == x && it.getTile().getY() == y) return it.getId();
-        }
-        return -1;
-    }
-
-    private static int attendreMur(Set<Integer> avant, int type) {
-        long fin = System.currentTimeMillis() + ATTENTE_MS;
-        while (System.currentTimeMillis() < fin) {
-            Salle.sommeil(60);
-            for (HWallItem w : Salle.murs())
-                if (!avant.contains(w.getId()) && w.getTypeId() == type) return w.getId();
-        }
-        return -1;
-    }
 }

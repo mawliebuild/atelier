@@ -254,22 +254,33 @@ public class OutilMiroir {
         reste.sort(Comparator.comparingDouble((Cible k) -> k.it.getTile().getZ()).thenComparingInt(k -> k.it.getId()));
         if (reste.isEmpty()) { dire.accept("Rien à déplacer : la zone est déjà symétrique."); return; }
 
+        // rafale suivie : les mobis partent au rythme commun ; ceux deja arrives
+        // recoivent leur altitude (@altitude connue) pendant que les suivants
+        // partent ; a la fin de la passe, on suit seulement les derniers en vol.
+        Set<Integer> hautEnvoyee = new HashSet<>();
         for (int passe = 1; passe <= 3 && !reste.isEmpty(); passe++) {
             dire.accept("Passe " + passe + " : " + reste.size() + " mobi(s) à déplacer...");
+            List<Cible> enVol = new ArrayList<>();
             for (Cible k : reste) {
                 int rot = (passe == 3 && k.rot != k.rotAvant) ? (k.rot + 4) & 7 : k.rot;
+                Salle.espacer();
                 Salle.deplacerSol(k.it.getId(), k.x, k.y, rot);
-                Salle.sommeil(200);
+                enVol.add(k);
+                hauteursArrivees(enVol, hautEnvoyee);
             }
-            Salle.sommeil(900);
-            List<Cible> encore = new ArrayList<>();
-            for (Cible k : reste) if (!arrive(k)) encore.add(k);
-            reste = encore;
+            final List<Cible> l = reste;
+            PoseDirecte.suivre(() -> nonArrives(l).size(), 700, 1500);
+            hauteursArrivees(enVol, hautEnvoyee);
+            reste = nonArrives(reste);
         }
         int bloques = reste.size();
 
-        // les hauteurs
-        Salle.sommeil(400);
+        // les hauteurs : on laisse arriver celles envoyees en route, puis verification
+        if (!hautEnvoyee.isEmpty()) {
+            List<Cible> envoyees = new ArrayList<>();
+            for (Cible k : toutes) if (hautEnvoyee.contains(k.it.getId())) envoyees.add(k);
+            PoseDirecte.suivre(() -> hauteursFausses(envoyees).size(), 400, 900);
+        }
         List<Cible> aRegler = new ArrayList<>();
         for (Cible k : toutes) {
             if (reste.contains(k)) continue;
@@ -280,23 +291,24 @@ public class OutilMiroir {
         }
         String hauteurs = "";
         if (!aRegler.isEmpty()) {
-            if (!Altitude.connue() && chercher) {
-                dire.accept("Recherche de @altitude...");
+            // le premier mobi verifie la variable retenue (ou la retrouve) avant la rafale
+            if (!Altitude.confirmee() && (Altitude.connue() || chercher)) {
+                if (!Altitude.connue()) dire.accept("Recherche de @altitude...");
                 Cible k = aRegler.get(0);
-                Altitude.chercher(k.it.getId(), voulu(k));
+                Salle.espacer();
+                Altitude.mettre(k.it.getId(), voulu(k));
+                Salle.envoiFait();
+                aRegler = hauteursFausses(aRegler);
             }
-            if (Altitude.connue()) {
+            if (aRegler.isEmpty()) hauteurs = " Hauteurs remises.";
+            else if (Altitude.connue()) {
                 int faux = 0;
                 for (int passe = 1; passe <= 2; passe++) {
                     dire.accept("Hauteurs : passe " + passe + ", " + aRegler.size() + " mobi(s)...");
-                    for (Cible k : aRegler) { Altitude.ecrire(k.it.getId(), voulu(k)); Salle.sommeil(200); }
-                    Salle.sommeil(800);
-                    List<Cible> encore = new ArrayList<>();
-                    for (Cible k : aRegler) {
-                        HFloorItem now = Salle.sol(k.it.getId());
-                        if (now == null || Math.abs(now.getTile().getZ() - voulu(k)) > 0.05) encore.add(k);
-                    }
-                    aRegler = encore;
+                    for (Cible k : aRegler) { Salle.espacer(); Altitude.ecrire(k.it.getId(), voulu(k)); }
+                    final List<Cible> l = aRegler;
+                    PoseDirecte.suivre(() -> hauteursFausses(l).size(), 500, 1200);
+                    aRegler = hauteursFausses(aRegler);
                     if (aRegler.isEmpty()) break;
                 }
                 faux = aRegler.size();
@@ -323,6 +335,37 @@ public class OutilMiroir {
 
     private static double voulu(Cible k) {
         return Generateur.arrondi(Math.max(0, Salle.hauteurSol(k.x, k.y)) + k.zSol);
+    }
+
+    private static List<Cible> nonArrives(List<Cible> l) {
+        List<Cible> r = new ArrayList<>();
+        for (Cible k : l) if (!arrive(k)) r.add(k);
+        return r;
+    }
+
+    private static List<Cible> hauteursFausses(List<Cible> l) {
+        List<Cible> r = new ArrayList<>();
+        for (Cible k : l) {
+            HFloorItem now = Salle.sol(k.it.getId());
+            if (now == null || Math.abs(now.getTile().getZ() - voulu(k)) > 0.05) r.add(k);
+        }
+        return r;
+    }
+
+    /** Ceux de enVol deja arrives en sortent, et recoivent leur altitude s'ils ne l'ont pas (une fois). */
+    private static void hauteursArrivees(List<Cible> enVol, Set<Integer> envoyees) {
+        boolean connue = Altitude.connue();
+        for (Iterator<Cible> i = enVol.iterator(); i.hasNext(); ) {
+            Cible k = i.next();
+            if (!arrive(k)) continue;
+            i.remove();
+            if (!connue || !Altitude.connue()) continue;
+            HFloorItem now = Salle.sol(k.it.getId());
+            if (now == null || Math.abs(now.getTile().getZ() - voulu(k)) <= 0.05 || !envoyees.add(k.it.getId())) continue;
+            Salle.espacer();
+            Altitude.ecrireVerifiee(k.it.getId(), voulu(k));
+            Salle.envoiFait();
+        }
     }
 
     private static boolean arrive(Cible k) {
@@ -356,6 +399,19 @@ public class OutilMiroir {
         private static final List<Runnable> ecouteurs = new java.util.concurrent.CopyOnWriteArrayList<>();
 
         static boolean connue() { return variable != null; }
+
+        /** Vue marcher pendant cette session : ecrire() suffit, sans verification. */
+        static boolean confirmee() { return variable != null && confirmee; }
+
+        /** La variable retenue est fausse : oubliee, et retiree des preferences (pas reprise au lancement suivant). */
+        private static void oublier(String fausse) {
+            variable = null;
+            confirmee = false;
+            try {
+                if (fausse != null && fausse.equals(PREFS.get("altitude.variable", null))) PREFS.remove("altitude.variable");
+            } catch (Throwable ignored) { }
+            Journal.debug("@altitude : la variable retenue " + fausse + " ne marche pas, oubliée.");
+        }
 
         private static void retenir(String var) {
             variable = var; facteur = 100; confirmee = true;
@@ -396,18 +452,32 @@ public class OutilMiroir {
             if (!confirmee) demanderListe();
             if (variable != null && confirmee) { ecrire(idMobi, z); return; }
             if (variable != null) {
+                String essai = variable;
+                HFloorItem avant = Salle.sol(idMobi);
+                if (avant != null && Math.abs(avant.getTile().getZ() - z) < 0.05) return;   // deja a sa hauteur : rien a verifier
                 ecrire(idMobi, z);
-                for (int i = 0; i < 8; i++) {
+                for (int i = 0; i < 12; i++) {
                     Salle.sommeil(60);
                     HFloorItem it = Salle.sol(idMobi);
                     if (it != null && Math.abs(it.getTile().getZ() - z) < 0.05) { confirmee = true; return; }
                 }
-                variable = null;                  // retenue mais fausse : on cherche
+                oublier(essai);                   // retenue mais fausse : on cherche
             }
             chercher(idMobi, z);
         }
 
         static String variable() { return variable; }
+
+        /**
+         * Pour les rafales : ecrire() seulement si la variable a deja marche
+         * pendant cette session ; sinon mettre() (variable retenue verifiee sur
+         * ce mobi, a defaut liste du jeu, a defaut recherche). Ainsi le premier
+         * mobi d'une rafale verifie la variable avant que les autres partent.
+         */
+        static void ecrireVerifiee(int idMobi, double z) {
+            if (confirmee()) ecrire(idMobi, z);
+            else mettre(idMobi, z);
+        }
 
         /** Appele par OngletWired quand il a appris @altitude de son cote. */
         static void apprendre(String var, int fact) {
@@ -437,7 +507,7 @@ public class OutilMiroir {
             if (it == null) return false;
             if (demanderListe()) { ecrire(idMobi, voulu); return true; }
             if (essaiRate) return false;
-            variable = null;
+            if (variable != null) oublier(variable);
             Journal.debug("@altitude absente de la liste du jeu : essai des variables -100 à -140 sur le mobi " + idMobi + ".");
             for (int v = -100; v >= -140 && variable == null; v--) {
                 String cand = String.valueOf(v);

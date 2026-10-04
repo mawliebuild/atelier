@@ -50,7 +50,21 @@ public class OngletGalerie {
     private static void succes(String m) { Journal.succes(Ui.majuscule(m)); }
     private static void erreur(String m) { Journal.erreur(Ui.majuscule(m)); }
 
-    public OngletGalerie(String css) { this.css = css; }
+    public OngletGalerie(String css) { this.css = css; instance = this; }
+
+    private static volatile OngletGalerie instance;
+
+    /** Un fichier libre dans la galerie pour ce nom (« nom (2).png »...) : pour y ajouter une image d'ailleurs. */
+    static File fichierLibre(String nom) {
+        nom = nom.replaceAll("[\\\\/:*?\"<>|\\p{Cntrl}]", "").trim();
+        return libre(nom.isEmpty() ? "Photo.png" : nom);
+    }
+
+    /** Relit la galerie (apres un ajout fait d'ailleurs, ex. la photo de l'appart). */
+    static void actualiser() {
+        OngletGalerie g = instance;
+        if (g != null) Platform.runLater(g::rafraichir);
+    }
 
     static File dossier() {
         File d = new File(Capture.dossierSortie(), "Galerie");
@@ -62,7 +76,11 @@ public class OngletGalerie {
         Button ajouter = new Button("Ajouter des photos…");
         ajouter.getStyleClass().add("primaire");
         ajouter.setOnAction(e -> choisir());
+        ajouter.setGraphic(Icones.petite(Icones.PLUS, 16, true));
+        ajouter.setGraphicTextGap(6);
         Button coller = new Button("Coller une image");
+        coller.setGraphic(Icones.petite(Icones.COLLER, 16, false));
+        coller.setGraphicTextGap(6);
         coller.setOnAction(e -> collerPressePapier());
 
         grille.setPrefColumns(3);
@@ -333,17 +351,30 @@ public class OngletGalerie {
         Label nom = new Label(f.getName().replaceFirst("\\.[^.]+$", ""));
         nom.setMaxWidth(VIGNETTE + 8);
         nom.setStyle("-fx-font-size: 11px;");
-        VBox b = new VBox(4, cadre, nom);
-        if (!sesTags.isEmpty()) {
-            Label t = new Label(String.join(" · ", sesTags));
-            t.setMaxWidth(VIGNETTE + 8);
-            t.setStyle("-fx-font-size: 10px; -fx-text-fill: #7C776C;");
-            b.getChildren().add(t);
-        }
+        // nom long : sur deux lignes au plus, et en entier dans la bulle
+        nom.setWrapText(true);
+        nom.setMaxHeight(30);
+        Tooltip bulleNom = new Tooltip(nom.getText());
+        bulleNom.setShowDelay(javafx.util.Duration.millis(150));
+        nom.setTooltip(bulleNom);
+        // Renommer / supprimer, directement sur la carte
+        Button btRenommer = petitBouton(Icones.CRAYON, "Renommer la photo");
+        btRenommer.setOnAction(e -> renommer(f));
+        Button btSuppr = petitBouton(Icones.CORBEILLE, "Supprimer de la galerie");
+        btSuppr.setOnAction(e -> supprimer(f));
+        Region vide = new Region();
+        HBox.setHgrow(vide, Priority.ALWAYS);
+        HBox ligneNom = new HBox(2, nom, vide, btRenommer, btSuppr);
+        ligneNom.setAlignment(Pos.CENTER_LEFT);
+        ligneNom.setMaxWidth(VIGNETTE + 8);
+        HBox.setHgrow(nom, Priority.ALWAYS);
+        nom.setMinWidth(0);
+        VBox b = new VBox(4, cadre, ligneNom, pastilles(f, sesTags));
         b.setAlignment(Pos.TOP_CENTER);
         b.setCursor(Cursor.HAND);
         b.setOnMouseClicked(e -> {
-            if (e.getButton() == javafx.scene.input.MouseButton.PRIMARY && e.isStillSincePress()) Visionneuse.ouvrir(css, f);
+            if (e.getButton() == javafx.scene.input.MouseButton.PRIMARY && e.isStillSincePress()
+                    && !surUnBouton(e.getPickResult().getIntersectedNode(), b)) Visionneuse.ouvrir(css, f);
         });
         // reorganiser : glisser une photo sur une autre
         b.setOnDragDetected(e -> {
@@ -378,21 +409,124 @@ public class OngletGalerie {
         tagsItem.setOnAction(e -> editerTags(f));
         MenuItem renommer = new MenuItem("Renommer…");
         renommer.setOnAction(e -> renommer(f));
-        MenuItem suppr = new MenuItem("Retirer de la galerie");
-        suppr.setOnAction(e -> {
-            Alert a = new Alert(Alert.AlertType.CONFIRMATION, "Retirer « " + f.getName() + " » de la galerie ? "
-                    + "La copie de la galerie est supprimée (l'image d'origine n'est pas touchée).",
-                    ButtonType.OK, ButtonType.CANCEL);
-            a.setHeaderText(null);
-            if (a.showAndWait().orElse(ButtonType.CANCEL) == ButtonType.OK) {
-                if (!f.delete()) erreur("Impossible de retirer « " + f.getName() + " ».");
-                else { Properties p = lireTags(); if (p.remove(f.getName()) != null) ecrireTags(p); }
-                rafraichir();
-            }
-        });
+        MenuItem suppr = new MenuItem("Supprimer de la galerie");
+        suppr.setOnAction(e -> supprimer(f));
         ContextMenu cm = new ContextMenu(ouvrir, tagsItem, renommer, suppr);
         b.setOnContextMenuRequested(e -> cm.show(b, e.getScreenX(), e.getScreenY()));
         return b;
+    }
+
+    /** Le clic est-il tombe sur un bouton de la carte (renommer, supprimer, tags) ? */
+    private static boolean surUnBouton(javafx.scene.Node n, javafx.scene.Node carte) {
+        for (; n != null && n != carte; n = n.getParent()) if (n instanceof ButtonBase) return true;
+        return false;
+    }
+
+    /** Petit bouton icone de la carte, avec bulle. */
+    private static Button petitBouton(String icone, String aide) {
+        javafx.scene.shape.SVGPath ic = Icones.trace(icone, "icone");
+        ic.setStyle("-fx-stroke: #5A564C;");
+        ic.setScaleX(0.7); ic.setScaleY(0.7);
+        Button bt = new Button();
+        bt.setGraphic(ic);
+        bt.setFocusTraversable(false);
+        bt.setStyle("-fx-background-color: transparent; -fx-padding: 0 1 0 1; -fx-cursor: hand;");
+        Tooltip tt = new Tooltip(aide);
+        tt.setShowDelay(javafx.util.Duration.millis(150));
+        bt.setTooltip(tt);
+        return bt;
+    }
+
+    /** Les tags de la photo en pastilles (× pour retirer), et « + » pour en ajouter. */
+    private FlowPane pastilles(File f, List<String> sesTags) {
+        FlowPane fp = new FlowPane(3, 3);
+        fp.setMaxWidth(VIGNETTE + 8);
+        fp.setPrefWrapLength(VIGNETTE + 8);
+        String style = "-fx-font-size: 10px; -fx-background-radius: 8; -fx-padding: 0 4 0 6;";
+        for (String t : sesTags) {
+            Label l = new Label(t);
+            l.setStyle("-fx-font-size: 10px; -fx-text-fill: #3E86AC;");
+            Button x = new Button("×");
+            x.setFocusTraversable(false);
+            x.setStyle("-fx-background-color: transparent; -fx-padding: 0 0 0 2; -fx-font-size: 10px; -fx-text-fill: #7C776C; -fx-cursor: hand;");
+            x.setTooltip(new Tooltip("Retirer le tag « " + t + " »"));
+            x.setOnAction(e -> retirerTag(f, t));
+            HBox chip = new HBox(0, l, x);
+            chip.setAlignment(Pos.CENTER_LEFT);
+            chip.setStyle(style + "-fx-background-color: #E4EEF3;");
+            fp.getChildren().add(chip);
+        }
+        Button plus = new Button("+ Tag");
+        plus.setFocusTraversable(false);
+        plus.setStyle(style + "-fx-background-color: #ECEAE0; -fx-text-fill: #5A564C; -fx-cursor: hand;");
+        plus.setOnAction(e -> menuAjoutTag(f, sesTags).show(plus, javafx.geometry.Side.BOTTOM, 0, 0));
+        fp.getChildren().add(plus);
+        return fp;
+    }
+
+    /** Tags deja utilises que la photo n'a pas, puis « Nouveau tag… ». */
+    private ContextMenu menuAjoutTag(File f, List<String> sesTags) {
+        Properties p = lireTags();
+        Set<String> connus = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
+        for (File x : toutes) connus.addAll(tagsDe(p, x));
+        ContextMenu m = new ContextMenu();
+        for (String t : connus) {
+            if (sesTags.stream().anyMatch(t::equalsIgnoreCase)) continue;
+            MenuItem it = new MenuItem(t);
+            it.setOnAction(e -> ajouterTag(f, t));
+            m.getItems().add(it);
+        }
+        if (!m.getItems().isEmpty()) m.getItems().add(new SeparatorMenuItem());
+        MenuItem nouveau = new MenuItem("Nouveau tag…");
+        nouveau.setOnAction(e -> {
+            TextInputDialog d = new TextInputDialog();
+            d.setTitle("Nouveau tag");
+            d.setHeaderText(null);
+            d.setContentText("Tag (plusieurs : séparés par des virgules) :");
+            d.showAndWait().ifPresent(n -> { for (String t : n.split(",")) ajouterTag(f, t); });
+        });
+        m.getItems().add(nouveau);
+        return m;
+    }
+
+    private void ajouterTag(File f, String brut) {
+        String t = brut == null ? "" : brut.replaceAll("[=:,\\p{Cntrl}]", "").trim();
+        if (t.isEmpty()) return;
+        Properties p = lireTags();
+        Set<String> connus = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
+        for (File x : toutes) connus.addAll(tagsDe(p, x));
+        // meme ecriture qu'un tag deja utilise (« noel » -> « Noël » si deja la)
+        String k = connus.stream().filter(c -> c.equalsIgnoreCase(t)).findFirst().orElse(Ui.majuscule(t));
+        List<String> l = tagsDe(p, f);
+        if (l.stream().anyMatch(k::equalsIgnoreCase)) return;
+        l.add(k);
+        p.setProperty(f.getName(), String.join(", ", l));
+        ecrireTags(p);
+        rafraichir();
+    }
+
+    private void retirerTag(File f, String t) {
+        Properties p = lireTags();
+        List<String> l = tagsDe(p, f);
+        l.removeIf(t::equalsIgnoreCase);
+        if (l.isEmpty()) p.remove(f.getName()); else p.setProperty(f.getName(), String.join(", ", l));
+        ecrireTags(p);
+        rafraichir();
+    }
+
+    /** Supprime la copie de la galerie (l'image d'origine n'est pas touchee), apres confirmation. */
+    private void supprimer(File f) {
+        String nomPhoto = f.getName().replaceFirst("\\.[^.]+$", "");
+        Alert a = new Alert(Alert.AlertType.CONFIRMATION, "Supprimer « " + nomPhoto + " » de la galerie ? "
+                + "L'image d'origine n'est pas touchée.", ButtonType.OK, ButtonType.CANCEL);
+        a.setHeaderText(null);
+        if (grille.getScene() != null) a.initOwner(grille.getScene().getWindow());
+        if (a.showAndWait().orElse(ButtonType.CANCEL) != ButtonType.OK) return;
+        if (!f.delete()) { erreur("Impossible de supprimer « " + nomPhoto + " »."); return; }
+        Properties p = lireTags();
+        if (p.remove(f.getName()) != null) ecrireTags(p);
+        succes("Photo « " + nomPhoto + " » supprimée de la galerie.");
+        rafraichir();
     }
 
     private void renommer(File f) {

@@ -256,7 +256,13 @@ public final class WiredLecteur {
         nomme(gp, "WiredFurniVariable", "variable");
         if (!poses.contains("WiredAllVariablesDiffs")) try {
             gp.intercept(HMessage.Direction.TOCLIENT, "WiredAllVariablesDiffs", m -> {
-                try { recevoirVariables(m); } catch (Throwable ignored) { }
+                // Liste de toutes les variables de la salle (gros paquet, frequent dans
+                // les salles de jeu) : lue sur le fil VARIABLES, pas ici.
+                try {
+                    boolean pourMoi = System.currentTimeMillis() <= attenteVariablesJusqua;
+                    HPacket copie = new HPacket(m.getPacket());
+                    VARIABLES.execute(() -> { try { recevoirVariables(copie, pourMoi); } catch (Throwable ignored) { } });
+                } catch (Throwable ignored) { }
             });
             poses.add("WiredAllVariablesDiffs");
         } catch (Throwable t) {
@@ -389,10 +395,30 @@ public final class WiredLecteur {
         if (parNomOk || attendu == 0 || m.isBlocked()) return;
         int taille = m.getPacket().getBytesLength();
         if (taille < 30 || taille > 20000) return;
+        // Ce repli voit passer TOUS les paquets recus pendant l'attente : avant de
+        // decoder, un simple balayage des octets (la reponse porte l'id demande).
+        if (!contientEntier(m.getPacket().toBytes(), attendu)) return;
         String g = genreDe(classeAttendue);
         recevoir(m, g, false);
         if (g.equals("add-on") && demandes.contains(attendu)) recevoir(m, "variable", false);
     }
+
+    /** Les 4 octets de v (gros-boutiste) figurent-ils apres l'en-tete ? Logique pure. */
+    static boolean contientEntier(byte[] b, int v) {
+        if (b == null) return false;
+        byte b0 = (byte) (v >>> 24), b1 = (byte) (v >>> 16), b2 = (byte) (v >>> 8), b3 = (byte) v;
+        for (int i = 6; i + 3 < b.length; i++)
+            if (b[i] == b0 && b[i + 1] == b1 && b[i + 2] == b2 && b[i + 3] == b3) return true;
+        return false;
+    }
+
+    /** Un seul fil pour lire les listes de variables, dans l'ordre d'arrivee. */
+    private static final java.util.concurrent.ExecutorService VARIABLES =
+            java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+                Thread t = new Thread(r, "atelier-wired-variables");
+                t.setDaemon(true);
+                return t;
+            });
 
     /** Genre de paquet attendu d'apres le nom technique du wired. */
     static String genreDe(String classe) {
@@ -409,9 +435,7 @@ public final class WiredLecteur {
      * WiredAllVariablesDiffs : (int, boolean, int n, n x String supprimes,
      * int m, m x (int, HWiredVariable)). Lecture recopiee de l'exporteur.
      */
-    private static void recevoirVariables(HMessage m) {
-        boolean pourMoi = System.currentTimeMillis() <= attenteVariablesJusqua;
-        HPacket p = new HPacket(m.getPacket());
+    private static void recevoirVariables(HPacket p, boolean pourMoi) {
         p.resetReadIndex();
         p.readInteger();
         boolean dernier = p.readBoolean();

@@ -936,6 +936,39 @@ public final class Groupes {
 
     static void apercuPerdu() { GroupeApercu.perdu(); prevenir(); }
 
+    /**
+     * Fantomes d'une copie a placer (Dupliquer, Coller) : les mobis du calque
+     * (ids null) ou ceux donnes, transformes par tr, des sortes cochees.
+     * Rien ne part au serveur. Appels rapproches : seul le dernier compte.
+     */
+    public static boolean previsualiserCopie(String calqueId, List<Set<Integer>> ids, GroupeCalcul.Transfo tr,
+                                             boolean sols, boolean murs, boolean wired) {
+        installer();
+        if (ids == null && (calqueId == null || GroupeModele.estDecor(calqueId) || info(calqueId) == null)) return false;
+        GroupeApercu.vouloir(new GroupeApercu.Demande(calqueId, ids, tr, sols, murs, wired));
+        return true;
+    }
+
+    /** Calque au-dessus duquel ranger une copie collee (null : en haut). */
+    static String dessusCollage(String dessus) {
+        return dessus == null || SELECTION.equals(dessus) || GroupeModele.estBase(dessus) ? null : dessus;
+    }
+
+    /**
+     * Pose VRAIE de la copie placee avec les fantomes, a leur place exacte
+     * (pose hybride : rafale directe + @altitude, puis la dalle magique pour
+     * les seuls mobis refuses ; voir PoseHybride). Devient un nouveau calque rangé au-dessus
+     * de « dessus » (null : en haut). Permis sur un calque verrouille (copie).
+     * @param calqueId calque d'origine (null si ids donnes : copie collee)
+     * @param ids      null : les mobis du calque
+     */
+    public static Tache poserCopie(String calqueId, List<Set<Integer>> ids, String dessus, GroupeCalcul.Transfo tr,
+                                   boolean sols, boolean murs, boolean wired, Generateur.Source source, Progression p) {
+        String origine = ids == null ? calqueId : null;
+        return lancer("dupliquer", origine, false, p, t -> GroupeActions.poserCopie(t,
+                ids != null ? ids : mobis(calqueId), dessus, tr, sols, murs, wired, source));
+    }
+
     /** Ce que donnerait un deplacement / une duplication de (dx, dy). */
     public static Simulation simuler(String calqueId, int dx, int dy) {
         List<Set<Integer>> ids = mobis(calqueId);
@@ -1001,7 +1034,11 @@ public final class Groupes {
         return lancer("deplacer", calqueId, true, p, t -> GroupeActions.deplacer(t, calqueId, dx, dy));
     }
 
-    /** Deplace ET pivote (quarts de tour horaires) le calque, d'un seul coup. */
+    /**
+     * Deplace ET pivote (quarts de tour horaires) le calque, d'un seul coup :
+     * MoveObject en rafale + @altitude, puis la dalle magique pour les seuls
+     * mobis refuses ou restes a une mauvaise hauteur (PoseHybride).
+     */
     public static Tache deplacer(String calqueId, int dx, int dy, int quarts, Progression p) {
         return lancer("deplacer", calqueId, true, p, t -> GroupeActions.deplacerAvecDalles(t, calqueId, quarts, dx, dy));
     }
@@ -1075,6 +1112,58 @@ public final class Groupes {
             t.finir(r);
         });
         return t;
+    }
+
+    /** Ou sont des mobis (calque, selection), note AVANT de les ramasser. */
+    static final class Appartenance {
+        final Map<Integer, String> sols = new HashMap<>(), murs = new HashMap<>();
+        final Set<Integer> selS = new HashSet<>(), selM = new HashSet<>();
+    }
+
+    /**
+     * Pour la pose hybride : note le calque (et la selection) de ces mobis
+     * avant qu'ils soient ramasses pour etre reposes avec la dalle (la
+     * surveillance oublie les ids disparus de la salle).
+     */
+    static Appartenance appartenance(Collection<Integer> sols, Collection<Integer> murs) {
+        Appartenance a = new Appartenance();
+        for (int id : sols) { String c = calqueDe(id, false); if (c != null && !MOBIS.equals(c)) a.sols.put(id, c); }
+        for (int id : murs) { String c = calqueDe(id, true); if (c != null && !MOBIS.equals(c)) a.murs.put(id, c); }
+        Selection sel = selection();
+        for (int id : sols) if (sel.sols.contains(id)) a.selS.add(id);
+        for (int id : murs) if (sel.murs.contains(id)) a.selM.add(id);
+        return a;
+    }
+
+    /**
+     * Les mobis reposes avec la dalle (ancien id -> nouvel id) reprennent la
+     * place notee dans « avant » : meme calque, et la selection s'ils y
+     * etaient. Les anciens ids sont oublies. Sans controle des verrous : c'est
+     * l'action en cours qui les a remplaces.
+     */
+    static void remplacerIds(Appartenance avant, Map<Integer, Integer> sols, Map<Integer, Integer> murs) {
+        if (sols.isEmpty() && murs.isEmpty()) return;
+        Map<String, List<Integer>> versS = new LinkedHashMap<>(), versM = new LinkedHashMap<>();
+        List<Integer> selS = new ArrayList<>(), selM = new ArrayList<>();
+        for (Map.Entry<Integer, Integer> e : sols.entrySet()) {
+            String c = avant.sols.get(e.getKey());
+            if (c != null) versS.computeIfAbsent(c, k -> new ArrayList<>()).add(e.getValue());
+            if (avant.selS.contains(e.getKey())) selS.add(e.getValue());
+        }
+        for (Map.Entry<Integer, Integer> e : murs.entrySet()) {
+            String c = avant.murs.get(e.getKey());
+            if (c != null) versM.computeIfAbsent(c, k -> new ArrayList<>()).add(e.getValue());
+            if (avant.selM.contains(e.getKey())) selM.add(e.getValue());
+        }
+        oublierIds(sols.keySet(), murs.keySet());
+        Set<String> calques = new LinkedHashSet<>(versS.keySet());
+        calques.addAll(versM.keySet());
+        for (String c : calques)
+            ajouterSansVerrou(c, versS.getOrDefault(c, List.of()), versM.getOrDefault(c, List.of()));
+        if (!selS.isEmpty() || !selM.isEmpty()) {
+            retirerSelection(sols.keySet(), murs.keySet());
+            ajouterSelection(selS, selM);
+        }
     }
 
     /** Pour GroupeActions : oublie des ids ramasses. */

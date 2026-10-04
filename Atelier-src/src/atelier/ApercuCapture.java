@@ -19,60 +19,79 @@ import java.awt.image.BufferedImage;
 import java.io.File;
 
 /**
- * La photo de l'appart, juste apres la capture : on la voit, on choisit le
- * fond AUTOUR de la salle, et on enregistre.
+ * La photo de l'appart, juste apres la capture : on la voit (animee pour un
+ * GIF), on choisit le fond AUTOUR de la salle, et on enregistre.
  *
  *   Couleur de décor   la couleur du toner de l'appart (s'il est allume) ;
- *   Transparent        pas de fond (damier dans l'apercu) ;
+ *   Transparent        pas de fond (damier dans l'apercu ; pas en JPG) ;
  *   Autre couleur      la palette : le fond change en temps reel.
  *
- * Temps reel sans recalcul : l'image detouree (fond transparent) est posee
- * une fois sur un panneau dont seule la couleur change. Le vrai compositage
- * (Capture.cadrer) ne se fait qu'a l'enregistrement, en PNG.
+ * Temps reel sans recalcul : les images detourees (fond transparent) sont
+ * posees sur un panneau dont seule la couleur change. Le vrai compositage ne se
+ * fait qu'a l'enregistrement, dans le format choisi avant la photo.
+ * « Enregistrer » ouvre la fenetre du systeme (Finder / Explorateur) dans
+ * Telechargements : on y choisit l'endroit et le nom.
  */
 final class ApercuCapture {
 
     private static final double LARGEUR_MAX = 900, HAUTEUR_MAX = 600;
 
-    /** Ouvre l'apercu (fil JavaFX). planche : la salle detouree ; r : ses reglages. */
-    static void ouvrir(String css, Capture.Planche planche, Capture.Reglages r, Runnable reglages) {
+    /** Ouvre l'apercu. planches : la salle detouree (plusieurs = GIF anime) ; r : ses reglages. */
+    static void ouvrir(String css, java.util.List<Capture.Planche> planches, Capture.Reglages r,
+                       Capture.Format format, int delaiMs) {
         Platform.runLater(() -> {
-            try { new ApercuCapture(css, planche, r, reglages); }
+            try { new ApercuCapture(css, planches, r, format, delaiMs); }
             catch (Throwable t) { Journal.erreur("L'aperçu de la photo n'a pas pu s'ouvrir", t); }
         });
     }
 
     private final Stage stage = new Stage();
-    private final Capture.Planche planche;
+    private final java.util.List<Capture.Planche> planches;
     private final Capture.Reglages r;
+    private final Capture.Format format;
+    private final int delai;
     private final StackPane fond = new StackPane();
-    private final Label etat = Ui.etat();
-    private double prisX, prisY;
+    private javafx.animation.Timeline anim;
 
-    private ApercuCapture(String css, Capture.Planche planche, Capture.Reglages r, Runnable reglages) {
-        this.planche = planche;
+    private ApercuCapture(String css, java.util.List<Capture.Planche> planches, Capture.Reglages r,
+                          Capture.Format format, int delaiMs) {
+        this.planches = planches;
         this.r = r;
+        this.format = format;
+        this.delai = delaiMs;
         stage.initStyle(StageStyle.TRANSPARENT);
         stage.setAlwaysOnTop(true);
         stage.setTitle("Photo de l'appart");
 
-        // --- image detouree, posee sur le fond colore
+        // --- images detourees (meme decoupe pour toutes), posees sur le fond colore
         Capture.Reglages sans = copie(r);
         sans.fond = -1;
-        BufferedImage img = Capture.cadrer(planche, sans);
-        ImageView vue = new ImageView(versFx(img));
+        java.util.List<BufferedImage> imgs = images(sans);
+        BufferedImage img0 = imgs.get(0);
+        ImageView vue = new ImageView(versFx(img0));
         vue.setPreserveRatio(true);
-        double k = Math.min(1, Math.min(LARGEUR_MAX / img.getWidth(), HAUTEUR_MAX / img.getHeight()));
-        vue.setFitWidth(img.getWidth() * k);
-        vue.setFitHeight(img.getHeight() * k);
+        double k = Math.min(1, Math.min(LARGEUR_MAX / img0.getWidth(), HAUTEUR_MAX / img0.getHeight()));
+        vue.setFitWidth(img0.getWidth() * k);
+        vue.setFitHeight(img0.getHeight() * k);
         fond.getChildren().add(vue);
         fond.setMaxSize(vue.getFitWidth(), vue.getFitHeight());
+        if (imgs.size() > 1) {
+            java.util.List<WritableImage> fx = new java.util.ArrayList<>();
+            for (BufferedImage b : imgs) fx.add(versFx(b));
+            int[] i = {0};
+            anim = new javafx.animation.Timeline(new javafx.animation.KeyFrame(
+                    javafx.util.Duration.millis(Math.max(50, delaiMs)), e -> vue.setImage(fx.get(i[0] = (i[0] + 1) % fx.size()))));
+            anim.setCycleCount(javafx.animation.Animation.INDEFINITE);
+            anim.play();
+            stage.setOnHidden(e -> anim.stop());
+        }
 
         // --- choix du fond
         Capture.Toner toner = null;
         try { toner = Capture.tonerDeLaSalle(); } catch (Throwable ignored) { }
         boolean tonerOk = toner != null && toner.allume();
         int couleurDecor = tonerOk ? toner.couleur() : 0;
+        boolean jpg = format == Capture.Format.JPG;
 
         ToggleGroup g = new ToggleGroup();
         RadioButton decor = new RadioButton("Couleur de décor");
@@ -81,7 +100,9 @@ final class ApercuCapture {
         for (RadioButton b : new RadioButton[]{decor, transparent, autre}) b.setToggleGroup(g);
         decor.setDisable(!tonerOk);
         if (!tonerOk) decor.setTooltip(new Tooltip("Pas de couleur de décor allumée dans l'appart."));
-        ColorPicker palette = new ColorPicker(tonerOk ? couleur(couleurDecor) : Color.web("#7AB6D3"));
+        transparent.setDisable(jpg);
+        if (jpg) transparent.setTooltip(new Tooltip("Le JPG n'a pas de transparence."));
+        ColorPicker palette = new ColorPicker(tonerOk ? couleur(couleurDecor) : jpg ? Color.WHITE : Color.web("#7AB6D3"));
         palette.setPrefWidth(56);
         palette.disableProperty().bind(autre.selectedProperty().not());
 
@@ -92,63 +113,90 @@ final class ApercuCapture {
         };
         g.selectedToggleProperty().addListener((o, a, b) -> maj.run());
         palette.valueProperty().addListener((o, a, b) -> maj.run());
-        (tonerOk ? decor : transparent).setSelected(true);
+        (tonerOk ? decor : jpg ? autre : transparent).setSelected(true);
         maj.run();
 
-        Button enregistrer = new Button("Enregistrer");
+        Button enregistrer = new Button("Enregistrer…");
         enregistrer.getStyleClass().add("primaire");
+        enregistrer.setDefaultButton(true);
+        enregistrer.setGraphic(Icones.petite(Icones.ENREGISTRER, 16, true));
+        enregistrer.setGraphicTextGap(7);
         Button fermer = new Button("Fermer");
         fermer.setOnAction(e -> stage.close());
         enregistrer.setOnAction(e -> {
             int f = decor.isSelected() ? couleurDecor : autre.isSelected() ? rgb(palette.getValue()) : -1;
+            java.io.File dest = choisirFichier();
+            if (dest == null) return;
             enregistrer.setDisable(true);
-            Salle.tache("capture-enregistrer", () -> enregistrer(f, enregistrer));
+            Salle.tache("capture-enregistrer", () -> enregistrer(f, dest, enregistrer));
         });
-        Hyperlink plus = new Hyperlink("Plus de réglages");
-        plus.setOnAction(e -> { if (reglages != null) reglages.run(); });
 
+        Button galerie = new Button("Ajouter à la galerie");
+        galerie.setGraphic(Icones.petite(Icones.GALERIE, 16, false));
+        galerie.setGraphicTextGap(7);
+        galerie.setOnAction(e -> {
+            int f = decor.isSelected() ? couleurDecor : autre.isSelected() ? rgb(palette.getValue()) : -1;
+            String salle = null;
+            try { salle = NomSalle.nomValide(Salle.gp()); } catch (Throwable ignored) { }
+            java.io.File dest = OngletGalerie.fichierLibre(Capture.nomDeFichier(salle, format).getName());
+            galerie.setDisable(true);
+            Salle.tache("capture-galerie", () -> {
+                enregistrer(f, dest, galerie, false);
+                if (dest.isFile()) { OngletGalerie.actualiser(); Journal.succes("Photo ajoutée à la galerie."); }
+            });
+        });
+
+        Label info = Ui.discret(format.name() + (imgs.size() > 1 ? " animé · " + imgs.size() + " images" : "")
+                + " · " + img0.getWidth() + " × " + img0.getHeight() + " px");
         VBox corps = new VBox(10,
                 fond,
-                Ui.ligne(decor, transparent, autre, palette),
-                Ui.ligne(enregistrer, fermer, plus),
-                etat);
-        corps.setPadding(new Insets(12, 14, 14, 14));
+                info,
+                Ui.bloc("Fond autour de l'appart", Ui.ligne(decor, transparent, autre, palette)),
+                PhotoAppart.boutonsBas(fermer, galerie, enregistrer));
+        corps.setStyle("-fx-padding: 12 14 14 14;");   // la feuille (.fenetre-corps) l'emporte sur setPadding
         corps.setAlignment(Pos.TOP_CENTER);
         corps.getStyleClass().add("fenetre-corps");
 
-        // --- barre de titre facon Habbo
-        Label titre = new Label("Photo de l'appart");
-        titre.getStyleClass().add("fenetre-titre");
-        Button croix = new Button();
-        croix.setGraphic(Icones.trace(Icones.FERMER, "icone-fenetre"));
-        croix.getStyleClass().addAll("fenetre-bouton", "fenetre-fermer");
-        croix.setFocusTraversable(false);
-        croix.setOnAction(e -> stage.close());
-        HBox boutons = new HBox(croix);
-        boutons.setAlignment(Pos.CENTER_RIGHT);
-        boutons.setPickOnBounds(false);
-        boutons.setPadding(new Insets(0, 6, 0, 0));
-        StackPane barre = new StackPane(titre, boutons);
-        barre.getStyleClass().add("fenetre-barre");
-        barre.setMinHeight(30); barre.setPrefHeight(30); barre.setMaxHeight(30);
-        barre.setCursor(Cursor.MOVE);
-        barre.setOnMousePressed(e -> { prisX = e.getScreenX() - stage.getX(); prisY = e.getScreenY() - stage.getY(); });
-        barre.setOnMouseDragged(e -> { stage.setX(e.getScreenX() - prisX); stage.setY(e.getScreenY() - prisY); });
-
-        VBox cadre = new VBox(barre, corps);
-        cadre.getStyleClass().add("fenetre");
-        StackPane racine = new StackPane(cadre);
-        racine.setStyle("-fx-background-color: transparent;");
-        racine.setPadding(new Insets(0, 0, 3, 0));
-        Scene sc = new Scene(racine);
+        Scene sc = new Scene(PhotoAppart.habiller(stage, "Photo de l'appart", corps));
         sc.setFill(Color.TRANSPARENT);
         if (css != null) sc.getStylesheets().add(css);
         sc.setOnKeyPressed(e -> { if (e.getCode() == javafx.scene.input.KeyCode.ESCAPE) stage.close(); });
         stage.setScene(sc);
-        Ui.majusculesAuto(corps);
         FenetresVolantes.suivre(stage);
         stage.show();
         stage.centerOnScreen();
+    }
+
+    /** Les images a la meme decoupe (une seule hors GIF anime). */
+    private java.util.List<BufferedImage> images(Capture.Reglages rr) {
+        if (planches.size() > 1) {
+            java.util.List<BufferedImage> l = Capture.assembler(planches, rr);
+            if (!l.isEmpty()) return l;
+        }
+        return java.util.List.of(Capture.cadrer(planches.get(planches.size() - 1), rr));
+    }
+
+    /** Fenetre d'enregistrement du systeme, ouverte dans Telechargements, nom propose. */
+    private java.io.File choisirFichier() {
+        javafx.stage.FileChooser fc = new javafx.stage.FileChooser();
+        fc.setTitle("Enregistrer la photo");
+        java.io.File tel = new java.io.File(Capture.maisonReelle(), "Downloads");
+        if (tel.isDirectory()) fc.setInitialDirectory(tel);
+        String salle = null;
+        try { salle = NomSalle.nomValide(Salle.gp()); } catch (Throwable ignored) { }
+        fc.setInitialFileName(Capture.nomDeFichier(salle, format).getName());
+        fc.getExtensionFilters().add(new javafx.stage.FileChooser.ExtensionFilter(
+                "Image " + format.name(), "*." + format.ext));
+        // la fenetre du systeme doit passer devant l'apercu
+        stage.setAlwaysOnTop(false);
+        try {
+            java.io.File f = fc.showSaveDialog(stage);
+            if (f != null && !f.getName().toLowerCase(java.util.Locale.ROOT).endsWith("." + format.ext))
+                f = new java.io.File(f.getParentFile(), f.getName() + "." + format.ext);
+            return f;
+        } finally {
+            stage.setAlwaysOnTop(true);
+        }
     }
 
     /** Couleur du fond de l'apercu ; null = damier (transparent). */
@@ -165,21 +213,25 @@ final class ApercuCapture {
         return new ImagePattern(w, 0, 0, 16, 16, false);
     }
 
-    /** Hors fil JavaFX : compose avec le fond choisi et enregistre en PNG. */
-    private void enregistrer(int fondRgb, Button bouton) {
+    /** Hors fil JavaFX : compose avec le fond choisi et enregistre dans le format choisi. */
+    private void enregistrer(int fondRgb, java.io.File sortie, Button bouton) { enregistrer(fondRgb, sortie, bouton, true); }
+
+    private void enregistrer(int fondRgb, java.io.File sortie, Button bouton, boolean dire) {
         try {
             Capture.Reglages rr = copie(r);
             rr.fond = fondRgb;
             rr.garderFond = false;
-            String salle = null;
-            try { salle = NomSalle.nomValide(Salle.gp()); } catch (Throwable ignored) { }
-            File sortie = Capture.nomDeFichier(salle, Capture.Format.PNG);
-            Capture.ecrirePng(Capture.cadrer(planche, rr), sortie);
+            java.util.List<BufferedImage> imgs = images(rr);
+            switch (format) {
+                case PNG -> Capture.ecrirePng(imgs.get(imgs.size() - 1), sortie);
+                case JPG -> Capture.ecrireJpg(imgs.get(imgs.size() - 1), fondRgb < 0 ? 0xFFFFFF : fondRgb, sortie);
+                case GIF -> Capture.ecrireGif(imgs, imgs.size() > 1 ? delai : 0, sortie);
+            }
             Capture.rendre(sortie);
-            Ui.succes(etat, "Photo enregistrée : " + sortie.getName() + " (Images › Atelier).");
-            Platform.runLater(() -> bouton.setDisable(false));
+            if (dire) Journal.succes("Photo enregistrée : " + sortie.getName() + ".");
         } catch (Throwable t) {
-            Ui.erreur(etat, "Échec de l'enregistrement de la photo", t);
+            Journal.erreur("Échec de l'enregistrement de la photo", t);
+        } finally {
             Platform.runLater(() -> bouton.setDisable(false));
         }
     }

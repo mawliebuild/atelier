@@ -303,6 +303,128 @@ final class GroupeCalcul {
         return new int[]{minX, minY, maxX, maxY};
     }
 
+    // ------------------------------------------------- copie a placer (Dupliquer)
+
+    /**
+     * Ou va une copie qu'on place avec les fleches avant de la poser :
+     * d'abord le miroir (gauche↔droite dans son cadre, si miroir = 1), puis
+     * « quarts » quarts de tour horaires autour du centre du cadre, puis le
+     * glissement (dx, dy). Les boutons composent dans n'importe quel ordre :
+     * le pivot tourne toujours le bloc la ou il est, le miroir le retourne
+     * la ou il est. Immuable.
+     */
+    static final class Transfo {
+        final int dx, dy, quarts, miroir;
+        Transfo(int dx, int dy, int quarts, int miroir) {
+            this.dx = dx; this.dy = dy; this.quarts = ((quarts % 4) + 4) % 4; this.miroir = miroir & 1;
+        }
+        static final Transfo NEUTRE = new Transfo(0, 0, 0, 0);
+        Transfo deplace(int ddx, int ddy) { return new Transfo(dx + ddx, dy + ddy, quarts, miroir); }
+        Transfo pivote(boolean horaire) { return new Transfo(dx, dy, quarts + (horaire ? 1 : 3), miroir); }
+        /** Miroir gauche↔droite du bloc tel qu'il est : M·R^q = R^-q·M. */
+        Transfo miroirX() { return new Transfo(dx, dy, -quarts, miroir ^ 1); }
+        /** Miroir haut↔bas = demi-tour puis gauche↔droite. */
+        Transfo miroirY() { return new Transfo(dx, dy, 2 - quarts, miroir ^ 1); }
+        boolean neutre() { return dx == 0 && dy == 0 && quarts == 0 && miroir == 0; }
+        /** Seulement un glissement (les muraux suivent). */
+        boolean glissement() { return quarts == 0 && miroir == 0; }
+        @Override public boolean equals(Object o) {
+            if (!(o instanceof Transfo)) return false;
+            Transfo t = (Transfo) o;
+            return t.dx == dx && t.dy == dy && t.quarts == quarts && t.miroir == miroir;
+        }
+        @Override public int hashCode() { return Objects.hash(dx, dy, quarts, miroir); }
+        @Override public String toString() { return "(" + dx + "," + dy + " q" + quarts + " m" + miroir + ")"; }
+    }
+
+    /**
+     * Les destinations de la copie. Sans pivot ni miroir, c'est cibles()
+     * (muraux compris) ; sinon les muraux restent de cote. Meme calcul pour
+     * les fantomes et pour la vraie pose. Logique pure, hors Sol.
+     */
+    static List<Cible> copie(Collection<Element> elements, Transfo t, Sol sol) {
+        if (t.miroir == 0) return transformer(elements, t.quarts, t.dx, t.dy, sol);
+        List<Element> sols = new ArrayList<>();
+        for (Element e : elements) if (!e.mural) sols.add(e);
+        if (sols.isEmpty()) return new ArrayList<>();
+        int[] c = cadre(sols);
+        int sx = c[0] + c[2];
+        Map<Integer, Element> origine = new HashMap<>();
+        List<Element> retournes = new ArrayList<>();
+        for (Element e : sols) {
+            origine.put(e.id, e);
+            retournes.add(Element.sol(e.id, sx - e.x - e.ex + 1, e.y, e.z, e.ex, e.ey,
+                    OutilMiroir.miroirRot(e.rot, true), e.solDessous));
+        }
+        List<Cible> r = new ArrayList<>();
+        for (Cible k : transformer(retournes, t.quarts, t.dx, t.dy, sol))
+            r.add(new Cible(origine.get(k.e.id), k.x, k.y, k.z, k.position, k.horsPlan, k.rot));
+        return r;
+    }
+
+    /**
+     * Ou commence une copie a placer : le bloc transforme (pivot, miroir de
+     * « base ») est pose juste a cote de l'original, sans case d'ecart : a
+     * droite (↘), sinon en dessous (↙), a gauche, au-dessus ; la premiere
+     * place ou aucun mobi de sol ne tombe hors du plan, a defaut celle qui en
+     * perd le moins. Sans mobi de sol : sur place. Logique pure, hors Sol.
+     */
+    static Transfo depart(Collection<Element> elements, Transfo base, Sol sol) {
+        Transfo b0 = new Transfo(0, 0, base.quarts, base.miroir);
+        List<Element> sols = new ArrayList<>();
+        for (Element e : elements) if (!e.mural) sols.add(e);
+        if (sols.isEmpty()) return b0;
+        int[] o = cadre(sols);
+        int[] r = cadreCibles(copie(sols, b0, null), b0.quarts);
+        int[][] places = {
+                {o[2] + 1 - r[0], o[1] - r[1]},
+                {o[0] - r[0], o[3] + 1 - r[1]},
+                {o[0] - 1 - r[2], o[1] - r[1]},
+                {o[0] - r[0], o[1] - 1 - r[3]}};
+        Transfo mieux = null;
+        int moins = Integer.MAX_VALUE;
+        for (int[] d : places) {
+            Transfo t = b0.deplace(d[0], d[1]);
+            int hors = 0;
+            for (Cible k : copie(sols, t, sol)) if (k.horsPlan) hors++;
+            if (hors < moins) { moins = hors; mieux = t; }
+            if (hors == 0) break;
+        }
+        return mieux;
+    }
+
+    /** {minX, minY, maxX, maxY} des cases d'arrivee des sols (emprise tournee si quarts impair). */
+    static int[] cadreCibles(Collection<Cible> cibles, int quarts) {
+        int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE, maxX = Integer.MIN_VALUE, maxY = Integer.MIN_VALUE;
+        boolean impair = (quarts & 1) == 1;
+        for (Cible k : cibles) {
+            if (k.e.mural) continue;
+            int lx = impair ? k.e.ey : k.e.ex, ly = impair ? k.e.ex : k.e.ey;
+            minX = Math.min(minX, k.x); minY = Math.min(minY, k.y);
+            maxX = Math.max(maxX, k.x + lx - 1); maxY = Math.max(maxY, k.y + ly - 1);
+        }
+        return new int[]{minX, minY, maxX, maxY};
+    }
+
+    /**
+     * Sol le plus bas sous les mobis de sol poses (cases d'arrivee) : le
+     * moteur de pose ajoute cette hauteur a chaque z du preset. 0 si inconnu.
+     */
+    static int solMin(Collection<Cible> cibles, Sol sol) {
+        int m = Integer.MAX_VALUE;
+        for (Cible k : cibles) {
+            if (k.e.mural || k.horsPlan) continue;
+            int h = sol == null ? Math.max(0, k.e.solDessous) : sol.hauteur(k.x, k.y);
+            if (h >= 0) m = Math.min(m, h);
+        }
+        return m == Integer.MAX_VALUE ? 0 : m;
+    }
+
+    /** Altitude a donner au moteur de pose (au-dessus de solMin), arrondie au centieme. */
+    static double zPreset(Cible c, int solMin) {
+        return Math.round(Math.max(0, c.z - Math.max(0, solMin)) * 100.0) / 100.0;
+    }
+
     /** Rotation equivalente sur le meme axe (pour un mobi qui n'a que 0 et 2). */
     static int rotationRepli(int rot) { return (rot + 4) & 7; }
 

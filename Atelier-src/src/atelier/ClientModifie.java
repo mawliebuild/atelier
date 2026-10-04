@@ -259,6 +259,13 @@ public final class ClientModifie {
     private static volatile boolean dalles = false;
     private static volatile boolean annuler = false;
     private static volatile boolean cases = false;
+    private static volatile boolean style = false;
+
+    /** Le client installe sait-il changer le style de mise en valeur (« atelier:style= ») ? */
+    public static boolean saitStyle() {
+        saitSurligner();
+        return style;
+    }
 
     /** Le client installe sait-il le mode Cases (« atelier:cases= », clics dans le vide) ? */
     public static boolean saitCases() {
@@ -316,7 +323,7 @@ public final class ClientModifie {
     /** Une seule lecture du SWF a la fois (il pese des dizaines de Mo une fois decompresse). */
     private static synchronized boolean lireClient(File f, String cle) {
         if (cle.equals(cleLueur)) return lueur;          // lu entre-temps par un autre fil
-        boolean r = false, cap = false, gr = false, zo = false, da = false, an = false, ca = false;
+        boolean r = false, cap = false, gr = false, zo = false, da = false, an = false, ca = false, st = false;
         try {
             byte[] tout = java.nio.file.Files.readAllBytes(f.toPath());
             byte[] corps = tout;
@@ -340,6 +347,7 @@ public final class ClientModifie {
             da = contient(corps, "atelier:dalles=".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
             an = contient(corps, "atelier:annuler".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
             ca = contient(corps, "atelier:cases=".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+            st = contient(corps, "atelier:style=".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
         } catch (Throwable t) {
             Journal.debug("Lecture du client impossible (" + t + ") : sélection en clignotement.");
         }
@@ -350,6 +358,7 @@ public final class ClientModifie {
         dalles = da;
         annuler = an;
         cases = ca;
+        style = st;
         cleLueur = cle;
         Journal.debug("Client du jeu : " + (r ? "mise en valeur de la sélection disponible."
                 : "pas de mise en valeur de la sélection (client d'origine ou ancienne version) : clignotement."));

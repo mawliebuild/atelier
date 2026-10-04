@@ -181,20 +181,13 @@ public final class Repertoire {
             }
         }
         try {
+            // L'index du catalogue est un gros paquet (des milliers de pages) : le
+            // lire et le parcourir dans l'intercepteur retenait tout le trafic du
+            // jeu. Ici : une copie, puis la lecture sur un fil a part.
             gp.intercept(HMessage.Direction.TOCLIENT, "CatalogIndex", m -> {
                 try {
-                    HCatalogIndex idx = new HCatalogIndex(new HPacket(m.getPacket()));
-                    boolean bc = "BUILDERS_CLUB".equals(idx.getCatalogType());
-                    int n = parcourir(idx.getRoot(), new ArrayList<>(), bc ? parOffreBc : parOffre);
-                    Journal.debug("répertoire : catalogue " + idx.getCatalogType()
-                            + " lu, " + n + " mobis rattachés à une page.");
-                    // Le catalogue peut revenir plus tard (ouvert dans le jeu) :
-                    // on enregistre a chaque fois, hors du fil des paquets.
-                    if (lu) {
-                        Thread t = new Thread(() -> { sauver(); surMaj.run(); }, "atelier-repertoire-sauve");
-                        t.setDaemon(true);
-                        t.start();
-                    }
+                    HPacket copie = new HPacket(m.getPacket());
+                    LECTURE.execute(() -> lireIndex(copie, parOffre, parOffreBc));
                 } catch (Throwable t) {
                     System.err.println("[Atelier] répertoire : index illisible : " + t);
                 }
@@ -204,9 +197,35 @@ public final class Repertoire {
         }
     }
 
+    /** Un seul fil pour lire les index du catalogue, dans l'ordre d'arrivee. */
+    private static final java.util.concurrent.ExecutorService LECTURE =
+            java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+                Thread t = new Thread(r, "atelier-repertoire-index");
+                t.setDaemon(true);
+                return t;
+            });
+
+    /** Lit un index du catalogue (fil LECTURE, jamais le fil des paquets). */
+    private static void lireIndex(HPacket paquet, Map<Integer, List<String>> parOffre,
+                                  Map<Integer, List<String>> parOffreBc) {
+        try {
+            HCatalogIndex idx = new HCatalogIndex(paquet);
+            boolean bc = "BUILDERS_CLUB".equals(idx.getCatalogType());
+            int n = parcourir(idx.getRoot(), new ArrayList<>(), bc ? parOffreBc : parOffre);
+            Journal.debug("répertoire : catalogue " + idx.getCatalogType()
+                    + " lu, " + n + " mobis rattachés à une page.");
+            // Le catalogue peut revenir plus tard (ouvert dans le jeu) : on
+            // enregistre a chaque fois.
+            if (lu) { sauver(); surMaj.run(); }
+        } catch (Throwable t) {
+            System.err.println("[Atelier] répertoire : index illisible : " + t);
+        }
+    }
+
     /** Le catalogue normal ; celui du BC est deja demande par le moteur de l'Atelier. */
     private static void demanderCatalogue(GPresets gp) {
         try {
+            ChargementAuto.indexDemande();       // la reponse n'ira pas au jeu, qui ne l'a pas demandee
             gp.sendToServer(new HPacket("GetCatalogIndex", HMessage.Direction.TOSERVER, "NORMAL"));
         } catch (Throwable t) {
             System.err.println("[Atelier] répertoire : demande du catalogue impossible : " + t);

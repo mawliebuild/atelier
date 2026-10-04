@@ -11,17 +11,15 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * Escalier : des copies d'un mobi, chacune un peu plus loin et un peu plus haut.
- *
- * Rien n'est pose ici : l'escalier devient un appart temporaire
- * (_atelier_escalier.json) que le moteur de pose installe avec sa dalle magique, ce qui
- * donne les hauteurs exactes sans rien empiler a la main. S'il n'y a pas de
- * dalle magique dans la salle, Generateur en pose une (1×1) a cote du depart
- * et la ramasse quand l'escalier est fini.
+ * Escalier en petits blocs (bc_block_small*1..69, couleur choisie comme au
+ * catalogue BC) : chaque marche un peu plus loin et un peu plus haut.
+ * Pose directe (PoseDirecte) : les blocs partent en rafale et chacun recoit son
+ * altitude (@altitude) des qu'il apparait ; pas de dalle magique.
  */
 public class OutilEscalier {
 
-    private Generateur.ChoixModele modele;
+    private PaletteBlocs palette;
+    private static final java.util.prefs.Preferences PREFS = java.util.prefs.Preferences.userRoot().node("atelier");
     private Generateur.ChoixSource source;
     private Spinner<Integer> marches, largeur, pas;
     private Spinner<Double> montee, hauteurMobi;
@@ -34,7 +32,7 @@ public class OutilEscalier {
 
     public Tab construire() {
         etat = Ui.etat();
-        modele = new Generateur.ChoixModele("Mobi modèle", false, etat);
+        palette = new PaletteBlocs(PREFS.getInt("escalier.bloc", 14));
         source = new Generateur.ChoixSource();
 
         marches = Generateur.entier(1, 200, 8);
@@ -55,15 +53,16 @@ public class OutilEscalier {
 
         rampe = new CheckBox("Rampe (pas 1, montée fine)");
         remplir = new CheckBox("Remplir dessous (escalier plein)");
+        rampe.setWrapText(true); remplir.setWrapText(true);
 
         departLbl = Ui.valeur("Au clic dans le jeu, après « Poser »");
         departLbl.setWrapText(true);
-        Button choisirDepart = new Button("Choisir la case de départ");
+        Button choisirDepart = Icones.sur(new Button("Choisir la case de départ"), Icones.CIBLE);
         choisirDepart.setOnAction(e -> {
             attenteDepart = true;
             departLbl.setText("Clique la case de la 1re marche dans le jeu...");
         });
-        Button oublier = new Button("Oublier");
+        Button oublier = Icones.sur(new Button("Oublier"), Icones.VIDER);
         oublier.setOnAction(e -> { depart = null; attenteDepart = false;
             departLbl.setText("Au clic dans le jeu, après « Poser »"); });
         Salle.surClicCase(c -> {
@@ -77,12 +76,15 @@ public class OutilEscalier {
         apercu.setWrapText(true);
 
         // l'apercu suit tous les reglages
-        modele.ecouter(() -> {
-            Generateur.Modele m = modele.modele();
+        palette.surChoix(n -> {
+            PREFS.putInt("escalier.bloc", n);
+            Generateur.Modele m = modele();
             if (m != null && m.hauteur > 0) hauteurMobi.getValueFactory().setValue(m.hauteur);
             ajusterPas();
             majApercu();
         });
+        Generateur.Modele m0 = modele();
+        if (m0 != null && m0.hauteur > 0) hauteurMobi.getValueFactory().setValue(m0.hauteur);
         g.selectedToggleProperty().addListener((o, a, b) -> { ajusterPas(); majApercu(); });
         rotation.valueProperty().addListener((o, a, b) -> { ajusterPas(); majApercu(); });
         rampe.selectedProperty().addListener((o, a, b) -> {
@@ -99,32 +101,54 @@ public class OutilEscalier {
         remplir.selectedProperty().addListener((o, a, b) -> majApercu());
 
         Tab t = new Tab("Escalier", Generateur.defiler(
-                Ui.aide("Génère un escalier comme appart temporaire, que l'Atelier pose "
-                        + "avec sa dalle magique (hauteurs exactes). Pas de dalle dans la salle ? "
-                        + "Je pose une dalle 1×1 à côté du départ (inventaire, sinon BC), "
-                        + "puis je la ramasse à la fin."),
-                modele.bloc(),
+                Ui.aide("Un escalier en petits blocs de la couleur choisie : chaque bloc est posé "
+                        + "puis mis à sa hauteur exacte, sans dalle magique."),
+                Ui.bloc("Couleur des petits blocs", palette.vue()),
                 Ui.bloc("Marches",
-                        Ui.ligne(Ui.etiquette("Nombre"), marches, Ui.etiquette("Largeur"), largeur),
-                        Ui.ligne(Ui.etiquette("Pas (cases)"), pas),
-                        Ui.ligne(Ui.etiquette("Montée"), montee, Ui.etiquette("Haut. mobi"), hauteurMobi),
+                        formulaire("Nombre", marches, "Largeur (cases)", largeur, "Pas (cases)", pas,
+                                "Montée", montee, "Hauteur du mobi", hauteurMobi),
                         Ui.aide("Montée : hauteur gagnée à chaque marche (0,25 / 0,5 / 1,0…). "
                                 + "Hauteur du mobi : lue sur le mobi cliqué, sert à « remplir dessous »."),
                         rampe, remplir),
                 Ui.bloc("Direction et rotation",
-                        Ui.ligne(xPlus, xMoins, yPlus, yMoins),
-                        Ui.ligne(Ui.etiquette("Rotation"), rotation)),
+                        formulaire("Sens", Ui.ligne(xPlus, xMoins, yPlus, yMoins), "Rotation", rotation)),
                 Ui.bloc("Départ", departLbl, Ui.ligne(choisirDepart, oublier),
                         Ui.aide("Sans case de départ, tu cliques dans le jeu après « Poser » : "
                                 + "le clic donne le coin haut-gauche (x min, y min) de l'escalier. "
                                 + "Ton avatar ne bouge pas.")),
                 source.bloc(),
                 Ui.bloc("Aperçu", apercu),
-                Generateur.principal("Poser l'escalier", this::poser),
+                Icones.sur(Generateur.principal("Poser l'escalier", this::poser), Icones.ESCALIER),
                 etat));
         t.setClosable(false);
         majApercu();
         return t;
+    }
+
+    /**
+     * Les reglages en formulaire : le nom a gauche (une colonne alignee), le
+     * champ a droite. Chaque paire reste ensemble, rien ne passe a la ligne
+     * au milieu d'une paire (« Nombre » d'un cote, son champ de l'autre).
+     */
+    private static javafx.scene.layout.GridPane formulaire(Object... paires) {
+        javafx.scene.layout.GridPane g = new javafx.scene.layout.GridPane();
+        g.setHgap(10); g.setVgap(6);
+        javafx.scene.layout.ColumnConstraints c0 = new javafx.scene.layout.ColumnConstraints();
+        c0.setMinWidth(javafx.scene.layout.Region.USE_PREF_SIZE);
+        javafx.scene.layout.ColumnConstraints c1 = new javafx.scene.layout.ColumnConstraints();
+        c1.setHgrow(javafx.scene.layout.Priority.ALWAYS);
+        c1.setFillWidth(false);
+        g.getColumnConstraints().addAll(c0, c1);
+        for (int i = 0; i + 1 < paires.length; i += 2) {
+            Label l = Ui.etiquette((String) paires[i]);
+            l.setMinWidth(javafx.scene.layout.Region.USE_PREF_SIZE);
+            javafx.scene.Node n = (javafx.scene.Node) paires[i + 1];
+            if (n instanceof Spinner) ((Spinner<?>) n).setPrefWidth(96);   // tous les champs de meme largeur
+            if (n instanceof javafx.scene.layout.Region && !(n instanceof Control))
+                javafx.scene.layout.GridPane.setFillWidth(n, true);
+            g.addRow(i / 2, l, n);
+        }
+        return g;
     }
 
     // ------------------------------------------------------------ calcul
@@ -142,7 +166,7 @@ public class OutilEscalier {
     /** Pas par defaut : l'emprise du mobi dans le sens de la montee. */
     private void ajusterPas() {
         if (rampe.isSelected()) return;
-        Generateur.Modele m = modele.modele();
+        Generateur.Modele m = modele();
         if (m == null) return;
         int[] e = m.emprise(rot());
         pas.getValueFactory().setValue(dir()[0] != 0 ? e[0] : e[1]);
@@ -176,9 +200,14 @@ public class OutilEscalier {
         return r;
     }
 
+    /** Le petit bloc choisi (classe, emprise, hauteur lues dans la furnidata). */
+    private Generateur.Modele modele() {
+        try { return Generateur.modele(palette.classe(), "0", 0); } catch (Throwable t) { return null; }
+    }
+
     private void majApercu() {
-        Generateur.Modele m = modele.modele();
-        if (m == null) { apercu.setText("Choisis d'abord le mobi modèle."); return; }
+        Generateur.Modele m = modele();
+        if (m == null) { apercu.setText("Liste des mobis pas encore chargée."); return; }
         List<Generateur.Mobi> p = plan(m);
         double h = hauteurMobi.getValue();
         double derniere = Generateur.arrondi((marches.getValue() - 1) * montee.getValue());
@@ -199,16 +228,30 @@ public class OutilEscalier {
     private void poser() {
         Generateur.prendre(marches); Generateur.prendre(largeur); Generateur.prendre(pas);
         Generateur.prendre(montee); Generateur.prendre(hauteurMobi);
-        Generateur.Modele m = modele.modele();
-        if (m == null) { etat.setText("Choisis d'abord le mobi modèle (clic dans le jeu ou nom technique)."); return; }
+        Generateur.Modele m = modele();
+        if (m == null) { Journal.erreur("Liste des mobis pas encore chargée : réessaie dans un instant."); return; }
         if (remplir.isSelected() && hauteurMobi.getValue() <= 0) {
-            etat.setText("Remplir dessous : indique la hauteur du mobi."); return;
+            Journal.erreur("Remplir dessous : indique la hauteur du bloc."); return;
         }
         List<Generateur.Mobi> p = plan(m);
         Generateur.Source src = source.source();
         HPoint dep = depart;
-        etat.setText("Préparation de l'escalier (" + p.size() + " mobis)...");
-        Salle.tache("escalier", () -> Generateur.poser("_atelier_escalier", p, src, dep,
-                s -> Generateur.dire(etat, s)));
+        Salle.tache("escalier", () -> {
+            HPoint d = dep;
+            if (d == null) {
+                InfoJeu.consigne("Clique dans le jeu la case de la 1re marche.");
+                d = Generateur.Dalle.attendreClic(120_000);
+                if (d == null) { Journal.erreur("Escalier annulé : pas de clic dans le jeu en 2 minutes."); return; }
+            }
+            double sol = Math.max(0, Salle.hauteurSol(d.getX(), d.getY()));
+            List<PoseDirecte.Sol> sols = new ArrayList<>();
+            for (Generateur.Mobi b : p)
+                sols.add(new PoseDirecte.Sol(b.classe, d.getX() + b.x, d.getY() + b.y, Generateur.arrondi(sol + b.z), b.rot));
+            PoseDirecte.Resultat r = PoseDirecte.poser(sols, List.of(), src, x -> { }, () -> false, (k, t) -> { });
+            String bilan = Ui.accorder("Escalier : " + r.sols.size() + " bloc(s) posé(s) sur " + sols.size()
+                    + (r.manquants > 0 ? ", " + r.manquants + " manquant(s) (ni dans l'inventaire ni au BC)" : "")
+                    + (r.hauteursFausses > 0 ? ", " + r.hauteursFausses + " pas à la bonne hauteur" : "") + ".");
+            if (r.manquants > 0 || r.hauteursFausses > 0) Journal.erreur(bilan); else Journal.succes(bilan);
+        });
     }
 }

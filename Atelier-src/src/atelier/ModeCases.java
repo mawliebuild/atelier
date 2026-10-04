@@ -106,8 +106,10 @@ final class ModeCases {
     /** Relit le floor de l'appart ; le travail repart de lui. */
     private static String relire() {
         FloorReseau.installer();
+        long t0 = System.currentTimeMillis();
         FloorReseau.demanderPorte();
-        Salle.sommeil(700);
+        // suivi : des que la porte est revenue (au plus 700 ms, comme avant)
+        PoseDirecte.suivre(() -> FloorReseau.porteRecue >= t0 ? 0 : 1, 700, 700);
         FloorSession.Lecture l = FloorSession.lire();
         if (l.modele == null) return "Plan de l'appart illisible" + (l.erreur == null ? "." : " : " + l.erreur);
         synchronized (ModeCases.class) {
@@ -403,7 +405,6 @@ final class ModeCases {
         surChangement.run();
         try {
             long t0 = System.currentTimeMillis();
-            InfoJeu.consigne("J'applique le floor : l'appart va se recharger…");
             if (!FloorReseau.envoyerPlan(m)) { Journal.erreur("Envoi du floor impossible."); return false; }
             for (int i = 0; i < 100; i++) {          // 15 s au plus
                 Salle.sommeil(150);

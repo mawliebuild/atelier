@@ -174,11 +174,11 @@ final class HauteurSansDalles {
             new HauteurLogique.Ecritures.Monde() {
                 @Override public void ecrire(int id, double z) {
                     // Une ecriture isolee part tout de suite ; en rafale (« Appliquer aux mobis
-                    // deja poses », renvois de verifier()), au moins 150 ms entre deux envois.
-                    long ecart = System.currentTimeMillis() - dernierEcrit;
-                    if (ecart < PAUSE_RAFALE) Salle.sommeil(PAUSE_RAFALE - ecart);
+                    // deja poses », renvois de verifier()), au moins 150 ms entre deux envois :
+                    // le rythme commun de l'Atelier (Salle.espacer), partage avec les autres outils.
+                    Salle.espacer();
                     dernierEcrit = System.currentTimeMillis();
-                    OutilMiroir.Altitude.ecrire(id, z);
+                    OutilMiroir.Altitude.ecrireVerifiee(id, z);
                 }
                 @Override public Double z(int id) {
                     HFloorItem it = Salle.sol(id);

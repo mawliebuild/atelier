@@ -91,7 +91,7 @@ public final class Prerequis extends VBox {
     /** {niveau, raison} : niveau « ok », « attente » ou « absent ». */
     static String[] etat(Condition c) {
         GPresets gp = Salle.gp();
-        if (gp == null) return new String[]{"attente", "Connexion à Habbo en cours…"};
+        if (gp == null) return new String[]{"attente", "Connexion au jeu…"};
         try {
             switch (c) {
                 case SALLE:

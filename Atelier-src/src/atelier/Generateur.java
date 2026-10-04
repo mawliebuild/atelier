@@ -146,7 +146,7 @@ public final class Generateur {
                 enAttente = true;
                 lbl.setText("Clique le mobi dans le jeu...");
             });
-            saisie.setPromptText("Ou nom technique (ex. shelves_norja)");
+            saisie.setPromptText("Nom technique");
             saisie.setPrefColumnCount(14);
             Button ok = new Button("OK");
             ok.setOnAction(e -> depuisSaisie());
@@ -382,19 +382,26 @@ public final class Generateur {
             }
         } catch (Throwable ignored) { }
 
-        // la liste du moteur de pose se recharge en differe : on selectionne apres coup (cosmetique)
-        Salle.sommeil(400);
-        Platform.runLater(() -> {
-            try {
-                if (gp.presetListView != null && gp.presetListView.getItems().contains(fichier))
-                    gp.presetListView.getSelectionModel().select(fichier);
-            } catch (Throwable ignored) { }
+        // la liste du moteur de pose se recharge en differe : on selectionne apres coup
+        // (cosmetique), sans retarder la pose
+        Salle.tache("selection-preset", () -> {
+            Salle.sommeil(400);
+            Platform.runLater(() -> {
+                try {
+                    if (gp.presetListView != null && gp.presetListView.getItems().contains(fichier))
+                        gp.presetListView.getSelectionModel().select(fichier);
+                } catch (Throwable ignored) { }
+            });
         });
 
         // 4. la commande d'import
         String cmd = racine == null ? ":ip" : ":ip " + racine.getX() + "," + racine.getY();
         lancer(gp, imp, cmd);
-        Salle.sommeil(300);
+        // le moteur de pose passe en attente de case : on suit son etat (au plus 300 ms)
+        PoseDirecte.suivre(() -> {
+            try { return imp.getState() == GPresetImporter.BuildingImportState.AWAITING_UNOCCUPIED_SPACE ? 0 : 1; }
+            catch (Throwable e) { return 0; }
+        }, 300, 300);
         if (dalleOu != null && racine != null) {
             if (Dalle.donnerCase(imp, dalleOu)) {
                 dire.accept(entete + "Dalle magique en (" + dalleOu.getX() + "," + dalleOu.getY()
@@ -985,7 +992,7 @@ public final class Generateur {
             Salle.tache("dalle-ramasser", () -> {
                 long fin = System.currentTimeMillis() + 30 * 60_000L;
                 while (System.currentTimeMillis() < fin) {
-                    Salle.sommeil(500);
+                    Salle.sommeil(200);
                     GPresetImporter.BuildingImportState s;
                     try { s = imp.getState(); } catch (Throwable t) { s = GPresetImporter.BuildingImportState.NONE; }
                     if (s == GPresetImporter.BuildingImportState.NONE) break;

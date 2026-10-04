@@ -2,9 +2,6 @@ package atelier;
 
 import org.json.JSONObject;
 
-import java.io.File;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
@@ -13,11 +10,14 @@ import java.util.concurrent.ConcurrentHashMap;
  * Les prix que tu as fixes toi-meme dans « Valeur de mes mobis ».
  *
  * Ils passent avant habbofurni et le marche du jeu, et sont gardes dans
- * repertoire/prix-perso.json. Cle : « 1:typeId » (sol) ou « 2:typeId » (mur).
+ * prix-perso.json (dossier de l'Atelier, voir PrixFichier ; repris de
+ * l'ancien repertoire/ au premier lancement). Cle : « 1:typeId » (sol) ou
+ * « 2:typeId » (mur).
  */
 public final class PrixPerso {
 
-    private static final File FICHIER = new File("repertoire", "prix-perso.json");
+    private static final String NOM = "prix-perso.json";
+    private static final java.util.List<Runnable> ecouteurs = new java.util.concurrent.CopyOnWriteArrayList<>();
     private static final Map<String, Integer> prix = new ConcurrentHashMap<>();
     private static volatile boolean charge = false;
 
@@ -35,14 +35,18 @@ public final class PrixPerso {
         if (valeur < 0) prix.remove(Marche.cle(mur, typeId));
         else prix.put(Marche.cle(mur, typeId), valeur);
         sauver();
+        for (Runnable r : ecouteurs) try { r.run(); } catch (Throwable ignored) { }
     }
+
+    /** Appele (sur le fil de l'appelant) quand un prix perso change. */
+    static void surMaj(Runnable r) { if (r != null) ecouteurs.add(r); }
 
     private static synchronized void charger() {
         if (charge) return;
         charge = true;
-        if (!FICHIER.exists()) return;
+        JSONObject o = PrixFichier.lire(NOM, NOM);
+        if (o == null) return;
         try {
-            JSONObject o = new JSONObject(new String(Files.readAllBytes(FICHIER.toPath()), StandardCharsets.UTF_8));
             for (String k : o.keySet()) prix.put(k, o.getInt(k));
         } catch (Throwable t) {
             System.err.println("[Atelier] prix perso : fichier illisible : " + t);
@@ -50,14 +54,7 @@ public final class PrixPerso {
     }
 
     private static synchronized void sauver() {
-        try {
-            File d = FICHIER.getParentFile();
-            if (!d.exists()) d.mkdirs();
-            File tmp = new File(d, "prix-perso.json.tmp");
-            Files.write(tmp.toPath(), new JSONObject(new TreeMap<>(prix)).toString(1).getBytes(StandardCharsets.UTF_8));
-            Files.move(tmp.toPath(), FICHIER.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-        } catch (Throwable t) {
-            Journal.erreur("Prix pas enregistré : il sera perdu au prochain lancement", t);
-        }
+        if (!PrixFichier.ecrire(NOM, new JSONObject(new TreeMap<>(prix))))
+            Journal.erreur("Prix pas enregistré : il sera perdu au prochain lancement.");
     }
 }

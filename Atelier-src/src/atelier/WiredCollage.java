@@ -39,9 +39,9 @@ import java.util.function.Function;
  * textes, mobis choisis, delai, options, sources, variables, filtre...). On
  * garde aussi les autres mobis, avec leur position RELATIVE (coin x min,
  * y min = 0,0 ; altitude au-dessus du sol le plus bas de la copie). La copie
- * reste en memoire et dans un fichier (atelier-copie-wired.json, a cote du
- * dossier des apparts) : elle survit a un changement de salle et a un
- * redemarrage.
+ * est enregistree sous un nom dans le dossier « copies-wired » (a cote du
+ * dossier des apparts), avec une photo d'apercu (ApercuMobis) : elle survit
+ * a un changement de salle et a un redemarrage.
  *
  * COLLER (collerDans) : aperçu chiffre (wired, mobis lies, ce qu'il y a dans
  * l'inventaire / au BC, selections perdues), puis Confirmer, puis la case du
@@ -454,38 +454,166 @@ public final class WiredCollage {
 
     // ===================================================================== etat
 
-    private static volatile Copie copie = null;
-    private static volatile boolean chargee = false;
-    private static volatile boolean enCours = false;
+    /*
+     * Les copies sont NOMMEES, comme les apparts : un dossier « copies-wired »
+     * (a cote du dossier des apparts), avec pour chaque copie « nom.json » et
+     * son apercu « nom.png ». L'ancienne copie unique (atelier-copie-wired.json)
+     * devient la copie « Copie wired » au premier chargement.
+     */
 
-    private static File fichierCopie() {
+    private static volatile boolean enCours = false;
+    private static volatile boolean migree = false;
+    /** Copie choisie dans la liste de la fenetre (null : la plus recente). */
+    private static volatile String choisie = null;
+    /** Copies lues, par nom et date du fichier. */
+    private static final Map<String, Copie> lues = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** Le dossier des copies wired (cree au besoin ; migration de l'ancienne copie unique). */
+    static synchronized File dossierCopies() {
         File d = OngletApparts.dossierApparts();
         File parent = d.getParentFile() == null ? d : d.getParentFile();
-        return new File(parent, "atelier-copie-wired.json");
-    }
-
-    private static Copie copie() {
-        if (copie == null && !chargee) {
-            chargee = true;
+        File dc = new File(parent, "copies-wired");
+        if (!migree) {
+            migree = true;
+            File ancien = new File(parent, "atelier-copie-wired.json");
             try {
-                File f = fichierCopie();
-                if (f.isFile()) copie = Copie.depuisJson(new String(Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8));
+                if (!dc.isDirectory()) dc.mkdirs();
+                if (ancien.isFile() && dc.isDirectory()) {
+                    String n = "Copie wired";
+                    for (int i = 2; new File(dc, n + ".json").exists(); i++) n = "Copie wired " + i;
+                    Files.move(ancien.toPath(), new File(dc, n + ".json").toPath());
+                    Journal.info("Ancienne copie wired reprise sous le nom « " + n + " ».");
+                }
             } catch (Throwable t) {
-                System.err.println("[Atelier] copie wired illisible : " + t);
+                Journal.debug("Copie wired : migration impossible : " + t);
             }
         }
-        return copie;
+        return dc;
+    }
+
+    static File fichierJson(String nom) { return new File(dossierCopies(), nom + ".json"); }
+
+    static File fichierPng(String nom) { return new File(dossierCopies(), nom + ".png"); }
+
+    /** Les noms des copies, la plus recente d'abord. */
+    static List<String> noms() {
+        File[] fs = dossierCopies().listFiles((d, n) -> n.endsWith(".json"));
+        List<File> l = fs == null ? new ArrayList<>() : new ArrayList<>(Arrays.asList(fs));
+        l.sort((a, b) -> Long.compare(b.lastModified(), a.lastModified()));
+        List<String> r = new ArrayList<>();
+        for (File f : l) r.add(f.getName().substring(0, f.getName().length() - 5));
+        return r;
+    }
+
+    /** La copie « nom » (null si absente ou illisible). */
+    static Copie lire(String nom) {
+        if (nom == null) return null;
+        File f = fichierJson(nom);
+        if (!f.isFile()) return null;
+        String cle = nom + "@" + f.lastModified();
+        Copie c = lues.get(cle);
+        if (c != null) return c;
+        try {
+            c = Copie.depuisJson(new String(Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8));
+            lues.put(cle, c);
+            return c;
+        } catch (Throwable t) {
+            Journal.debug("Copie wired « " + nom + " » illisible : " + t);
+            return null;
+        }
+    }
+
+    /** Un nom de fichier sans caracteres interdits. */
+    static String nettoyer(String n) {
+        if (n == null) return "";
+        String r = n.replaceAll("[<>:\"/\\\\|?*\\p{Cntrl}]", "-").replaceAll("\\s+", " ").trim();
+        while (r.startsWith(".")) r = r.substring(1).trim();
+        if (r.length() > 80) r = r.substring(0, 80).trim();
+        return r;
+    }
+
+    /** Le nom voulu, nettoye, sans ecraser une copie existante (« nom 2 », « nom 3 »...). */
+    static String nomLibre(String voulu) {
+        String n = nettoyer(voulu);
+        if (n.isEmpty()) n = "Copie wired";
+        if (!fichierJson(n).exists()) return n;
+        for (int i = 2; ; i++) if (!fichierJson(n + " " + i).exists()) return n + " " + i;
+    }
+
+    /** Nom propose : la salle et la date (« Ma salle — 4 oct. 10h12 »). */
+    static String nomPropose() {
+        String salle = null;
+        try { salle = NomSalle.nomValide(Salle.gp()); } catch (Throwable ignored) { }
+        String quand = new java.text.SimpleDateFormat("d MMM HH'h'mm", Locale.FRANCE).format(new Date());
+        String base = salle == null || salle.isBlank() ? "Wired" : salle.trim();
+        return nettoyer(base + " — " + quand);
+    }
+
+    /** Renomme une copie (et son apercu). null si c'est fait, sinon le message d'erreur. */
+    static String renommer(String ancien, String voulu) {
+        String n = nettoyer(voulu);
+        if (n.isEmpty()) return "Nom vide : la copie garde son nom.";
+        if (n.equals(ancien)) return null;
+        File src = fichierJson(ancien), dest = fichierJson(n);
+        if (!src.isFile()) return "La copie « " + ancien + " » n'existe plus.";
+        if (dest.exists()) return "Une copie s'appelle déjà « " + n + " ».";
+        if (!src.renameTo(dest)) return "Renommage impossible pour « " + ancien + " ».";
+        File png = fichierPng(ancien);
+        if (png.isFile() && !png.renameTo(fichierPng(n))) Journal.debug("Aperçu wired non renommé : " + png);
+        if (ancien.equals(choisie)) choisie = n;
+        return null;
+    }
+
+    /** Supprime une copie (et son apercu). */
+    static boolean supprimer(String nom) {
+        File f = fichierJson(nom);
+        if (!f.delete()) return false;
+        File png = fichierPng(nom);
+        if (png.isFile() && !png.delete()) Journal.debug("Aperçu wired non supprimé : " + png);
+        if (nom.equals(choisie)) choisie = null;
+        return true;
+    }
+
+    /** La copie choisie dans la liste (celle que « Coller » pose). */
+    static void choisir(String nom) { choisie = nom; }
+
+    /** La copie choisie, ou la plus recente ; null s'il n'y en a aucune. */
+    static String choisie() {
+        String c = choisie;
+        if (c != null && fichierJson(c).isFile()) return c;
+        List<String> l = noms();
+        return l.isEmpty() ? null : l.get(0);
     }
 
     /** Une configuration wired est-elle copiee ? */
-    public static boolean aUneCopie() { Copie c = copie(); return c != null && c.nbWired() > 0; }
+    public static boolean aUneCopie() { return choisie() != null; }
 
-    /** « 12 wired, 30 mobis, 6×4 cases » ; null sans copie. */
-    public static String resumeCopie() {
-        Copie c = copie();
-        if (c == null) return null;
-        return c.nbWired() + " wired, " + (c.pieces.size() - c.nbWired()) + " autre(s) mobi(s), "
-                + c.largeur() + "×" + c.longueur() + " cases";
+    /** Resume de la copie choisie ; null sans copie. */
+    public static String resumeCopie() { String n = choisie(); return n == null ? null : resumeCopie(n); }
+
+    /** Nombre de piles : cases differentes occupees par des wired. */
+    static int piles(Copie c) {
+        Set<Long> cases = new HashSet<>();
+        for (Piece p : c.pieces) if (p.wired()) cases.add(((long) p.x << 32) | (p.y & 0xffffffffL));
+        return cases.size();
+    }
+
+    /** « 12 wired, 3 piles, 6×4 cases · 4 oct. 10:12 » ; « Illisible » si le fichier ne se lit pas. */
+    static String resumeCopie(String nom) {
+        Copie c = lire(nom);
+        if (c == null) return "Illisible";
+        long q = c.quand > 0 ? c.quand : fichierJson(nom).lastModified();
+        String quand = new java.text.SimpleDateFormat("d MMM HH:mm", Locale.FRANCE).format(new Date(q));
+        return Ui.accorder(c.nbWired() + " wired, " + piles(c) + " pile(s), "
+                + c.largeur() + "×" + c.longueur() + " cases") + " · " + quand;
+    }
+
+    /** Les ids d'origine des mobis d'une copie (pour en reprendre la photo dans la salle d'origine). */
+    static List<Integer> idsDe(String nom) {
+        Copie c = lire(nom);
+        List<Integer> r = new ArrayList<>();
+        if (c != null) for (Piece p : c.pieces) r.add(p.id);
+        return r;
     }
 
     // ================================================================== copier
@@ -493,25 +621,40 @@ public final class WiredCollage {
     /** Copie la configuration wired des mobis de sol donnes (ids). Fenetre de suivi. */
     public static void copier(Collection<Integer> idsSols) { copier(idsSols, null); }
 
-    public static void copier(Collection<Integer> idsSols, Window parent) {
+    public static void copier(Collection<Integer> idsSols, Window parent) { copier(idsSols, parent, null, false, null); }
+
+    /**
+     * Copie, enregistree sous un nom, puis photo d'apercu.
+     *
+     * @param nom        nom voulu (null ou vide : d'apres la salle et la date) ; jamais d'ecrasement
+     * @param avecCibles ajoute les mobis choisis par ces wired (hors wired)
+     * @param fin        appele (fil de travail) avec le nom enregistre, si la copie a reussi
+     */
+    static void copier(Collection<Integer> idsSols, Window parent, String nom, boolean avecCibles, Consumer<String> fin) {
         Boite b = new Boite(parent, "Copier la config wired");
         if (enCours) { b.fin("Une copie ou un collage est déjà en cours."); return; }
-        if (idsSols == null || idsSols.isEmpty()) { b.fin("Aucun mobi à copier : choisis un calque ou sélectionne des mobis."); return; }
+        if (idsSols == null || idsSols.isEmpty()) { b.fin("Aucun mobi à copier : choisis des cases, un calque ou sélectionne des mobis."); return; }
         if (!Salle.dansUneSalle()) { b.fin("Tu n'es pas dans une salle."); return; }
         if (!Salle.furnidataPrete()) { b.fin("Furnidata pas encore chargée."); return; }
-        List<Integer> ids = new ArrayList<>(idsSols);
+        List<Integer> ids = new ArrayList<>(new LinkedHashSet<>(idsSols));
+        String voulu = nom == null || nettoyer(nom).isEmpty() ? nomPropose() : nom;
         enCours = true;
         b.travail("Lecture des wired…");
         Salle.tache("wired-copier", () -> {
-            try { copier0(ids, b); }
+            String fait = null;
+            try { fait = copier0(ids, b, voulu, avecCibles); }
             catch (Throwable t) { b.fin("Copie impossible : " + t); }
             finally { enCours = false; }
+            if (fait != null && fin != null) {
+                try { fin.accept(fait); } catch (Throwable t) { Journal.debug("Copie wired : suite : " + t); }
+            }
         });
     }
 
-    private static void copier0(List<Integer> ids, Boite b) {
+    /** Le nom enregistre, ou null si rien n'a ete copie. */
+    private static String copier0(List<Integer> ids, Boite b, String voulu, boolean avecCibles) {
         game.FloorState fs = Salle.etat();
-        if (fs == null) { b.fin("Tu n'es pas dans une salle."); return; }
+        if (fs == null) { b.fin("Tu n'es pas dans une salle."); return null; }
         int salle = fs.getRoomId();
         List<HFloorItem> mobis = new ArrayList<>();
         List<Integer> wired = new ArrayList<>();
@@ -523,15 +666,35 @@ public final class WiredCollage {
             String c = Salle.classe(it.getTypeId(), false);
             if (Wired.estWired(c)) wired.add(id);
         }
-        if (wired.isEmpty()) { b.fin("Aucun wired parmi ces " + mobis.size() + " mobi(s) : rien à copier."); return; }
+        if (wired.isEmpty()) { b.fin("Aucun wired parmi ces " + mobis.size() + " mobi(s) : rien à copier."); return null; }
 
         // 1. les reglages (deja lus et a jour : pas redemandes)
         Map<Integer, WiredLecteur.Config> cfg = WiredLecteur.lireMaintenant(wired, b::arretee,
                 (f, t) -> b.progres(f, t, "Lecture des réglages… " + f + " / " + t));
-        if (b.arretee()) { b.fin("Arrêté : rien n'a été copié (l'ancienne copie est gardée)."); return; }
+        if (b.arretee()) { b.fin("Arrêté : rien n'a été copié."); return null; }
         if (cfg.isEmpty()) {
             b.fin("Aucun réglage lu : as-tu les droits wired dans cette salle ? Rien n'a été copié.");
-            return;
+            return null;
+        }
+
+        // 1 bis. les mobis choisis par ces wired (pas deja copies)
+        int cibles = 0;
+        if (avecCibles) {
+            Set<Integer> deja = new HashSet<>();
+            for (HFloorItem it : mobis) deja.add(it.getId());
+            for (WiredLecteur.Config c : cfg.values()) {
+                List<Integer> l = new ArrayList<>();
+                if (c.items != null) l.addAll(c.items);
+                if (c.items2 != null) l.addAll(c.items2);
+                for (Integer id : l) {
+                    if (id == null || !deja.add(id)) continue;
+                    HFloorItem it = Salle.sol(id);
+                    if (it == null || Wired.estWired(Salle.classe(it.getTypeId(), false))) continue;
+                    mobis.add(it);
+                    cibles++;
+                }
+            }
+            Journal.debug("Copie wired : " + cibles + " mobi(s) choisi(s) par les wired ajouté(s).");
         }
 
         // 2. les pieces
@@ -560,45 +723,60 @@ public final class WiredCollage {
         Map<String, String> vars = WiredLecteur.variables();
         Copie c = construire(pieces, vars == null ? Map.of() : vars, salle, Salle::hauteurSol);
 
-        // 3. garder (memoire + fichier) et verifier la relecture du fichier
-        copie = c;
-        chargee = true;
-        String note = "";
+        // 3. enregistrer sous son nom et verifier la relecture du fichier
+        String nom = nomLibre(voulu);
+        File f = fichierJson(nom);
         try {
-            File f = fichierCopie();
             ecrireAtomique(f, c.versJson().getBytes(StandardCharsets.UTF_8));
             Copie relue = Copie.depuisJson(new String(Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8));
-            if (relue.pieces.size() != c.pieces.size()) note = " Attention : le fichier de sauvegarde relu ne correspond pas.";
+            if (relue.pieces.size() != c.pieces.size()) {
+                b.fin("Le fichier de la copie « " + nom + " » relu ne correspond pas : recommence la copie.");
+                return null;
+            }
         } catch (Throwable t) {
-            note = " (Copie gardée en mémoire seulement : " + t.getMessage() + ")";
+            b.fin("Copie non enregistrée : " + t.getMessage());
+            return null;
         }
+        choisie = nom;
+
+        // 4. la photo, decoupee autour des mobis copies
+        b.travail("Photo de l'aperçu…");
+        List<Integer> photo = new ArrayList<>();
+        for (HFloorItem it : mobis) photo.add(it.getId());
+        String errPhoto = ApercuMobis.prendre(fichierPng(nom), photo);
+        if (errPhoto != null) Journal.debug("Aperçu wired : " + errPhoto);
+
         Plan p = planifier(c, false);
-        b.bilan(true, "Copié : " + c.nbWired() + " wired"
+        b.bilan(true, "Copie « " + nom + " » enregistrée : " + c.nbWired() + " wired en " + piles(c) + " pile(s)"
                 + (sansReglage > 0 ? " dont " + sansReglage + " sans réglage lu (ils seront posés vides)" : "")
                 + ", " + p.lies + " mobi(s) qu'ils utilisent, " + (c.pieces.size() - c.nbWired() - p.lies)
                 + " autre(s) mobi(s). Zone de " + c.largeur() + "×" + c.longueur() + " cases."
-                + (p.refsPerdues > 0 ? " " + p.refsPerdues + " sélection(s) vers des mobis hors du calque ne suivront pas." : "")
+                + (p.refsPerdues > 0 ? " " + p.refsPerdues + " sélection(s) vers des mobis hors copie ne suivront pas." : "")
                 + (absents > 0 ? " " + absents + " mobi(s) introuvable(s) dans la salle ignoré(s)." : "")
-                + note);
+                + (errPhoto != null ? " Pas d'aperçu : " + errPhoto : ""));
+        return nom;
     }
 
     // =================================================================== coller
 
+    /** Colle la copie choisie dans la liste (la plus recente sinon). */
+    public static void collerDans(HPoint origine, Window parent) { collerDans(choisie(), origine, parent); }
+
     /**
-     * Colle la configuration copiee. Aperçu chiffre + Confirmer d'abord.
+     * Colle la copie « nom ». Aperçu chiffre + Confirmer d'abord.
      *
      * @param origine case du coin haut-gauche (x min, y min) ; null = cliquee dans le jeu
      */
-    public static void collerDans(HPoint origine, Window parent) {
+    static void collerDans(String nom, HPoint origine, Window parent) {
         Boite b = new Boite(parent, "Coller la config wired");
-        Copie c = copie();
+        Copie c = lire(nom);
         if (c == null || c.nbWired() == 0) { b.fin("Rien à coller : copie d'abord une config wired."); return; }
         if (enCours) { b.fin("Une copie ou un collage est déjà en cours."); return; }
         GPresets gp = Salle.gp();
         if (gp == null) { b.fin("L'Atelier n'est pas encore prêt."); return; }
         if (!Salle.dansUneSalle()) { b.fin("Tu n'es pas dans une salle."); return; }
         if (!Salle.furnidataPrete()) { b.fin("Furnidata pas encore chargée."); return; }
-        b.apercu(c, origine);
+        b.apercu(c, nom, origine);
     }
 
     // ====================================================== copier-coller de calques
@@ -831,7 +1009,7 @@ public final class WiredCollage {
         long fin = System.currentTimeMillis() + 30 * 60_000L;
         boolean arrete = false;
         while (System.currentTimeMillis() < fin) {
-            Salle.sommeil(500);
+            Salle.sommeil(200);
             game.FloorState s = Salle.etat();
             if (s == null || s.getRoomId() != salle) {
                 abandonner(imp, gp);
@@ -849,7 +1027,10 @@ public final class WiredCollage {
                     + (n >= voulus && st != GPresetImporter.BuildingImportState.NONE ? " (réglage des wired…)" : ""));
             if (st == GPresetImporter.BuildingImportState.NONE) break;
         }
-        Salle.sommeil(3500);       // la dalle de l'Atelier est ramassee ~1,5 s apres la fin
+        // suivi : seulement le temps que les derniers mobis apparaissent (au lieu
+        // de 3,5 s fixes) ; la dalle de l'Atelier est deja dans « avant »
+        long finImport = System.currentTimeMillis();
+        PoseDirecte.suivre(() -> voulus - nouveaux(avant, attendus).size(), 800, 3500);
 
         // 5. verifier : retrouver chaque piece, relire les wired poses
         List<Neuf> neufs = new ArrayList<>();
@@ -870,7 +1051,8 @@ public final class WiredCollage {
         List<String> details = new ArrayList<>();
         if (!aRelire.isEmpty() && !arrete) {
             b.travail("Vérification : relecture des wired posés…");
-            Salle.sommeil(800);        // le serveur applique les derniers reglages
+            long reste = 800 - (System.currentTimeMillis() - finImport);   // le serveur applique les derniers reglages
+            if (reste > 0) Salle.sommeil(reste);
             Map<Integer, WiredLecteur.Config> lus = WiredLecteur.lireMaintenant(aRelire, b::arretee,
                     (f, t) -> b.progres(f, t, "Vérification des réglages… " + f + " / " + t));
             for (Integer n : aRelire) {
@@ -979,7 +1161,7 @@ public final class WiredCollage {
 
         private static void fx(Runnable r) { if (Platform.isFxApplicationThread()) r.run(); else Platform.runLater(r); }
 
-        void texte(String s) { String t = Ui.majuscule(s); fx(() -> texte.setText(t)); }
+        void texte(String s) { String t = Ui.majuscule(Ui.accorder(s)); fx(() -> texte.setText(t)); }
 
         void travail(String s) {
             texte(s);
@@ -1001,7 +1183,7 @@ public final class WiredCollage {
         /** Fin d'operation : le texte reste dans la boite, et part au Journal (succes ou erreur). */
         void bilan(boolean ok, String s) {
             texte(s);
-            String t = Ui.majuscule(s);
+            String t = Ui.majuscule(Ui.accorder(s));
             if (t.startsWith("Arrêté")) Journal.info("wired (copier/coller) : " + t);   // arret voulu : la boite suffit
             else if (ok) Journal.succes(t);
             else Journal.erreur(t);
@@ -1013,12 +1195,13 @@ public final class WiredCollage {
         }
 
         /** Aperçu chiffre du collage, choix de la source, Confirmer / Annuler. */
-        void apercu(Copie c, HPoint origine) {
+        void apercu(Copie c, String nom, HPoint origine) {
             fx(() -> {
                 GPresets gp = Salle.gp();
                 CheckBox autres = new CheckBox();
                 Label lAutres = new Label("Poser aussi les autres mobis copiés");
                 lAutres.setOnMouseClicked(e -> autres.fire());
+                lAutres.setCursor(javafx.scene.Cursor.HAND);
                 HBox ligneAutres = new HBox(6, autres, lAutres);
                 ligneAutres.setAlignment(Pos.CENTER_LEFT);
                 ChoiceBox<String> src = new ChoiceBox<>();
@@ -1032,7 +1215,7 @@ public final class WiredCollage {
                 plan.setMaxWidth(340);
                 Runnable maj = () -> {
                     Plan p = planifier(c, autres.isSelected());
-                    plan.setText(Ui.majuscule(p.aPoser.size() + " mobi(s) à poser : " + p.wired + " wired"
+                    plan.setText(Ui.majuscule(Ui.accorder(p.aPoser.size() + " mobi(s) à poser : " + p.wired + " wired"
                             + (p.sansReglage > 0 ? " (dont " + p.sansReglage + " sans réglage, posés vides)" : "")
                             + ", " + p.lies + " mobi(s) qu'ils utilisent"
                             + (p.autres > 0 ? ", " + p.autres + " autre(s)" : "") + ". "
@@ -1042,8 +1225,8 @@ public final class WiredCollage {
                                + (p.wiredTouches.size() > 4 ? "…" : "") + ")" : "") + ". "
                             + "Zone de " + c.largeur() + "×" + c.longueur() + " cases"
                             + (origine == null ? " : après Confirmer, clique dans le jeu la case du coin haut-gauche."
-                                               : " à partir de (" + origine.getX() + "," + origine.getY() + ").")));
-                    dispo.setText(gp == null ? "" : Ui.majuscule(disponibilite(gp, p, source(src))));
+                                               : " à partir de (" + origine.getX() + "," + origine.getY() + ")."))));
+                    dispo.setText(gp == null ? "" : Ui.majuscule(Ui.accorder(disponibilite(gp, p, source(src)))));
                 };
                 autres.setOnAction(e -> maj.run());
                 src.setOnAction(e -> maj.run());
@@ -1067,7 +1250,7 @@ public final class WiredCollage {
                         finally { enCours = false; }
                     });
                 });
-                texte.setText(Ui.majuscule("Copie : " + resumeCopie() + "."));
+                texte.setText(Ui.majuscule("Copie « " + nom + " » : " + resumeCopie(nom) + "."));
                 Label lSrc = new Label("Source des mobis");
                 corps.getChildren().remove(corps.getChildren().size() - 1);
                 corps.getChildren().addAll(plan, lSrc, src, ligneAutres, dispo, rangee(annuler, confirmer));

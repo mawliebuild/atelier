@@ -25,7 +25,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
  *   UserUpdate   (TOCLIENT) positions ; une plante ne bouge pas, mais on suit.
  *   RoomReady    (TOCLIENT) changement de salle : on vide tout.
  *   PetInfo      (TOCLIENT) fiche d'une plante, recue quand TU la cliques
- *                dans le jeu (ou via le bouton « Lire les détails ») : croissance,
+ *                dans le jeu ou dans le tableau, ou lue sans bruit par l'Atelier : croissance,
  *                bien-etre, temps restant, rarete... Ordre des champs deduit
  *                du client Flash, decode prudemment, journal hexa en console.
  *   PetStatusUpdate / PetLevelUpdate / PetRespectNotification (TOCLIENT) :
@@ -36,6 +36,11 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * Detection 100 % passive : rien n'est jamais envoye vers une plante hors
  * d'une action explicite (voir enActionExplicite), car le jeu traite une
  * demande de fiche comme un clic et selectionne la plante.
+ *
+ * Les intercepteurs ne font que copier le paquet : la lecture se fait sur un
+ * fil a part (« atelier-plantes-lecture »), dans l'ordre d'arrivee, pour ne
+ * jamais retenir le jeu. Seule la decision de bloquer une fiche silencieuse
+ * reste dans l'intercepteur (lecture sans copie).
  *
  * Tous les intercepts sont par NOM de paquet : si un nom ne se resout pas,
  * rien n'arrive, et les compteurs ci-dessous le montrent dans les voyants.
@@ -128,6 +133,8 @@ public final class PlanteSuivi {
 
     // compteurs pour les voyants
     public static volatile long nbUsers, nbPetInfo, nbRespect, nbStatus, nbUserObject;
+    /** Liste Users recue depuis la derniere entree dans un appart (sinon : ecoute installee trop tard). */
+    public static volatile boolean listeRecue = false;
     public static volatile long dernierRespect;  // epoque ms de la derniere notification de respect
     public static volatile long dernierRefusSoin;                 // PetRespectFailed
     public static volatile long dernierePropositionReproduction;  // PetBreeding
@@ -189,14 +196,30 @@ public final class PlanteSuivi {
         ecoute(gp, nom, () -> true, f);
     }
 
-    /** utile : test tres bon marche fait AVANT la copie du paquet (UserUpdate est tres frequent). */
+    /** Un seul fil demon : les paquets sont lus dans l'ordre d'arrivee, hors de l'intercepteur. */
+    private static final java.util.concurrent.ExecutorService LECTURE =
+            java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+                Thread t = new Thread(r, "atelier-plantes-lecture");
+                t.setDaemon(true);
+                return t;
+            });
+
+    /**
+     * utile : test tres bon marche fait AVANT la copie du paquet (UserUpdate est
+     * tres frequent). L'intercepteur copie seulement ; f tourne sur LECTURE.
+     */
     private static void ecoute(GPresets gp, String nom, java.util.function.BooleanSupplier utile,
                                java.util.function.Consumer<HPacket> f) {
         try {
             gp.intercept(HMessage.Direction.TOCLIENT, nom, m -> {
-                if (!utile.getAsBoolean()) return;
-                try { f.accept(new HPacket(m.getPacket())); }
-                catch (Throwable e) { System.err.println("[Atelier] " + nom + " : " + e); }
+                try {
+                    if (!utile.getAsBoolean()) return;
+                    HPacket copie = new HPacket(m.getPacket());
+                    LECTURE.execute(() -> {
+                        try { f.accept(copie); }
+                        catch (Throwable e) { System.err.println("[Atelier] " + nom + " : " + e); }
+                    });
+                } catch (Throwable e) { System.err.println("[Atelier] " + nom + " : " + e); }
             });
         } catch (Throwable e) {
             Journal.debug("intercept " + nom + " indisponible : " + e);
@@ -205,7 +228,7 @@ public final class PlanteSuivi {
 
     private static void brancher(GPresets gp) {
         ecoute(gp, "RoomReady", p -> {
-            salleConnue = -1; vider();
+            salleConnue = -1; listeRecue = false; vider();
             // en entrant dans un appart : soins restants relus (profil redemande)
             Salle.tache("plantes-soins", () -> { Salle.sommeil(1500); try { demanderProfil(); } catch (Throwable ignored) { } });
         });
@@ -224,7 +247,7 @@ public final class PlanteSuivi {
             // Fiche demandee par l'Atelier : lue ici, mais pas montree dans le jeu.
             gp.intercept(HMessage.Direction.TOCLIENT, "PetInfo", m -> {
                 try {
-                    int id = new HPacket(m.getPacket()).readInteger();
+                    int id = m.getPacket().readInteger(6);      // lecture sans copie
                     Long t = fichesSilencieuses.remove(id);
                     if (t != null && System.currentTimeMillis() - t < 5000) m.setBlocked(true);
                 } catch (Throwable ignored) { }
@@ -262,6 +285,7 @@ public final class PlanteSuivi {
 
     private static void surUsers(HPacket p) {
         nbUsers++;
+        listeRecue = true;
         verifierSalle();
         HEntity[] ents;
         try { ents = HEntity.parse(p); }
@@ -546,6 +570,24 @@ public final class PlanteSuivi {
         }
         envoi.accept(new HPacket(nom, HMessage.Direction.TOSERVER, args));
         return true;
+    }
+
+    /**
+     * Fait comme un clic sur la plante dans le jeu : l'avatar se tourne vers
+     * elle (LookTo x, y) puis la fiche est demandee (GetPetInfo id) ; la
+     * reponse n'est pas bloquee, le jeu ouvre donc sa fiche. Action explicite
+     * seulement.
+     */
+    public static boolean cliquer(int idAnimal) {
+        if (!explicite.get()) return envoyerVersPlante("GetPetInfo", idAnimal);   // refuse et compte
+        fichesSilencieuses.remove(idAnimal);          // cette reponse-la doit s'ouvrir dans le jeu
+        Plante p = plantes.get(idAnimal);
+        if (p != null && p.x >= 0 && p.y >= 0) {
+            try { envoyerVersPlante("LookTo", p.x, p.y); }
+            catch (Throwable e) { Journal.debug("LookTo impossible : " + e); }
+        }
+        Journal.debug("clic sur la plante " + idAnimal + (p == null ? "" : " (" + p.nom + " en " + p.x + "," + p.y + ")"));
+        return envoyerVersPlante("GetPetInfo", idAnimal);
     }
 
     /** Demande la fiche d'une plante (le jeu l'affiche comme apres un clic). */

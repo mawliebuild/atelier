@@ -70,6 +70,7 @@ public final class Icones {
     /** Cadenas ouvert : calque deverrouille. */
     public static final String CADENAS_OUVERT = "M6 11h12v9H6z M8.5 11V8a3.5 3.5 0 0 1 6.9-0.8";
     /** Une poubelle : supprimer. */
+    public static final String CRAYON     = "M4 20l4-1 11-11-3-3L5 16z M14 7l3 3";
     public static final String CORBEILLE  = "M4 7h16 M9 7V4h6v3 M6 7l1 13h10l1-13 M10 11v6 M14 11v6";
     /** Une fleche qui descend sur deux feuillets : fusionner. */
     public static final String FUSIONNER  = "M12 2v8 M8.5 6.5L12 10l3.5-3.5 M3 13l9 4.5 9-4.5 M3 17.5l9 4.5 9-4.5";
@@ -82,12 +83,97 @@ public final class Icones {
     public static final String REDUIRE    = "M2 5h6";
     public static final String FERMER     = "M2 2l6 6 M8 2L2 8";
 
+    // --- ajouts (agent c) : boutons des fenetres claires
+    /** Fleche qui tourne dans le sens inverse (anti-horaire) : pendant de PIVOTER. */
+    public static final String PIVOTER_INVERSE = "M4 12a8 8 0 1 0 2.34-5.66 M4 4v4h4";
+    /** Une fleche qui descend dans un plateau : enregistrer / telecharger. */
+    public static final String ENREGISTRER = "M12 4v11 M7.5 10.5L12 15l4.5-4.5 M4 15v5h16v-5";
+    /** Une prise : la connexion au jeu. */
+    public static final String CONNEXION  = "M9 3v5 M15 3v5 M6 8h12v3a6 6 0 0 1-12 0z M12 17v4";
+    /** Une fenetre avec sa barre : les fenetres de l'Atelier. */
+    public static final String FENETRES   = "M3 5h18v14H3z M3 9h18";
+    /** Un cylindre : les donnees (caches). */
+    public static final String DONNEES    = "M4 6c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3z M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6 M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3";
+    /** Une etincelle : la mise en valeur. */
+    public static final String ETINCELLE  = "M12 3v4 M12 17v4 M3 12h4 M17 12h4 M6 6l2.5 2.5 M15.5 15.5L18 18 M6 18l2.5-2.5 M15.5 8.5L18 6";
+    /** Une page qui sort d'un presse-papiers : coller. */
+    public static final String COLLER     = "M9 4h6v3H9z M7 5H5v16h14V5h-2 M9 12h6 M9 16h4";
+
+    // --- ajouts (fenetres Salle, Apparts, Hauteur, Couleur, Escalier) ---
+    /** Une dalle et une fleche qui descend : couvrir de dalles. */
+    public static final String COUVRIR    = "M12 2v7 M9 6l3 3 3-3 M3 15l9-4.5 9 4.5-9 4.5z";
+    /** Une dalle et une fleche qui remonte : ramasser. */
+    public static final String RAMASSER   = "M12 9V2 M9 5l3-3 3 3 M3 15l9-4.5 9 4.5-9 4.5z";
+    /** Une dalle barree : sans dalles. */
+    public static final String SANS_DALLE = "M3 13l9-4.5 9 4.5-9 4.5z M4 4l16 16";
+    /** Une dalle sous un mobi : avec dalles. */
+    public static final String AVEC_DALLE = "M3 15l9-4.5 9 4.5-9 4.5z M9 4h6v6H9z";
+    /** Une mire : choisir dans le jeu. */
+    public static final String CIBLE      = "M12 2v5 M12 17v5 M2 12h5 M17 12h5 M12 8a4 4 0 1 0 0.01 0z";
+    /** Interrupteur marche / arret. */
+    public static final String MARCHE     = "M12 3v8 M7.5 6.5a7 7 0 1 0 9 0";
+    /** Un carre plein : arreter. */
+    public static final String ARRET      = "M7 7h10v10H7z";
+    /** Deux fleches opposees : trier. */
+    public static final String TRIER      = "M7 4v16 M4 7l3-3 3 3 M17 20V4 M14 17l3 3 3-3";
+
     private Icones() { }
+
+    /**
+     * Pictogramme d'un bouton de fenetre (fond clair), 16 px, classe
+     * « icone-bouton ». Trait sombre par defaut, blanc sur un bouton
+     * « primaire » ; une regle CSS sur .icone-bouton passe devant.
+     */
+    public static javafx.scene.Node petit(String chemin) {
+        SVGPath p = trace(chemin, "icone-bouton");
+        p.setStroke(javafx.scene.paint.Color.web("#5A564C"));
+        p.setScaleX(0.68); p.setScaleY(0.68);
+        return new javafx.scene.Group(p);
+    }
+
+    /** Pose un pictogramme devant le texte d'un bouton (blanc sur un bouton principal). */
+    public static <B extends javafx.scene.control.Labeled> B sur(B b, String chemin) {
+        javafx.scene.Node g = petit(chemin);
+        SVGPath p = (SVGPath) ((javafx.scene.Group) g).getChildren().get(0);
+        Runnable teinte = () -> p.setStroke(javafx.scene.paint.Color.web(
+                b.getStyleClass().contains("primaire") ? "#FFFFFF" : "#5A564C"));
+        teinte.run();
+        b.getStyleClass().addListener((javafx.collections.ListChangeListener<String>) c -> teinte.run());
+        b.setGraphic(g);
+        b.setGraphicTextGap(6);
+        return b;
+    }
+
+    /** Bouton a pictogramme seul, avec sa bulle (rapide : 150 ms). */
+    public static javafx.scene.control.Button seul(String chemin, String bulle) {
+        javafx.scene.control.Button b = new javafx.scene.control.Button();
+        b.setGraphic(petit(chemin));
+        javafx.scene.control.Tooltip t = new javafx.scene.control.Tooltip(bulle);
+        t.setShowDelay(javafx.util.Duration.millis(150));
+        b.setTooltip(t);
+        b.setAccessibleText(bulle);
+        b.setMinWidth(javafx.scene.layout.Region.USE_PREF_SIZE);
+        return b;
+    }
 
     public static SVGPath trace(String chemin, String classe) {
         SVGPath p = new SVGPath();
         p.setContent(chemin);
         p.getStyleClass().addAll("icone", classe);
         return p;
+    }
+
+    /**
+     * Petit pictogramme pour un bouton des fenetres claires (taille en px,
+     * 16 a 18 en general). Dans un Group : la mise a l'echelle compte dans la
+     * taille du bouton. clair = trait blanc (bouton « primaire »), sinon gris fonce.
+     */
+    public static javafx.scene.Node petite(String chemin, double taille, boolean clair) {
+        SVGPath p = trace(chemin, "icone-bouton");
+        double k = taille / 24.0;
+        p.setScaleX(k);
+        p.setScaleY(k);
+        p.setStyle("-fx-stroke: " + (clair ? "#FFFFFF" : "#5A564C") + ";");
+        return new javafx.scene.Group(p);
     }
 }

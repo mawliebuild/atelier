@@ -249,8 +249,8 @@ public class OngletAnalyseWired {
             return MiseEnValeur.solsOu(it -> cases.contains(((long) it.getTile().getX() << 32) | (it.getTile().getY() & 0xffffffffL))
                     && Wired.estWired(Salle.classe(it.getTypeId(), false)));
         });
-        problemes.setPrefHeight(360);
-        problemes.setMinHeight(200);
+        problemes.setPrefHeight(260);
+        problemes.setMinHeight(160);
         VBox.setVgrow(problemes, Priority.ALWAYS);
         problemes.setPlaceholder(Ui.discret("Aucun problème trouvé (ou pas encore analysé)."));
         problemes.setCellFactory(lv -> new ListCell<>() {

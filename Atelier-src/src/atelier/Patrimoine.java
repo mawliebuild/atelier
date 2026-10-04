@@ -9,9 +9,6 @@ import gearth.protocol.HPacket;
 
 import org.json.JSONObject;
 
-import java.io.File;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -21,7 +18,8 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * Le serveur dit, pour chaque mobi d'une salle, l'identifiant de son
  * proprietaire. A chaque appart ou tu entres, on compte ceux qui sont a toi
- * et on le retient dans repertoire/patrimoine.json, avec la date. On ne peut
+ * et on le retient dans patrimoine.json (dossier de l'Atelier, voir
+ * PrixFichier ; repris de l'ancien repertoire/), avec la date. On ne peut
  * pas voir un appart sans y entrer : seuls les apparts visites sont comptes,
  * et leur compte est celui du dernier passage.
  *
@@ -42,16 +40,21 @@ public final class Patrimoine {
         public int total() { int n = 0; for (int v : mobis.values()) n += v; return n; }
     }
 
-    private static final File FICHIER = new File("repertoire", "patrimoine.json");
+    private static final String NOM = "patrimoine.json";
     private static final Map<Integer, Appart> apparts = new ConcurrentHashMap<>();
     private static volatile int moi = -1;
     private static volatile String monPseudo = null;
     private static volatile boolean demarre = false;
-    private static volatile Runnable surMaj = () -> { };
+    private static final List<Runnable> ecouteurs = new java.util.concurrent.CopyOnWriteArrayList<>();
 
     private Patrimoine() { }
 
-    public static void surMaj(Runnable r) { surMaj = (r == null) ? () -> { } : r; }
+    /** Ajoute un ecouteur, appele (hors fil FX) quand un appart est compte ou oublie. */
+    public static void surMaj(Runnable r) { if (r != null) ecouteurs.add(r); }
+
+    private static void notifier() {
+        for (Runnable r : ecouteurs) try { r.run(); } catch (Throwable ignored) { }
+    }
     public static Collection<Appart> apparts() { return new ArrayList<>(apparts.values()); }
     public static String pseudo() { return monPseudo; }
 
@@ -137,7 +140,7 @@ public final class Patrimoine {
             apparts.put(salle, a);
         }
         sauver();
-        surMaj.run();
+        notifier();
     }
 
     private static boolean bc(GPresets gp, int typeId, boolean mur) {
@@ -152,7 +155,7 @@ public final class Patrimoine {
     }
 
     public static void oublier(int salle) {
-        if (apparts.remove(salle) != null) { sauver(); surMaj.run(); }
+        if (apparts.remove(salle) != null) { sauver(); notifier(); }
     }
 
     private static void dormir(long ms) {
@@ -162,9 +165,9 @@ public final class Patrimoine {
     // -------------------------------------------------------------- stockage
 
     private static void charger() {
-        if (!FICHIER.exists()) return;
+        JSONObject o = PrixFichier.lire(NOM, NOM);
+        if (o == null) return;
         try {
-            JSONObject o = new JSONObject(new String(Files.readAllBytes(FICHIER.toPath()), StandardCharsets.UTF_8));
             for (String k : o.keySet()) {
                 JSONObject j = o.getJSONObject(k);
                 Appart a = new Appart();
@@ -192,11 +195,7 @@ public final class Patrimoine {
                 j.put("mobis", new JSONObject(a.mobis));
                 o.put(String.valueOf(a.id), j);
             }
-            File d = FICHIER.getParentFile();
-            if (!d.exists()) d.mkdirs();
-            File tmp = new File(d, "patrimoine.json.tmp");
-            Files.write(tmp.toPath(), o.toString(1).getBytes(StandardCharsets.UTF_8));
-            Files.move(tmp.toPath(), FICHIER.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            if (!PrixFichier.ecrire(NOM, o)) System.err.println("[Atelier] patrimoine : sauvegarde impossible.");
         } catch (Throwable t) {
             System.err.println("[Atelier] patrimoine : sauvegarde impossible : " + t);
         }

@@ -58,10 +58,12 @@ public class Navigation {
         /**
          * La fenetre ne defile pas : le contenu prend exactement sa hauteur, et
          * c'est a lui de faire defiler ce qu'il faut (un tableau, par exemple).
+         * Si la fenetre est plus basse que le minimum du contenu (plafond de
+         * hauteur, petit ecran), l'ascenseur revient plutot que de couper le bas.
          */
         public void pleineHauteur() {
             defilement.setFitToHeight(true);
-            defilement.setVbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+            defilement.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
         }
 
         /** L'aide de toute la fenetre (menu a un seul volet), pour la barre de titre ; null sinon. */
@@ -201,6 +203,8 @@ public class Navigation {
                 noeuds.set(i, n);
             }
             Ui.majusculesAuto(n);
+            // Ni bouton rogne (« Arr... »), ni texte ampute de sa derniere ligne.
+            Ui.rienDeCoupe(n);
         }
         m.sections.getChildren().clear();
         if (noeuds.size() == 1) {

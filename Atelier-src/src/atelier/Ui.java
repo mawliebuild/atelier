@@ -192,6 +192,7 @@ public final class Ui {
         Label l = new Label("");
         l.setWrapText(true);
         l.setMaxWidth(Double.MAX_VALUE);
+        l.setMinHeight(javafx.scene.layout.Region.USE_PREF_SIZE);   // toutes ses lignes, jamais rognee
         l.getStyleClass().add("etat-ligne");
         javafx.beans.property.BooleanProperty montre = new javafx.beans.property.SimpleBooleanProperty(false);
         l.textProperty().addListener((o, a, b) -> {
@@ -269,6 +270,7 @@ public final class Ui {
     public static Label discret(String texte) {
         Label l = new Label(WindowsClavier.texte(texte));
         l.setWrapText(true);
+        l.setMinHeight(javafx.scene.layout.Region.USE_PREF_SIZE);
         l.setStyle("-fx-opacity: 0.6; -fx-font-style: italic;");
         return l;
     }
@@ -468,5 +470,119 @@ public final class Ui {
     public static void etirer(Node n) {
         HBox.setHgrow(n, Priority.ALWAYS);
         VBox.setVgrow(n, Priority.ALWAYS);
+    }
+
+    /**
+     * Rien n'est rogne dans un volet, meme quand la fenetre manque de place :
+     * - un bouton a texte pose dans une rangee (HBox) garde toute sa largeur
+     *   (« Arr... » non) : c'est l'etiquette voisine qui cede ;
+     * - un texte qui passe a la ligne garde toutes ses lignes (une colonne
+     *   trop courte serre plutot le tableau, ou fait defiler la fenetre).
+     * Ce qui a deja une taille minimale reglee n'est pas touche.
+     */
+    public static void rienDeCoupe(Node n) {
+        if (n == null) return;
+        if (n instanceof javafx.scene.control.ButtonBase && !(n instanceof javafx.scene.control.Hyperlink)) {
+            javafx.scene.control.ButtonBase b = (javafx.scene.control.ButtonBase) n;
+            if (b.getParent() instanceof HBox && b.getText() != null && !b.getText().isBlank()
+                    && b.getMinWidth() == javafx.scene.layout.Region.USE_COMPUTED_SIZE)
+                b.setMinWidth(javafx.scene.layout.Region.USE_PREF_SIZE);
+            return;
+        }
+        if (n instanceof Label) {
+            Label l = (Label) n;
+            if (l.isWrapText() && l.getMinHeight() == javafx.scene.layout.Region.USE_COMPUTED_SIZE)
+                l.setMinHeight(javafx.scene.layout.Region.USE_PREF_SIZE);
+            return;
+        }
+        if (n instanceof javafx.scene.control.ScrollPane) rienDeCoupe(((javafx.scene.control.ScrollPane) n).getContent());
+        else if (n instanceof javafx.scene.control.TitledPane) rienDeCoupe(((javafx.scene.control.TitledPane) n).getContent());
+        else if (n instanceof javafx.scene.layout.Pane)
+            for (Node e : ((javafx.scene.layout.Pane) n).getChildren()) rienDeCoupe(e);
+    }
+
+    // ------------------------------------------------------------- bulles
+
+    /** Delai d'apparition des bulles de l'Atelier : rapide, sans etre nerveux. */
+    public static final javafx.util.Duration DELAI_BULLE = javafx.util.Duration.millis(150);
+
+    /** Une bulle rapide (150 ms), qui passe a la ligne au-dela de 300 px. */
+    public static javafx.scene.control.Tooltip bulle(String texte) {
+        javafx.scene.control.Tooltip t = new javafx.scene.control.Tooltip(WindowsClavier.texte(texte));
+        t.setShowDelay(DELAI_BULLE);
+        t.setWrapText(true);
+        t.setMaxWidth(300);
+        return t;
+    }
+
+    /** Pose une bulle rapide sur un controle ; le rend pour enchainer. */
+    public static <C extends javafx.scene.control.Control> C bulle(C c, String texte) {
+        c.setTooltip(bulle(texte));
+        return c;
+    }
+
+    /**
+     * Toutes les bulles d'une scene apparaissent vite : celles laissees au
+     * delai par defaut de JavaFX (une seconde) passent a 150 ms au moment ou
+     * la souris arrive dessus. Le delai CSS (-fx-show-delay) n'est lu qu'apres
+     * le premier affichage : il ne suffit pas. Les bulles reglees a la main
+     * (le « i », plus rapide) ne sont pas touchees.
+     */
+    public static void bullesRapides(javafx.scene.Scene scene) {
+        if (scene == null || scene.getProperties().putIfAbsent("atelier.bulles", Boolean.TRUE) != null) return;
+        scene.addEventFilter(javafx.scene.input.MouseEvent.MOUSE_MOVED, e -> {
+            Object o = e.getTarget();
+            for (Node n = o instanceof Node ? (Node) o : null; n != null; n = n.getParent()) {
+                javafx.scene.control.Tooltip t = n instanceof javafx.scene.control.Control
+                        ? ((javafx.scene.control.Control) n).getTooltip() : null;
+                if (t == null) {
+                    Object x = n.getProperties().get("javafx.scene.control.Tooltip");   // Tooltip.install
+                    if (x instanceof javafx.scene.control.Tooltip) t = (javafx.scene.control.Tooltip) x;
+                }
+                if (t != null) {
+                    if (t.getShowDelay().toMillis() >= 999) t.setShowDelay(DELAI_BULLE);
+                    if (t.getMaxWidth() <= 0 || t.getMaxWidth() == Double.MAX_VALUE) { t.setMaxWidth(320); t.setWrapText(true); }
+                    return;
+                }
+            }
+        });
+    }
+
+    // ------------------------------------------------------------- boutons
+
+    /** Pictogramme de bouton : la grille de 24 ramenee a 16 px, trait de la couleur du texte. */
+    public static Node pictogramme(String icone) {
+        javafx.scene.shape.SVGPath ic = Icones.trace(icone, "icone-bouton");
+        ic.setScaleX(16.0 / 24); ic.setScaleY(16.0 / 24);
+        // le Group prend la taille reduite : sans lui, le bouton garde la place des 24 px
+        return new javafx.scene.Group(ic);
+    }
+
+    /** Bouton pictogramme + texte court (le texte reste lisible, l'icone aide a reperer). */
+    public static Button bouton(String icone, String texte) {
+        Button b = new Button(WindowsClavier.texte(texte));
+        if (icone != null) b.setGraphic(pictogramme(icone));
+        b.setGraphicTextGap(6);
+        b.getStyleClass().add("avec-icone");
+        return b;
+    }
+
+    /** Bouton pictogramme seul, carre, avec sa bulle rapide (le sens doit etre evident). */
+    public static Button boutonIcone(String icone, String bulle) {
+        Button b = new Button();
+        b.setGraphic(pictogramme(icone));
+        b.getStyleClass().add("bouton-icone");
+        b.setTooltip(bulle(bulle));
+        b.setMinWidth(Button.USE_PREF_SIZE);
+        return b;
+    }
+
+    /** Une rangee de boutons qui passe a la ligne plutot que de deborder (FlowPane). */
+    public static javafx.scene.layout.FlowPane boutons(Node... n) {
+        javafx.scene.layout.FlowPane f = new javafx.scene.layout.FlowPane(6, 6, n);
+        f.setAlignment(Pos.CENTER_LEFT);
+        f.setRowValignment(javafx.geometry.VPos.CENTER);
+        f.getStyleClass().add("rangee-boutons");
+        return f;
     }
 }

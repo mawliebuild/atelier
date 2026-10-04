@@ -185,6 +185,36 @@ public final class Salle {
         if (gp != null) gp.sendToServer(p);
     }
 
+    /**
+     * Ecart minimal entre deux envois d'une rafale (poses, deplacements,
+     * @altitude...) : le serveur refuse ou ignore les envois trop rapproches.
+     * Un seul rythme pour toutes les rafales de l'Atelier, meme lancees par
+     * des fils differents.
+     */
+    public static final long ECART_MS = 150;
+    private static final Object RYTHME = new Object();
+    private static long prochainEnvoi = 0;
+
+    /** Attend son tour (ECART_MS apres l'envoi precedent) ; a appeler juste avant d'envoyer. */
+    public static void espacer() {
+        long attente;
+        synchronized (RYTHME) {
+            long t = System.currentTimeMillis();
+            long a = Math.max(t, prochainEnvoi);
+            prochainEnvoi = a + ECART_MS;
+            attente = a - t;
+        }
+        if (attente > 0) sommeil(attente);
+    }
+
+    /** Un envoi vient de finir (apres une operation longue) : le suivant attendra ECART_MS a partir de maintenant. */
+    public static void envoiFait() {
+        synchronized (RYTHME) { prochainEnvoi = Math.max(prochainEnvoi, System.currentTimeMillis() + ECART_MS); }
+    }
+
+    /** envoyer, a son tour dans le rythme des rafales. */
+    public static void envoyerEspace(HPacket p) { espacer(); envoyer(p); }
+
     /** MoveObject(id, x, y, rotation) : deplace un mobi de sol. */
     public static void deplacerSol(int id, int x, int y, int rot) {
         envoyer(new HPacket("MoveObject", HMessage.Direction.TOSERVER, id, x, y, rot));
@@ -256,7 +286,7 @@ public final class Salle {
         if (taille > 40) return;
         FloorState s = etat();
         if (s == null) return;
-        HPacket p = new HPacket(m.getPacket());
+        HPacket p = m.getPacket();                  // lectures a position fixe : pas de copie
 
         // Clic au sol : deplacement d'avatar, deux petits entiers x,y.
         if (taille >= 14 && taille <= 20 && !clicsCase.isEmpty()) {

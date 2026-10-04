@@ -112,44 +112,229 @@ final class GroupeActions {
         int fait = 0;
         boolean arrete = false;
 
-        // deux passes : la seconde reprend ceux qu'un voisin genait encore
-        for (int passe = 1; passe <= 2 && !reste.isEmpty(); passe++) {
-            int n = 0;
-            for (GroupeCalcul.Element e : reste) {
-                if (t.arretee() || !memeSalle(salle)) { arrete = true; break; }
-                GroupeCalcul.Cible c = cibles.get((e.mural ? "m" : "s") + e.id);
-                if (e.mural) Salle.deplacerMur(e.id, SelectionMur.normaliser(c.position));
-                else Salle.deplacerSol(e.id, c.x, c.y, e.rot);
-                n++;
-                t.progres(passe == 1 ? ++fait : fait, total, "Passe " + passe + " : " + n + "/" + reste.size() + " envoyé(s)...");
-                Salle.sommeil(PAUSE);
-            }
-            if (arrete) break;
-            Salle.sommeil(900);
-            List<GroupeCalcul.Element> encore = new ArrayList<>();
-            for (GroupeCalcul.Element e : reste) if (!arrive(e, cibles.get((e.mural ? "m" : "s") + e.id))) encore.add(e);
-            reste = encore;
-        }
-        if (arrete) Salle.sommeil(900);
+        // pose hybride : sans @altitude, les sols en hauteur vont directement a la dalle
+        List<GroupeCalcul.Cible> directs = new ArrayList<>();
+        boolean altitude = trierAltitude(t, cibles.values(), directs);
+        for (GroupeCalcul.Cible c : directs) reste.remove(c.e);
 
-        // verification + hauteurs
-        int arrives = 0;
-        List<GroupeCalcul.Cible> aRegler = new ArrayList<>();
-        for (GroupeCalcul.Element e : els) {
-            GroupeCalcul.Cible c = cibles.get((e.mural ? "m" : "s") + e.id);
-            if (c == null || !arrive(e, c)) continue;
-            arrives++;
-            if (e.mural) continue;
-            HFloorItem now = Salle.sol(e.id);
-            if (now != null && Math.abs(now.getTile().getZ() - c.z) > 0.05) aRegler.add(c);
+        historiqueGrouper(true);           // rafale + reprise a la dalle : une seule action (Ctrl+Z)
+        List<GroupeCalcul.Cible> repris;
+        PoseHybride.Bilan rb = null;
+        try {
+            // rafale suivie, deux passes : la seconde reprend ceux qu'un voisin genait
+            // encore. Pendant les envois, chaque sol arrive recoit tout de suite son
+            // altitude (@altitude connue) ; on n'attend que les derniers en vol.
+            Set<Integer> hautEnvoyee = new HashSet<>();
+            for (int passe = 1; passe <= 2 && !reste.isEmpty(); passe++) {
+                int n = 0;
+                List<GroupeCalcul.Cible> enVol = new ArrayList<>();
+                for (GroupeCalcul.Element e : reste) {
+                    if (t.arretee() || !memeSalle(salle)) { arrete = true; break; }
+                    GroupeCalcul.Cible c = cibles.get((e.mural ? "m" : "s") + e.id);
+                    Salle.espacer();
+                    if (e.mural) Salle.deplacerMur(e.id, SelectionMur.normaliser(c.position));
+                    else Salle.deplacerSol(e.id, c.x, c.y, e.rot);
+                    enVol.add(c);
+                    n++;
+                    t.progres(passe == 1 ? ++fait : fait, total, "Pose rapide" + (passe > 1 ? " (2e passe)" : "") + " : " + n + "/" + reste.size());
+                    hauteursArrivees(enVol, k -> arrive(k.e, k), hautEnvoyee);
+                }
+                final List<GroupeCalcul.Element> l = reste;
+                PoseDirecte.suivre(() -> nonArrives(l, cibles).size(), arrete ? 400 : 700, 1500);
+                hauteursArrivees(enVol, k -> arrive(k.e, k), hautEnvoyee);
+                if (arrete) break;
+                reste = nonArrives(reste, cibles);
+            }
+            if (!hautEnvoyee.isEmpty()) attendreHauteurs(new ArrayList<>(cibles.values()), hautEnvoyee);
+
+            // verification + hauteurs (@altitude), puis reprise a la dalle des refuses
+            List<GroupeCalcul.Cible> valides = new ArrayList<>();
+            for (GroupeCalcul.Element e : els) {
+                GroupeCalcul.Cible c = cibles.get((e.mural ? "m" : "s") + e.id);
+                if (c == null || c.horsPlan || (e.mural && c.position == null)) continue;
+                valides.add(c);
+            }
+            if (!arrete && altitude) {
+                List<GroupeCalcul.Cible> aRegler = new ArrayList<>();
+                for (GroupeCalcul.Cible c : valides)
+                    if (!c.e.mural && arrive(c.e, c) && !directs.contains(c) && hauteurFausse(c)) aRegler.add(c);
+                hauteurs(t, aRegler);
+            }
+            repris = arrete ? List.of() : aReprendre(valides, c -> arrive(c.e, c));
+            if (!repris.isEmpty()) rb = reprendreCibles(t, salle, repris);
+        } finally {
+            historiqueGrouper(false);
         }
-        String hauteurs = arrete ? "" : hauteurs(t, aRegler);
-        int echecs = total - arrives;
-        String msg = (arrete ? "Arrêté. " : "") + arrives + "/" + total + " mobi(s) déplacé(s) de (" + dx + "," + dy + ")"
-                + (impossibles > 0 ? ", " + impossibles + " impossible(s) (hors du plan ou position murale illisible)" : "")
-                + (echecs - impossibles > 0 && !arrete ? ", " + (echecs - impossibles) + " bloqué(s) (case occupée ?)" : "")
-                + "." + hauteurs;
-        return new Groupes.Resultat(echecs == 0 && !arrete, arrete, total, arrives, echecs, msg, null);
+        arrete = arrete || t.arretee() || !memeSalle(salle);
+        return bilanDeplacement("déplacé", total, impossibles, repris, rb, altitude, arrete,
+                c -> arrive(c.e, c), cibles.values(), "");
+    }
+
+    // ------------------------------------------------------------ pose hybride
+
+    private static boolean estWired(int id) {
+        HFloorItem it = Salle.sol(id);
+        return it != null && Wired.estWired(Salle.classe(it.getTypeId(), false));
+    }
+
+    /** Le sol n'est pas (encore) a son altitude voulue. */
+    private static boolean hauteurFausse(GroupeCalcul.Cible c) {
+        HFloorItem now = Salle.sol(c.e.id);
+        return now != null && PoseHybride.trier(true, true, now.getTile().getZ(), c.z) == PoseHybride.Issue.HAUTEUR;
+    }
+
+    /**
+     * Pose hybride, avant la rafale : s'il y a des sols a poser en hauteur et
+     * que @altitude n'est pas disponible, ceux-la (hors wired : la dalle ne
+     * garde pas leur reglage) vont dans « directs » : ils passeront directement
+     * par la dalle. @return @altitude disponible
+     */
+    private static boolean trierAltitude(Groupes.Tache t, Collection<GroupeCalcul.Cible> cibles, List<GroupeCalcul.Cible> directs) {
+        List<GroupeCalcul.Cible> enHauteur = new ArrayList<>();
+        for (GroupeCalcul.Cible c : cibles) {
+            if (c == null || c.e.mural || c.horsPlan) continue;
+            if (!PoseHybride.parRafale(c.z, Salle.hauteurSol(c.x, c.y), false)) enHauteur.add(c);
+        }
+        if (enHauteur.isEmpty()) return true;
+        if (PoseHybride.altitudeDisponible(t::dire)) return true;
+        for (GroupeCalcul.Cible c : enHauteur) if (!estWired(c.e.id)) directs.add(c);
+        return false;
+    }
+
+    /**
+     * Apres la rafale : ceux qui ne sont pas arrives (refuses) ou qui sont a
+     * une mauvaise hauteur, et seulement eux. Les wired restent (la dalle
+     * perdrait leur reglage) : ils comptent comme bloques.
+     */
+    private static List<GroupeCalcul.Cible> aReprendre(List<GroupeCalcul.Cible> l,
+                                                      java.util.function.Predicate<GroupeCalcul.Cible> arrive) {
+        List<GroupeCalcul.Cible> r = new ArrayList<>();
+        for (GroupeCalcul.Cible c : l) {
+            if (c.e.mural ? Salle.mur(c.e.id) == null : Salle.sol(c.e.id) == null) continue;     // disparu
+            if (!c.e.mural && estWired(c.e.id)) continue;
+            HFloorItem now = c.e.mural ? null : Salle.sol(c.e.id);
+            PoseHybride.Issue i = PoseHybride.trier(true, arrive.test(c), now == null ? c.z : now.getTile().getZ(), c.z);
+            if (i != PoseHybride.Issue.POSE) r.add(c);
+        }
+        return r;
+    }
+
+    /**
+     * Reprise avec la dalle d'un deplacement : ces mobis sont ramasses puis
+     * reposes a leur arrivee par le moteur de pose ; leurs nouveaux ids
+     * restent dans leur calque (Groupes.remplacerIds).
+     */
+    private static PoseHybride.Bilan reprendreCibles(Groupes.Tache t, int salle, List<GroupeCalcul.Cible> l) {
+        List<PoseHybride.Piece> p = new ArrayList<>();
+        for (GroupeCalcul.Cible c : l) {
+            if (c.e.mural) {
+                HWallItem w = Salle.mur(c.e.id);
+                String cls = w == null ? null : Salle.classe(w.getTypeId(), true);
+                if (cls != null && c.position != null)
+                    p.add(PoseHybride.Piece.mur(cls, w.getState(), SelectionMur.normaliser(c.position), c.e.id));
+            } else {
+                HFloorItem it = Salle.sol(c.e.id);
+                String cls = it == null ? null : Salle.classe(it.getTypeId(), false);
+                if (cls != null) p.add(PoseHybride.Piece.sol(cls, Generateur.etatDe(it), c.x, c.y,
+                        Generateur.arrondi(Math.max(0, c.z)), c.rot, c.e.id, -1));
+            }
+        }
+        // le calque de chacun est note AVANT le ramassage (la surveillance des
+        // calques oublie les ids disparus de la salle)
+        List<Integer> anciensS = new ArrayList<>(), anciensM = new ArrayList<>();
+        for (PoseHybride.Piece x : p) (x.mural ? anciensM : anciensS).add(x.ancien);
+        Groupes.Appartenance avant = Groupes.appartenance(anciensS, anciensM);
+        Journal.debug("calques : " + p.size() + " mobi(s) repris à la dalle.");
+        t.progres(0, p.size(), "Reprise à la dalle : 0/" + p.size());
+        PoseHybride.Bilan b = PoseHybride.reprendre(p, Generateur.Source.INVENTAIRE_PUIS_BC, t::dire,
+                () -> t.arretee() || !memeSalle(salle), (f, n) -> t.progres(f, n, "Reprise à la dalle : " + f + "/" + n));
+        b.voulus = l.size();
+        // les ramasses qui n'ont pas ete reposes sortent du calque ; les autres y restent
+        List<Integer> perdusS = new ArrayList<>(), perdusM = new ArrayList<>();
+        for (int id : b.ramassesSols) if (!b.remplacesSols.containsKey(id)) perdusS.add(id);
+        for (int id : b.ramassesMurs) if (!b.remplacesMurs.containsKey(id)) perdusM.add(id);
+        if (!perdusS.isEmpty() || !perdusM.isEmpty()) Groupes.oublierIds(perdusS, perdusM);
+        Groupes.remplacerIds(avant, b.remplacesSols, b.remplacesMurs);
+        return b;
+    }
+
+    /**
+     * Le bilan unique d'un deplacement / pivot hybride, verifie dans la salle.
+     * @param arrive  « arrive a sa place » pour un mobi qui n'a pas ete repris
+     */
+    private static Groupes.Resultat bilanDeplacement(String participe, int total, int impossibles,
+                                                     List<GroupeCalcul.Cible> repris, PoseHybride.Bilan rb,
+                                                     boolean altitude, boolean arrete,
+                                                     java.util.function.Predicate<GroupeCalcul.Cible> arrive,
+                                                     Collection<GroupeCalcul.Cible> toutes, String suite) {
+        Set<GroupeCalcul.Cible> parDalle = new HashSet<>(repris);
+        int reussis = 0, hauteurs = 0, wiredBloques = 0;
+        for (GroupeCalcul.Cible c : toutes) {
+            if (c == null || c.horsPlan || (c.e.mural && c.position == null) || parDalle.contains(c)) continue;
+            if (!arrive.test(c)) { if (!c.e.mural && estWired(c.e.id)) wiredBloques++; continue; }
+            reussis++;
+            if (!c.e.mural && hauteurFausse(c)) hauteurs++;
+        }
+        int dalle = rb == null ? 0 : rb.obtenus();
+        if (rb != null) hauteurs += rb.hauteursFausses;
+        reussis += dalle;
+        int voulus = total - impossibles;
+        String msg = PoseHybride.bilan(participe, voulus, reussis, dalle, hauteurs, arrete)
+                + (impossibles > 0 ? " " + impossibles + " impossible(s) (hors du plan ou position murale illisible)." : "")
+                + (wiredBloques > 0 ? " " + wiredBloques + " wired bloqué(s) : la dalle ne garde pas leur réglage." : "")
+                + (rb != null && rb.raison != null && !arrete ? " Reprise à la dalle impossible : " + rb.raison + "." : "")
+                + (!altitude ? PoseHybride.SANS_ALTITUDE : "")
+                + suite
+                + (reussis > 0 ? " " + WindowsClavier.texte("Cmd+Z pour annuler.") : "");
+        int echecs = total - reussis;
+        return new Groupes.Resultat(echecs == 0 && hauteurs == 0 && !arrete, arrete, total, reussis, echecs,
+                Ui.accorder(msg.trim()), null);
+    }
+
+    private static List<GroupeCalcul.Element> nonArrives(List<GroupeCalcul.Element> l, Map<String, GroupeCalcul.Cible> cibles) {
+        List<GroupeCalcul.Element> r = new ArrayList<>();
+        for (GroupeCalcul.Element e : l) if (!arrive(e, cibles.get((e.mural ? "m" : "s") + e.id))) r.add(e);
+        return r;
+    }
+
+    /**
+     * Rafale suivie : les sols de « enVol » deja arrives (selon « arrive »)
+     * en sortent, et recoivent tout de suite leur altitude s'ils ne sont pas a
+     * la bonne (une fois par mobi, @altitude deja connue seulement : sinon la
+     * verification de la fin s'en charge).
+     */
+    private static void hauteursArrivees(List<GroupeCalcul.Cible> enVol,
+                                         java.util.function.Predicate<GroupeCalcul.Cible> arrive, Set<Integer> envoyees) {
+        boolean connue = OutilMiroir.Altitude.connue();
+        for (Iterator<GroupeCalcul.Cible> i = enVol.iterator(); i.hasNext(); ) {
+            GroupeCalcul.Cible c = i.next();
+            if (c.e.mural) { i.remove(); continue; }
+            if (!arrive.test(c)) continue;
+            i.remove();
+            if (!connue || !OutilMiroir.Altitude.connue()) continue;   // inconnue ou fausse : la fin s'en charge
+            HFloorItem now = Salle.sol(c.e.id);
+            if (now == null || Math.abs(now.getTile().getZ() - c.z) <= 0.05 || !envoyees.add(c.e.id)) continue;
+            Salle.espacer();
+            OutilMiroir.Altitude.ecrireVerifiee(c.e.id, c.z);   // le premier verifie la variable
+            Salle.envoiFait();
+        }
+    }
+
+    /** Laisse arriver les dernieres altitudes envoyees en route (suivi court). */
+    private static void attendreHauteurs(List<GroupeCalcul.Cible> cibles, Set<Integer> envoyees) {
+        List<GroupeCalcul.Cible> l = new ArrayList<>();
+        for (GroupeCalcul.Cible c : cibles) if (c != null && envoyees.contains(c.e.id)) l.add(c);
+        PoseDirecte.suivre(() -> hauteursFausses(l).size(), 400, 900);
+    }
+
+    /** Les sols pas (encore) a leur altitude voulue. */
+    private static List<GroupeCalcul.Cible> hauteursFausses(List<GroupeCalcul.Cible> l) {
+        List<GroupeCalcul.Cible> r = new ArrayList<>();
+        for (GroupeCalcul.Cible c : l) {
+            HFloorItem now = Salle.sol(c.e.id);
+            if (now == null || Math.abs(now.getTile().getZ() - c.z) > 0.05) r.add(c);
+        }
+        return r;
     }
 
     private static boolean arrive(GroupeCalcul.Element e, GroupeCalcul.Cible c) {
@@ -166,29 +351,32 @@ final class GroupeActions {
     /** Remet les altitudes par @altitude (comme OutilMiroir). @return fin du message */
     private static String hauteurs(Groupes.Tache t, List<GroupeCalcul.Cible> aRegler) {
         if (aRegler.isEmpty()) return "";
-        if (!OutilMiroir.Altitude.connue()) {
-            t.dire("Recherche de @altitude...");
+        // le premier mobi verifie la variable retenue (ou la retrouve) avant la rafale
+        if (!OutilMiroir.Altitude.confirmee()) {
+            if (!OutilMiroir.Altitude.connue()) t.dire("Recherche de @altitude...");
             GroupeCalcul.Cible k = aRegler.get(0);
-            OutilMiroir.Altitude.chercher(k.e.id, k.z);
+            Salle.espacer();
+            OutilMiroir.Altitude.mettre(k.e.id, k.z);
+            Salle.envoiFait();
+            aRegler = hauteursFausses(aRegler);
+            if (aRegler.isEmpty()) return " Hauteurs remises.";
         }
         if (!OutilMiroir.Altitude.connue())
             return " ⚠ " + aRegler.size() + " mobi(s) ont changé de hauteur (posés sur le dessus de la pile) : "
                     + "@altitude inconnue. Règle-la une fois dans l'éditeur :wired, puis refais le déplacement.";
+        // rafale espacee, puis suivi : on renvoie seulement celles qui manquent
         for (int passe = 1; passe <= 2 && !aRegler.isEmpty(); passe++) {
             int n = 0;
             for (GroupeCalcul.Cible c : aRegler) {
                 if (t.arretee()) break;
+                Salle.espacer();
                 OutilMiroir.Altitude.ecrire(c.e.id, c.z);
                 t.progres(++n, aRegler.size(), "Hauteurs, passe " + passe + " : " + n + "/" + aRegler.size());
-                Salle.sommeil(PAUSE + 50);
             }
-            Salle.sommeil(800);
-            List<GroupeCalcul.Cible> encore = new ArrayList<>();
-            for (GroupeCalcul.Cible c : aRegler) {
-                HFloorItem now = Salle.sol(c.e.id);
-                if (now == null || Math.abs(now.getTile().getZ() - c.z) > 0.05) encore.add(c);
-            }
-            aRegler = encore;
+            final List<GroupeCalcul.Cible> l = aRegler;
+            PoseDirecte.suivre(() -> hauteursFausses(l).size(), 500, 1200);
+            aRegler = hauteursFausses(aRegler);
+            if (t.arretee()) break;
         }
         return aRegler.isEmpty() ? " Hauteurs remises." : " " + aRegler.size() + " hauteur(s) non remise(s).";
     }
@@ -211,40 +399,54 @@ final class GroupeActions {
         for (GroupeCalcul.Element e : sols)
             voulu.put(e.id, Generateur.arrondi(Math.max(0, relatif ? e.z + valeur : valeur)));
 
-        if (!OutilMiroir.Altitude.connue()) {
-            t.dire("Recherche de @altitude...");
-            Map.Entry<Integer, Double> k = voulu.entrySet().iterator().next();
-            OutilMiroir.Altitude.chercher(k.getKey(), k.getValue());
+        // le premier mobi (un qui doit vraiment bouger) verifie la variable retenue
+        // avant la rafale : une variable fausse en preference est oubliee, puis
+        // relue dans la liste du jeu ou cherchee (mettre)
+        Map.Entry<Integer, Double> premier = null;
+        for (Map.Entry<Integer, Double> c : voulu.entrySet()) {
+            HFloorItem now = Salle.sol(c.getKey());
+            if (now != null && Math.abs(now.getTile().getZ() - c.getValue()) > 0.05) { premier = c; break; }
         }
-        if (!OutilMiroir.Altitude.connue())
-            return Groupes.Resultat.refus("@altitude inconnue. Règle-la une fois dans l'éditeur :wired, puis recommence.");
-
-        historiqueGrouper(true);
+        historiqueGrouper(true);           // la verification sur le premier fait partie de l'action (Ctrl+Z)
         boolean arrete = false;
         try {
-            // 1. rafale : tout d'un coup
+            if (premier != null && !OutilMiroir.Altitude.confirmee()) {
+                if (!OutilMiroir.Altitude.connue()) t.dire("Recherche de @altitude...");
+                Salle.espacer();
+                OutilMiroir.Altitude.mettre(premier.getKey(), premier.getValue());
+                Salle.envoiFait();
+            }
+            if (premier != null && !OutilMiroir.Altitude.connue())
+                return Groupes.Resultat.refus("@altitude inconnue. Règle-la une fois dans l'éditeur :wired, puis recommence.");
+            Journal.debug("calques : hauteur, @altitude = variable " + OutilMiroir.Altitude.variable() + ", " + voulu.size() + " mobi(s)");
+            // 1. rafale suivie : envois au rythme commun (le serveur jette les
+            //    paquets trop rapproches), arrivees suivies a la fin
             int n = 0;
             for (Map.Entry<Integer, Double> c : voulu.entrySet()) {
-                OutilMiroir.Altitude.ecrire(c.getKey(), c.getValue());
+                if (t.arretee()) { arrete = true; break; }
                 n++;
+                HFloorItem now = Salle.sol(c.getKey());
+                if (now != null && Math.abs(now.getTile().getZ() - c.getValue()) <= 0.05) continue;   // deja a sa hauteur
+                Salle.espacer();
+                OutilMiroir.Altitude.ecrire(c.getKey(), c.getValue());
+                t.progres(n, voulu.size(), "Hauteurs : " + n + "/" + voulu.size());
             }
+            Salle.envoiFait();
             t.progres(n, voulu.size(), "Hauteurs envoyées");
-            // 2. verification, puis repasse lente pour les retardataires
+            // 2. suivi (on attend seulement que les hauteurs arrivent), puis repasse
+            //    espacee pour les retardataires
             for (int passe = 1; passe <= 2; passe++) {
-                Salle.sommeil(900);
-                List<Map.Entry<Integer, Double>> encore = new ArrayList<>();
-                for (Map.Entry<Integer, Double> c : voulu.entrySet()) {
-                    HFloorItem now = Salle.sol(c.getKey());
-                    if (now != null && Math.abs(now.getTile().getZ() - c.getValue()) > 0.05) encore.add(c);
-                }
+                PoseDirecte.suivre(() -> hauteursEncore(voulu).size(), 500, 1200);
+                List<Map.Entry<Integer, Double>> encore = hauteursEncore(voulu);
                 if (encore.isEmpty() || t.arretee()) break;
                 int m = 0;
                 for (Map.Entry<Integer, Double> c : encore) {
                     if (t.arretee()) { arrete = true; break; }
+                    Salle.espacer();
                     OutilMiroir.Altitude.ecrire(c.getKey(), c.getValue());
                     t.progres(++m, encore.size(), "Repasse " + passe + " : " + m + "/" + encore.size());
-                    Salle.sommeil(PAUSE);
                 }
+                if (arrete) break;
             }
         } finally {
             historiqueGrouper(false);
@@ -260,6 +462,15 @@ final class GroupeActions {
                 + (ids.get(1).isEmpty() ? "" : " Muraux laissés tels quels.")
                 + " Ctrl+Z pour annuler.";
         return new Groupes.Resultat(rates == 0 && !arrete, arrete, voulu.size(), ok, rates, msg, null);
+    }
+
+    private static List<Map.Entry<Integer, Double>> hauteursEncore(Map<Integer, Double> voulu) {
+        List<Map.Entry<Integer, Double>> encore = new ArrayList<>();
+        for (Map.Entry<Integer, Double> c : voulu.entrySet()) {
+            HFloorItem now = Salle.sol(c.getKey());
+            if (now != null && Math.abs(now.getTile().getZ() - c.getValue()) > 0.05) encore.add(c);
+        }
+        return encore;
     }
 
     // ------------------------------------------------------------ pivoter
@@ -305,8 +516,16 @@ final class GroupeActions {
         return places(els).equals(d.places) ? d.centre2 : null;
     }
 
-    /** Historique (Ctrl+Z) : les envois d'une meme action en plusieurs passes forment UNE action. */
-    private static void historiqueGrouper(boolean g) { Historique.grouper(g); }
+    /**
+     * Historique (Ctrl+Z) : les envois d'une meme action en plusieurs passes
+     * forment UNE action. Imbricable : une action qui en appelle une autre
+     * (copie avec wired, puis mise en place) reste une seule action.
+     */
+    private static int profondeurGroupe = 0;
+    private static synchronized void historiqueGrouper(boolean g) {
+        if (g) { if (profondeurGroupe++ == 0) Historique.grouper(true); }
+        else if (profondeurGroupe > 0 && --profondeurGroupe == 0) Historique.grouper(false);
+    }
 
     /**
      * Pivote d'un quart de tour les mobis de sol du calque (ou de la
@@ -339,66 +558,45 @@ final class GroupeActions {
         Journal.debug("calques : pivot " + (horaire ? "horaire" : "inverse") + ", "
                 + reste.size() + " sol(s), centre double " + (centre == null ? "-" : centre[0] + "," + centre[1]));
 
-        historiqueGrouper(true);
+        // pose hybride : sans @altitude, les sols en hauteur vont directement a la dalle
+        List<GroupeCalcul.Cible> directs = new ArrayList<>();
+        boolean altitude = trierAltitude(t, reste, directs);
+        reste.removeAll(directs);
+        Set<Integer> hautEnvoyee = new HashSet<>();
+        List<GroupeCalcul.Cible> repris = List.of();
+        PoseHybride.Bilan rb = null;
+        historiqueGrouper(true);           // rafale + reprise a la dalle : une seule action (Ctrl+Z)
         try {
-            List<GroupeCalcul.Cible> aFaire = new ArrayList<>(reste);
-            int fait = 0;
-            for (int essai = 0; essai <= 2 && !aFaire.isEmpty() && !arrete; essai++) {
-                for (int repasse = 0; repasse < (essai == 0 ? 4 : 1) && !aFaire.isEmpty(); repasse++) {
-                    List<GroupeCalcul.Cible> envoyes = new ArrayList<>();
-                    for (GroupeCalcul.Cible c : aFaire) {
-                        if (t.arretee() || !memeSalle(salle)) { arrete = true; break; }
-                        int rot = GroupeCalcul.rotationEssai(c.rot, c.e.rot, essai);
-                        if (rot < 0) continue;
-                        // rotation d'origine : utile seulement si le mobi change de case, et
-                        // seulement pour une emprise carree (un mobi a une seule orientation).
-                        // Sinon il serait pose dans l'autre sens que le bloc : on le signale.
-                        if (essai == 2 && (c.x == c.e.x && c.y == c.e.y || c.e.ex != c.e.ey)) continue;
-                        if (essai == 2) sansTourner.add(c.e.id);
-                        Salle.deplacerSol(c.e.id, c.x, c.y, rot);
-                        envoyes.add(c);
-                        if (essai == 0 && repasse == 0) fait++;
-                        t.progres(Math.min(fait, total), total, (essai == 0 && repasse == 0 ? "Pivot : "
-                                : "Pivot, nouvel essai : ") + envoyes.size() + " envoyé(s)...");
-                        Salle.sommeil(PAUSE);
-                    }
-                    if (arrete || envoyes.isEmpty()) break;
-                    int avant = aFaire.size();
-                    aFaire = attendreArrivees(aFaire, sansTourner, 1200);
-                    if (aFaire.size() == avant) break;        // plus rien n'avance : essai suivant
-                }
+            arrete = rafalePivot(t, salle, reste, sansTourner, total, hautEnvoyee);
+            if (!hautEnvoyee.isEmpty()) attendreHauteurs(reste, hautEnvoyee);
+            if (!arrete && altitude) {
+                List<GroupeCalcul.Cible> aRegler = new ArrayList<>();
+                for (GroupeCalcul.Cible c : reste) if (pivote(c, sansTourner) && hauteurFausse(c)) aRegler.add(c);
+                hauteurs(t, aRegler);
             }
-            if (arrete) Salle.sommeil(900);
+            List<GroupeCalcul.Cible> tous = new ArrayList<>(reste);
+            tous.addAll(directs);
+            repris = arrete ? List.of() : aReprendre(tous, c -> pivote(c, sansTourner));
+            if (!repris.isEmpty()) rb = reprendreCibles(t, salle, repris);
         } finally {
             historiqueGrouper(false);
         }
-
-        int tournes = 0, deplaces = 0;
-        List<GroupeCalcul.Cible> aRegler = new ArrayList<>();
+        int deplaces = 0;
         for (GroupeCalcul.Cible c : reste) {
-            if (!pivote(c, sansTourner)) continue;
+            if (repris.contains(c) || !pivote(c, sansTourner)) continue;
             HFloorItem now = Salle.sol(c.e.id);
             if (now != null && Salle.rotation(now) == c.e.rot && sansTourner.contains(c.e.id)) deplaces++;
-            else tournes++;
-            if (now != null && Math.abs(now.getTile().getZ() - c.z) > 0.05) aRegler.add(c);
         }
-        int arrives = tournes + deplaces;
-        String hauteurs = arrete ? "" : hauteurs(t, aRegler);
+        String suite = (deplaces > 0 ? " " + deplaces + " déplacé(s) sans tourner (une seule orientation)." : "")
+                + (muraux > 0 ? " " + muraux + " mural(aux) laissé(s) tel(s) quel(s) : ils ne pivotent pas." : "");
         // le point de rotation est garde pour le tour suivant
         if (toutLeCalque && centre != null && memeSalle(salle)) {
-            List<GroupeCalcul.Element> apres = elements(ids.get(0), List.of());
+            List<GroupeCalcul.Element> apres = elements(Groupes.mobis(calqueId).get(0), List.of());
             dernierPivot = new DernierPivot(salle, calqueId, centre, places(apres));
         }
-        int echecs = total - arrives;
-        int bloques = echecs - impossibles;
-        String msg = (arrete ? "Arrêté. " : "") + tournes + "/" + total + " mobi(s) pivoté(s)"
-                + (horaire ? " (sens horaire)" : " (sens inverse)")
-                + (deplaces > 0 ? ", " + deplaces + " déplacé(s) sans tourner (une seule orientation)" : "")
-                + (impossibles > 0 ? ", " + impossibles + " impossible(s) (hors du plan)" : "")
-                + (bloques > 0 && !arrete ? ", " + bloques + " bloqué(s) (case occupée ou orientation refusée)" : "")
-                + (muraux > 0 ? ", " + muraux + " mural(aux) laissé(s) tel(s) quel(s)" : "")
-                + "." + hauteurs + (arrives > 0 ? " Ctrl+Z pour annuler." : "");
-        return new Groupes.Resultat(echecs == 0 && !arrete, arrete, total, arrives, echecs, msg, null);
+        arrete = arrete || t.arretee() || !memeSalle(salle);
+        return bilanDeplacement("pivoté", total, impossibles, repris, rb, altitude, arrete,
+                c -> pivote(c, sansTourner), cibles, (horaire ? " Sens horaire." : " Sens inverse.") + suite);
     }
 
     /**
@@ -429,74 +627,97 @@ final class GroupeActions {
         Journal.debug("calques : deplacement avec pivot (" + quarts + " quart(s)), "
                 + reste.size() + " sol(s), centre double " + (centre == null ? "-" : centre[0] + "," + centre[1]));
 
-        historiqueGrouper(true);
+        // pose hybride : sans @altitude, les sols en hauteur vont directement a la dalle
+        List<GroupeCalcul.Cible> directs = new ArrayList<>();
+        boolean altitude = trierAltitude(t, reste, directs);
+        reste.removeAll(directs);
+        Set<Integer> hautEnvoyee = new HashSet<>();
+        List<GroupeCalcul.Cible> repris = List.of();
+        PoseHybride.Bilan rb = null;
+        historiqueGrouper(true);           // rafale + reprise a la dalle : une seule action (Ctrl+Z)
         try {
-            List<GroupeCalcul.Cible> aFaire = new ArrayList<>(reste);
-            int fait = 0;
-            for (int essai = 0; essai <= 2 && !aFaire.isEmpty() && !arrete; essai++) {
-                for (int repasse = 0; repasse < (essai == 0 ? 4 : 1) && !aFaire.isEmpty(); repasse++) {
-                    List<GroupeCalcul.Cible> envoyes = new ArrayList<>();
-                    for (GroupeCalcul.Cible c : aFaire) {
-                        if (t.arretee() || !memeSalle(salle)) { arrete = true; break; }
-                        int rot = GroupeCalcul.rotationEssai(c.rot, c.e.rot, essai);
-                        if (rot < 0) continue;
-                        // rotation d'origine : utile seulement si le mobi change de case, et
-                        // seulement pour une emprise carree (un mobi a une seule orientation).
-                        // Sinon il serait pose dans l'autre sens que le bloc : on le signale.
-                        if (essai == 2 && (c.x == c.e.x && c.y == c.e.y || c.e.ex != c.e.ey)) continue;
-                        if (essai == 2) sansTourner.add(c.e.id);
-                        Salle.deplacerSol(c.e.id, c.x, c.y, rot);
-                        envoyes.add(c);
-                        if (essai == 0 && repasse == 0) fait++;
-                        t.progres(Math.min(fait, total), total, (essai == 0 && repasse == 0 ? "Pivot : "
-                                : "Pivot, nouvel essai : ") + envoyes.size() + " envoyé(s)...");
-                        Salle.sommeil(PAUSE);
-                    }
-                    if (arrete || envoyes.isEmpty()) break;
-                    int avant = aFaire.size();
-                    aFaire = attendreArrivees(aFaire, sansTourner, 1200);
-                    if (aFaire.size() == avant) break;        // plus rien n'avance : essai suivant
-                }
+            arrete = rafalePivot(t, salle, reste, sansTourner, total, hautEnvoyee);
+            if (!hautEnvoyee.isEmpty()) attendreHauteurs(reste, hautEnvoyee);
+            if (!arrete && altitude) {
+                List<GroupeCalcul.Cible> aRegler = new ArrayList<>();
+                for (GroupeCalcul.Cible c : reste) if (pivote(c, sansTourner) && hauteurFausse(c)) aRegler.add(c);
+                hauteurs(t, aRegler);
             }
-            if (arrete) Salle.sommeil(900);
+            List<GroupeCalcul.Cible> tous = new ArrayList<>(reste);
+            tous.addAll(directs);
+            repris = arrete ? List.of() : aReprendre(tous, c -> pivote(c, sansTourner));
+            if (!repris.isEmpty()) rb = reprendreCibles(t, salle, repris);
         } finally {
             historiqueGrouper(false);
         }
-
-        int tournes = 0, deplaces = 0;
-        List<GroupeCalcul.Cible> aRegler = new ArrayList<>();
+        int deplaces = 0;
         for (GroupeCalcul.Cible c : reste) {
-            if (!pivote(c, sansTourner)) continue;
+            if (repris.contains(c) || !pivote(c, sansTourner)) continue;
             HFloorItem now = Salle.sol(c.e.id);
             if (now != null && Salle.rotation(now) == c.e.rot && sansTourner.contains(c.e.id)) deplaces++;
-            else tournes++;
-            if (now != null && Math.abs(now.getTile().getZ() - c.z) > 0.05) aRegler.add(c);
         }
-        int arrives = tournes + deplaces;
-        String hauteurs = arrete ? "" : hauteurs(t, aRegler);
-        int echecs = total - arrives;
-        int bloques = echecs - impossibles;
-        String msg = (arrete ? "Arrêté. " : "") + tournes + "/" + total + " mobi(s) pivoté(s)"
-                + " et déplacé(s)"
-                + (deplaces > 0 ? ", " + deplaces + " déplacé(s) sans tourner (une seule orientation)" : "")
-                + (impossibles > 0 ? ", " + impossibles + " impossible(s) (hors du plan)" : "")
-                + (bloques > 0 && !arrete ? ", " + bloques + " bloqué(s) (case occupée ou orientation refusée)" : "")
-                + (muraux > 0 ? ", " + muraux + " mural(aux) laissé(s) tel(s) quel(s)" : "")
-                + "." + hauteurs + (arrives > 0 ? " Ctrl+Z pour annuler." : "");
-        return new Groupes.Resultat(echecs == 0 && !arrete, arrete, total, arrives, echecs, msg, null);
+        String suite = (deplaces > 0 ? " " + deplaces + " déplacé(s) sans tourner (une seule orientation)." : "")
+                + (muraux > 0 ? " " + muraux + " mural(aux) laissé(s) tel(s) quel(s) : ils ne pivotent pas." : "");
+        arrete = arrete || t.arretee() || !memeSalle(salle);
+        return bilanDeplacement("pivoté", total, impossibles, repris, rb, altitude, arrete,
+                c -> pivote(c, sansTourner), cibles, suite);
     }
 
-    /** Attend (au plus ms) que les mobis envoyes arrivent ; rend ceux qui manquent encore. */
-    private static List<GroupeCalcul.Cible> attendreArrivees(List<GroupeCalcul.Cible> l, Set<Integer> sansTourner, long ms) {
-        long fin = System.currentTimeMillis() + ms;
-        List<GroupeCalcul.Cible> encore = l;
-        while (true) {
-            Salle.sommeil(150);
-            List<GroupeCalcul.Cible> e = new ArrayList<>();
-            for (GroupeCalcul.Cible c : encore) if (!pivote(c, sansTourner)) e.add(c);
-            encore = e;
-            if (encore.isEmpty() || System.currentTimeMillis() >= fin) return encore;
+    /**
+     * Rafale suivie du pivot (pivoter, deplacerTourne) : les mobis partent au
+     * rythme commun ; ceux deja arrives recoivent leur altitude pendant que les
+     * suivants partent ; a la fin de chaque rafale, on suit seulement les
+     * derniers en vol, puis on reprend en groupe ceux qui manquent :
+     *   essai 0 : la rotation voulue, en repassant tant que des mobis arrivent ;
+     *   essai 1 : la rotation equivalente sur le meme axe ;
+     *   essai 2 : la rotation d'origine (mobis a une seule orientation).
+     * @return true si arrete (Arreter ou salle quittee)
+     */
+    private static boolean rafalePivot(Groupes.Tache t, int salle, List<GroupeCalcul.Cible> reste,
+                                       Set<Integer> sansTourner, int total, Set<Integer> hautEnvoyee) {
+        boolean arrete = false;
+        List<GroupeCalcul.Cible> aFaire = new ArrayList<>(reste);
+        java.util.function.Predicate<GroupeCalcul.Cible> arrivee = k -> pivote(k, sansTourner);
+        int fait = 0;
+        for (int essai = 0; essai <= 2 && !aFaire.isEmpty() && !arrete; essai++) {
+            for (int repasse = 0; repasse < (essai == 0 ? 4 : 1) && !aFaire.isEmpty(); repasse++) {
+                List<GroupeCalcul.Cible> envoyes = new ArrayList<>(), enVol = new ArrayList<>();
+                for (GroupeCalcul.Cible c : aFaire) {
+                    if (t.arretee() || !memeSalle(salle)) { arrete = true; break; }
+                    int rot = GroupeCalcul.rotationEssai(c.rot, c.e.rot, essai);
+                    if (rot < 0) continue;
+                    // rotation d'origine : utile seulement si le mobi change de case, et
+                    // seulement pour une emprise carree (un mobi a une seule orientation).
+                    // Sinon il serait pose dans l'autre sens que le bloc : on le signale.
+                    if (essai == 2 && (c.x == c.e.x && c.y == c.e.y || c.e.ex != c.e.ey)) continue;
+                    if (essai == 2) sansTourner.add(c.e.id);
+                    Salle.espacer();
+                    Salle.deplacerSol(c.e.id, c.x, c.y, rot);
+                    envoyes.add(c);
+                    enVol.add(c);
+                    if (essai == 0 && repasse == 0) fait++;
+                    t.progres(Math.min(fait, total), total, essai == 0 && repasse == 0
+                            ? "Pose rapide : " + Math.min(fait, total) + "/" + total
+                            : "Pose rapide, nouvel essai : " + envoyes.size() + " envoyé(s)…");
+                    hauteursArrivees(enVol, arrivee, hautEnvoyee);
+                }
+                if (envoyes.isEmpty()) break;
+                final List<GroupeCalcul.Cible> l = aFaire;
+                PoseDirecte.suivre(() -> nonPivotes(l, sansTourner).size(), arrete ? 400 : 700, 1500);
+                hauteursArrivees(enVol, arrivee, hautEnvoyee);
+                if (arrete) break;
+                int avant = aFaire.size();
+                aFaire = nonPivotes(aFaire, sansTourner);
+                if (aFaire.size() == avant) break;        // plus rien n'avance : essai suivant
+            }
         }
+        return arrete;
+    }
+
+    private static List<GroupeCalcul.Cible> nonPivotes(List<GroupeCalcul.Cible> l, Set<Integer> sansTourner) {
+        List<GroupeCalcul.Cible> r = new ArrayList<>();
+        for (GroupeCalcul.Cible c : l) if (!pivote(c, sansTourner)) r.add(c);
+        return r;
     }
 
     /**
@@ -536,17 +757,19 @@ final class GroupeActions {
                 List<int[]> encore = new ArrayList<>();
                 for (int[] k : liste) if (present(k)) encore.add(k);
                 if (encore.isEmpty()) break;
+                List<int[]> envoyes = new ArrayList<>();
                 for (int[] k : encore) {
                     if (t.arretee() || !memeSalle(salle)) { arrete = true; break; }
+                    Salle.espacer();
                     Salle.ramasser(k[0], k[1] == 1);
+                    envoyes.add(k);
                     if (passe == 1) n++;
                     t.progres(n, liste.size(), "Ramassage" + (passe > 1 ? " (2e passe)" : "") + " : " + n + "/" + liste.size());
-                    Salle.sommeil(PAUSE);
                 }
+                // suivi : seulement le temps que les derniers partent
+                PoseDirecte.suivre(() -> presents(envoyes), arrete ? 400 : 800, 3000);
                 if (arrete) break;
-                for (int i = 0; i < 20 && !aucunPresent(encore); i++) Salle.sommeil(150);
             }
-            Salle.sommeil(300);
         } finally {
             historiqueGrouper(false);
         }
@@ -573,9 +796,10 @@ final class GroupeActions {
 
     private static boolean present(int[] k) { return k[1] == 1 ? Salle.mur(k[0]) != null : Salle.sol(k[0]) != null; }
 
-    private static boolean aucunPresent(List<int[]> l) {
-        for (int[] k : l) if (present(k)) return false;
-        return true;
+    private static int presents(List<int[]> l) {
+        int n = 0;
+        for (int[] k : l) if (present(k)) n++;
+        return n;
     }
 
     // ------------------------------------------------------------ dupliquer
@@ -605,6 +829,10 @@ final class GroupeActions {
 
     /**
      * Meme chose a partir d'ids donnes (sols, murs) : coller une copie (Ctrl+V).
+     * Pose HYBRIDE (PoseHybride) : rafale directe (inventaire / BC) avec
+     * @altitude, puis reprise avec la dalle magique des seuls mobis refuses ou
+     * restes a une mauvaise hauteur ; sans @altitude, les mobis en hauteur
+     * passent directement par la dalle. Une seule action pour Ctrl+Z.
      * @param dessus calque au-dessus duquel ranger le nouveau (null = en haut)
      */
     static Groupes.Resultat dupliquer(Groupes.Tache t, List<Set<Integer>> ids, String dessus,
@@ -615,18 +843,13 @@ final class GroupeActions {
         if (gp == null) return Groupes.Resultat.refus("L'Atelier n'est pas encore prêt.");
         if (!Salle.furnidataPrete()) return Groupes.Resultat.refus("Furnidata pas encore chargée.");
         List<GroupeCalcul.Element> els = elements(ids.get(0), ids.get(1));
-        if (els.isEmpty()) return Groupes.Resultat.refus("Aucun mobi de ce calque dans la salle.");
+        if (els.isEmpty()) return Groupes.Resultat.refus("Aucun de ces mobis n'est dans la salle.");
 
-        // 1. ce qu'on pose : altitude relative au sol le plus bas sous le calque
-        int solMin = Integer.MAX_VALUE;
-        for (GroupeCalcul.Element e : els) if (!e.mural && e.solDessous >= 0) solMin = Math.min(solMin, e.solDessous);
-        if (solMin == Integer.MAX_VALUE) solMin = 0;
-        List<Generateur.Mobi> mobis = new ArrayList<>();
-        List<MurPose> murs = new ArrayList<>();
-        Map<Integer, Integer> attendusSols = new HashMap<>(), attendusMurs = new HashMap<>();   // type -> nombre
-        int wired = 0, inconnus = 0, hors = 0;
+        // 1. ce qu'on pose (altitudes absolues d'arrivee)
         List<GroupeCalcul.Cible> cibles = calcul.apply(els);
-        int muraux = 0;
+        List<PoseDirecte.Sol> sols = new ArrayList<>();
+        List<PoseDirecte.Mur> murs = new ArrayList<>();
+        int wired = 0, inconnus = 0, hors = 0, muraux = 0;
         for (GroupeCalcul.Element e : els) if (e.mural) muraux++;
         for (GroupeCalcul.Cible c : cibles) if (c.e.mural) muraux--;   // reste : muraux laisses de cote
         for (GroupeCalcul.Cible c : cibles) {
@@ -635,8 +858,7 @@ final class GroupeActions {
                 String cls = w == null ? null : Salle.classe(w.getTypeId(), true);
                 if (cls == null) { inconnus++; continue; }
                 if (c.position == null) { hors++; continue; }
-                murs.add(new MurPose(cls, w.getState(), SelectionMur.normaliser(c.position)));
-                attendusMurs.merge(w.getTypeId(), 1, Integer::sum);
+                murs.add(new PoseDirecte.Mur(cls, SelectionMur.normaliser(c.position)));
                 continue;
             }
             HFloorItem it = Salle.sol(c.e.id);
@@ -644,52 +866,94 @@ final class GroupeActions {
             if (cls == null) { inconnus++; continue; }
             if (Wired.estWired(cls)) { wired++; continue; }
             if (c.horsPlan) { hors++; continue; }
-            mobis.add(new Generateur.Mobi(cls, Generateur.etatDe(it), c.x, c.y,
-                    Math.max(0, c.e.z - solMin), c.rot));
-            attendusSols.merge(it.getTypeId(), 1, Integer::sum);
+            sols.add(new PoseDirecte.Sol(cls, c.x, c.y, Generateur.arrondi(Math.max(0, c.z)), c.rot, Generateur.etatDe(it)));
         }
-        int voulus = mobis.size() + murs.size();
+        int voulus = sols.size() + murs.size();
         String ignores = (wired > 0 ? wired + " wired ignoré(s) (sans leur réglage). " : "")
                 + (inconnus > 0 ? inconnus + " mobi(s) de classe inconnue ignoré(s). " : "")
                 + (hors > 0 ? hors + " mobi(s) qui tomberaient hors du plan ignoré(s). " : "")
-                + (muraux > 0 ? muraux + " mobi(s) mural(aux) laissé(s) de côté. " : "");
-        if (voulus == 0) return Groupes.Resultat.refus("Rien à dupliquer. " + ignores);
+                + (muraux > 0 ? muraux + " mobi(s) mural(aux) laissé(s) de côté (ils ne pivotent pas). " : "");
+        if (voulus == 0) return Groupes.Resultat.refus("Rien à poser. " + ignores);
 
-        // 2. la pose : mobi par mobi, chacun a son altitude (@altitude), sans dalle magique
-        List<PoseDirecte.Sol> aPoser = new ArrayList<>();
-        for (GroupeCalcul.Cible c : cibles) {
-            if (c.e.mural || c.horsPlan) continue;
-            HFloorItem it = Salle.sol(c.e.id);
-            String cls = it == null ? null : Salle.classe(it.getTypeId(), false);
-            if (cls == null || Wired.estWired(cls)) continue;
-            aPoser.add(new PoseDirecte.Sol(cls, c.x, c.y, c.z, c.rot, Generateur.etatDe(it)));
-        }
-        List<PoseDirecte.Mur> mursAPoser = new ArrayList<>();
-        for (MurPose w : murs) mursAPoser.add(new PoseDirecte.Mur(w.classe, w.position));
-        boolean arrete;
-        historiqueGrouper(true);
+        java.util.function.BooleanSupplier stop = () -> t.arretee() || !memeSalle(salle);
         PoseDirecte.Resultat pr;
+        PoseHybride.Bilan rb = null;
+        boolean altitude = true;
+        historiqueGrouper(true);           // rafale + reprise a la dalle : une seule action (Ctrl+Z)
         try {
-            pr = PoseDirecte.poser(aPoser, mursAPoser, source, t::dire, t::arretee,
-                    (f, n) -> t.progres(f, n, "Pose de la copie : " + f + "/" + n));
+            // 2. rafale ou dalle directe (sans @altitude : les mobis en hauteur)
+            boolean enHauteur = false;
+            for (PoseDirecte.Sol so : sols)
+                if (!PoseHybride.parRafale(so.z, Salle.hauteurSol(so.x, so.y), false)) { enHauteur = true; break; }
+            if (enHauteur) altitude = PoseHybride.altitudeDisponible(t::dire);
+            List<PoseDirecte.Sol> rafale = new ArrayList<>();
+            List<PoseHybride.Piece> reprise = new ArrayList<>();
+            for (PoseDirecte.Sol so : sols) {
+                if (PoseHybride.parRafale(so.z, Salle.hauteurSol(so.x, so.y), altitude)) rafale.add(so);
+                else reprise.add(PoseHybride.Piece.depuis(so, -1));
+            }
+            Journal.debug("calques : copie hybride, " + rafale.size() + " sol(s) en rafale, " + reprise.size()
+                    + " directement à la dalle, " + murs.size() + " mural(aux), @altitude " + (altitude ? "oui" : "non") + ".");
+
+            // 3. la rafale
+            int nRafale = rafale.size() + murs.size();
+            pr = PoseDirecte.poser(rafale, murs, source, t::dire, stop,
+                    (f, n) -> t.progres(f, n, "Pose rapide : " + f + "/" + n), altitude);
+
+            // 4. verification : refuses et mauvaises hauteurs -> dalle
+            if (!stop.getAsBoolean()) {
+                for (PoseDirecte.Sol so : pr.solsRefuses) reprise.add(PoseHybride.Piece.depuis(so, -1));
+                for (PoseDirecte.Mur m : pr.mursRefuses) reprise.add(PoseHybride.Piece.mur(m.classe, "", m.position, -1));
+                for (Map.Entry<Integer, PoseDirecte.Sol> e : pr.solsPoses.entrySet()) {
+                    HFloorItem now = Salle.sol(e.getKey());
+                    if (now == null) continue;
+                    if (PoseHybride.trier(true, true, now.getTile().getZ(), e.getValue().z) == PoseHybride.Issue.HAUTEUR)
+                        reprise.add(PoseHybride.Piece.depuis(e.getValue(), e.getKey()));
+                }
+                if (!reprise.isEmpty()) {
+                    Journal.debug("calques : " + reprise.size() + " mobi(s) repris à la dalle (" + pr.solsRefuses.size()
+                            + " refusé(s), " + pr.mursRefuses.size() + " mural(aux) refusé(s)).");
+                    t.progres(0, reprise.size(), "Reprise à la dalle : 0/" + reprise.size());
+                    rb = PoseHybride.reprendre(reprise, source, t::dire, stop,
+                            (f, n) -> t.progres(f, n, "Reprise à la dalle : " + f + "/" + n));
+                }
+            }
+            Journal.debug("calques : rafale " + (pr.sols.size() + pr.murs.size()) + "/" + nRafale + ".");
         } finally {
             historiqueGrouper(false);
         }
-        arrete = t.arretee();
+        boolean arrete = t.arretee();
         if (!memeSalle(salle)) return new Groupes.Resultat(false, true, voulus, 0, voulus, "Tu as quitté la salle pendant la pose.", null);
 
-        // 3. les nouveaux mobis -> nouveau calque
-        List<Integer> nS = pr.sols, nM = pr.murs;
+        // 5. les nouveaux mobis -> nouveau calque
+        List<Integer> nS = new ArrayList<>(), nM = new ArrayList<>(pr.murs);
+        Set<Integer> partis = rb == null ? Set.of() : rb.ramassesSols;
+        for (int id : pr.sols) if (!partis.contains(id)) nS.add(id);
+        int parDalle = 0, hauteursFausses = 0;
+        if (rb != null) {
+            nS.addAll(rb.sols); nM.addAll(rb.murs);
+            parDalle = rb.obtenus();
+            hauteursFausses = rb.hauteursFausses;
+        }
+        // restees fausses sans reprise (reprise impossible ou arretee)
+        if (rb == null || rb.raison != null || rb.arrete)
+            for (Map.Entry<Integer, PoseDirecte.Sol> e : pr.solsPoses.entrySet()) {
+                if (partis.contains(e.getKey())) continue;
+                HFloorItem now = Salle.sol(e.getKey());
+                if (now != null && Math.abs(now.getTile().getZ() - e.getValue().z) > PoseHybride.TOLERANCE) hauteursFausses++;
+            }
         int obtenus = nS.size() + nM.size();
         String nouveau = obtenus > 0 ? Groupes.creer(null, nS, nM, dessus) : null;
-        if (pr.hauteursFausses > 0) ignores += pr.hauteursFausses + " mobi(s) à une hauteur différente. ";
-        if (pr.etatsFaux > 0) ignores += pr.etatsFaux + " mobi(s) dans un autre état (couleur, allumé…). ";
         int echecs = Math.max(0, voulus - obtenus);
-        String msg = (arrete ? "Arrêté. " : "") + obtenus + "/" + voulus + " mobi(s) posé(s)"
-                + (nouveau != null ? " — nouveau calque créé" : "")
-                + (echecs > 0 && !arrete ? ", " + echecs + " manquant(s) (inventaire / BC ? case refusée ?)" : "")
-                + ". " + ignores;
-        return new Groupes.Resultat(echecs == 0 && !arrete, arrete, voulus, obtenus, echecs, msg.trim(), nouveau);
+        String msg = PoseHybride.bilan("posé", voulus, obtenus, parDalle, hauteursFausses, arrete)
+                + (nouveau != null ? " Nouveau calque créé." : "")
+                + (rb != null && rb.raison != null && !arrete ? " Reprise à la dalle impossible : " + rb.raison + "." : "")
+                + (!altitude ? PoseHybride.SANS_ALTITUDE : "")
+                + (pr.etatsFaux > 0 ? " " + pr.etatsFaux + " mobi(s) dans un autre état (couleur, allumé…)." : "")
+                + (ignores.isEmpty() ? "" : " " + ignores.trim())
+                + (obtenus > 0 ? " " + WindowsClavier.texte("Cmd+Z pour annuler.") : "");
+        return new Groupes.Resultat(echecs == 0 && hauteursFausses == 0 && !arrete, arrete, voulus, obtenus, echecs,
+                Ui.accorder(msg.trim()), nouveau);
     }
 
     // ------------------------------------------------- dupliquer (options)
@@ -765,14 +1029,189 @@ final class GroupeActions {
         catch (Throwable e) { t.dire("Muraux : " + e); return List.of(); }
         long fin = System.currentTimeMillis() + 10 * 60_000L;
         while (System.currentTimeMillis() < fin) {
-            Salle.sommeil(500);
+            Salle.sommeil(200);
             GPresetImporter.BuildingImportState st;
             try { st = imp.getState(); } catch (Throwable e) { st = GPresetImporter.BuildingImportState.NONE; }
             if (st == GPresetImporter.BuildingImportState.NONE) break;
             if (t.arretee()) { abandonner(imp, gp); break; }   // Arreter : on rend la main (verrou)
         }
-        Salle.sommeil(1500);
+        // suivi : seulement le temps que les derniers muraux apparaissent
+        int voulus = 0;
+        for (int k : attendus.values()) voulus += k;
+        final int v = voulus;
+        PoseDirecte.suivre(() -> v - nouveaux(avant, attendus, true).size(), 800, 1500);
         return nouveaux(avant, attendus, true);
+    }
+
+    // ------------------------------------------- copie placee (fantomes, puis Poser)
+
+    /** {sols hors wired, wired, muraux} presents dans la salle parmi ces ids. */
+    static int[] sortes(List<Set<Integer>> ids) {
+        int s = 0, w = 0, m = 0;
+        for (int id : ids.get(0)) {
+            HFloorItem it = Salle.sol(id);
+            if (it == null) continue;
+            if (Wired.estWired(Salle.classe(it.getTypeId(), false))) w++; else s++;
+        }
+        for (int id : ids.get(1)) if (Salle.mur(id) != null) m++;
+        return new int[]{s, w, m};
+    }
+
+    /**
+     * Pose VRAIE de la copie placee avec les fantomes (Dupliquer, Coller, copie
+     * pivotee ou miroir) : memes destinations que les fantomes
+     * (GroupeCalcul.copie). Sans wired : le moteur de pose, avec la dalle
+     * magique (hauteurs et piles exactes). Avec les wired : collage wired sur
+     * place (reglages remappes), puis la copie part a sa place (deplacerAvecDalles,
+     * meme pivot que les fantomes) ; pas de miroir dans ce cas.
+     * Les mobis poses deviennent un nouveau calque.
+     */
+    static Groupes.Resultat poserCopie(Groupes.Tache t, List<Set<Integer>> ids, String dessus, GroupeCalcul.Transfo tr,
+                                       boolean sols, boolean murs, boolean wired, Generateur.Source source) {
+        int salle = Groupes.salleCourante();
+        List<Set<Integer>> f = GroupeApercu.filtrer(ids, sols, murs, wired);
+        Set<Integer> s = new LinkedHashSet<>(), w = new LinkedHashSet<>();
+        for (int id : f.get(0)) {
+            HFloorItem it = Salle.sol(id);
+            if (it == null) continue;
+            (Wired.estWired(Salle.classe(it.getTypeId(), false)) ? w : s).add(id);
+        }
+        Set<Integer> m = new LinkedHashSet<>(f.get(1));
+        if (s.isEmpty() && w.isEmpty() && m.isEmpty()) return Groupes.Resultat.refus("Rien à copier avec ces choix.");
+        if (w.isEmpty())   // pose hybride : rafale, puis la dalle pour les seuls refuses
+            return dupliquer(t, List.of(s, m), dessus, els -> GroupeCalcul.copie(els, tr, Salle::hauteurSol), source);
+
+        if (tr.miroir != 0) return Groupes.Resultat.refus("Le miroir ne marche pas avec les wired. Décoche les wired ou enlève le miroir.");
+        Set<Integer> tous = new LinkedHashSet<>(s);
+        tous.addAll(w);
+        boolean muraux = !m.isEmpty() && tr.glissement();
+        t.dire("Copie avec les wired et leur réglage…");
+        List<Integer> nS, nM;
+        // collage + mise en place : une seule action pour Ctrl+Z
+        historiqueGrouper(true);
+        try {
+            nS = WiredCollage.collerSurPlace(tous, source, t::arretee);
+            nM = !muraux || t.arretee() ? List.of() : poserMursSurPlace(t, m, source);
+            int voulus = tous.size() + (muraux ? m.size() : 0);
+            int obtenus = nS.size() + nM.size();
+            String nouveau = obtenus > 0 && memeSalle(salle) ? Groupes.creer(null, nS, nM, dessus) : null;
+            String msg = (t.arretee() ? "Arrêté. " : "") + obtenus + "/" + voulus + " mobi(s) posé(s), wired avec leur réglage"
+                    + (nouveau != null ? " — nouveau calque créé" : "") + "."
+                    + (!m.isEmpty() && !muraux ? " Les muraux ne pivotent pas : laissés de côté." : "");
+            if (nouveau == null || t.arretee() || !memeSalle(salle))
+                return new Groupes.Resultat(false, t.arretee(), voulus, obtenus, voulus - obtenus, msg, nouveau);
+            if (!tr.neutre()) {
+                // la copie est sur l'original : elle part a la place des fantomes (pose
+                // hybride : MoveObject en rafale, la dalle pour les seuls refuses)
+                t.dire("Copie posée. Je la mets à sa place…");
+                Groupes.Resultat r = deplacerAvecDalles(t, nouveau, tr.quarts, tr.dx, tr.dy);
+                msg += " Mise en place : " + Ui.majuscule(r.message);
+                return new Groupes.Resultat(obtenus == voulus && r.ok, r.arrete, voulus, obtenus, voulus - obtenus, msg, nouveau);
+            }
+            return new Groupes.Resultat(obtenus == voulus, false, voulus, obtenus, voulus - obtenus, msg, nouveau);
+        } finally {
+            historiqueGrouper(false);
+        }
+    }
+
+    /**
+     * Pose une copie aux destinations de « calcul » par le moteur de pose,
+     * AVEC la dalle magique (comme avant PoseDirecte) : chaque mobi a sa
+     * hauteur exacte, piles respectees. Le z donne au moteur est l'altitude
+     * au-dessus du sol le plus bas sous la copie (il y ajoute ce sol). Les
+     * mobis poses deviennent un nouveau calque. Une seule action pour Ctrl+Z.
+     */
+    static Groupes.Resultat dupliquerDalle(Groupes.Tache t, List<Set<Integer>> ids, String dessus,
+                                           java.util.function.Function<List<GroupeCalcul.Element>, List<GroupeCalcul.Cible>> calcul,
+                                           Generateur.Source source) {
+        int salle = Groupes.salleCourante();
+        GPresets gp = Salle.gp();
+        if (gp == null) return Groupes.Resultat.refus("L'Atelier n'est pas encore prêt.");
+        if (!Salle.furnidataPrete()) return Groupes.Resultat.refus("Furnidata pas encore chargée.");
+        List<GroupeCalcul.Element> els = elements(ids.get(0), ids.get(1));
+        if (els.isEmpty()) return Groupes.Resultat.refus("Aucun de ces mobis n'est dans la salle.");
+
+        // 1. ce qu'on pose : altitude au-dessus du sol le plus bas sous la copie
+        List<GroupeCalcul.Cible> cibles = calcul.apply(els);
+        int solMin = GroupeCalcul.solMin(cibles, Salle::hauteurSol);
+        List<Generateur.Mobi> mobis = new ArrayList<>();
+        List<MurPose> murs = new ArrayList<>();
+        Map<Integer, Integer> attendusSols = new HashMap<>(), attendusMurs = new HashMap<>();   // type -> nombre
+        int wired = 0, inconnus = 0, hors = 0;
+        int muraux = 0;
+        for (GroupeCalcul.Element e : els) if (e.mural) muraux++;
+        for (GroupeCalcul.Cible c : cibles) if (c.e.mural) muraux--;   // reste : muraux laisses de cote
+        for (GroupeCalcul.Cible c : cibles) {
+            if (c.e.mural) {
+                HWallItem w = Salle.mur(c.e.id);
+                String cls = w == null ? null : Salle.classe(w.getTypeId(), true);
+                if (cls == null) { inconnus++; continue; }
+                if (c.position == null) { hors++; continue; }
+                murs.add(new MurPose(cls, w.getState(), SelectionMur.normaliser(c.position)));
+                attendusMurs.merge(w.getTypeId(), 1, Integer::sum);
+                continue;
+            }
+            HFloorItem it = Salle.sol(c.e.id);
+            String cls = it == null ? null : Salle.classe(it.getTypeId(), false);
+            if (cls == null) { inconnus++; continue; }
+            if (Wired.estWired(cls)) { wired++; continue; }
+            if (c.horsPlan) { hors++; continue; }
+            mobis.add(new Generateur.Mobi(cls, Generateur.etatDe(it), c.x, c.y, GroupeCalcul.zPreset(c, solMin), c.rot));
+            attendusSols.merge(it.getTypeId(), 1, Integer::sum);
+        }
+        int voulus = mobis.size() + murs.size();
+        String ignores = (wired > 0 ? wired + " wired ignoré(s) (sans leur réglage). " : "")
+                + (inconnus > 0 ? inconnus + " mobi(s) de classe inconnue ignoré(s). " : "")
+                + (hors > 0 ? hors + " mobi(s) qui tomberaient hors du plan ignoré(s). " : "")
+                + (muraux > 0 ? muraux + " mobi(s) mural(aux) laissé(s) de côté (ils ne pivotent pas). " : "");
+        if (voulus == 0) return Groupes.Resultat.refus("Rien à poser. " + ignores);
+        Journal.debug("calques : copie par le moteur de pose, " + mobis.size() + " sol(s), " + murs.size()
+                + " mural(aux), sol min " + solMin + ".");
+
+        // 2. la salle avant
+        Set<Integer> avantS = Groupes.idsSols(), avantM = Groupes.idsMurs();
+
+        // 3. la pose (appart temporaire + dalle magique)
+        GPresetImporter imp = gp.getImporter();
+        if (imp == null) return Groupes.Resultat.refus("Moteur de pose introuvable.");
+        boolean arrete = false, sortie = false;
+        historiqueGrouper(true);
+        try {
+            boolean lance;
+            try { lance = poser(gp, imp, mobis, murs, source, t::dire); }
+            catch (Throwable e) { return Groupes.Resultat.refus("Pose impossible : " + e); }
+            if (!lance) return new Groupes.Resultat(false, false, voulus, 0, voulus, "La pose n'a pas démarré. " + ignores, null);
+
+            // 4. attendre la fin du moteur de pose, en comptant les nouveaux mobis
+            long fin = System.currentTimeMillis() + 30 * 60_000L;
+            while (System.currentTimeMillis() < fin) {
+                Salle.sommeil(500);
+                if (!memeSalle(salle)) { sortie = true; break; }
+                if (t.arretee() && !arrete) { arrete = true; abandonner(imp, gp); }
+                GPresetImporter.BuildingImportState st;
+                try { st = imp.getState(); } catch (Throwable e) { st = GPresetImporter.BuildingImportState.NONE; }
+                int n = nouveaux(avantS, attendusSols, false).size() + nouveaux(avantM, attendusMurs, true).size();
+                t.progres(Math.min(n, voulus), voulus, "Pose de la copie : " + n + "/" + voulus
+                        + (st == GPresetImporter.BuildingImportState.AWAITING_UNOCCUPIED_SPACE
+                           ? ". Clique une case libre dans le jeu pour la dalle magique" : ""));
+                if (st == GPresetImporter.BuildingImportState.NONE) break;
+            }
+            if (!sortie) Salle.sommeil(3500);   // la dalle de l'Atelier est ramassee ~1,5 s apres la fin
+        } finally {
+            historiqueGrouper(false);
+        }
+        if (sortie) return new Groupes.Resultat(false, true, voulus, 0, voulus, "Tu as quitté la salle pendant la pose.", null);
+
+        // 5. les nouveaux mobis -> nouveau calque
+        List<Integer> nS = nouveaux(avantS, attendusSols, false), nM = nouveaux(avantM, attendusMurs, true);
+        int obtenus = nS.size() + nM.size();
+        String nouveau = obtenus > 0 ? Groupes.creer(null, nS, nM, dessus) : null;
+        int echecs = Math.max(0, voulus - obtenus);
+        String msg = (arrete ? "Arrêté. " : "") + obtenus + "/" + voulus + " mobi(s) posé(s)"
+                + (nouveau != null ? " — nouveau calque créé" : "")
+                + (echecs > 0 && !arrete ? ", " + echecs + " manquant(s) (inventaire / BC ? case refusée ?)" : "")
+                + ". " + ignores + (obtenus > 0 ? WindowsClavier.texte("Cmd+Z pour annuler.") : "");
+        return new Groupes.Resultat(echecs == 0 && !arrete, arrete, voulus, obtenus, echecs, msg.trim(), nouveau);
     }
 
     // ------------------------------------------ deplacer avec dalles magiques
@@ -813,70 +1252,117 @@ final class GroupeActions {
         int total = cDalles.size() + cMobis.size() + cMurs.size();
         int fait = 0;
         boolean arrete = false;
-        historiqueGrouper(true);
-        int malPlaces = 0, hauteursFausses = 0;
+        historiqueGrouper(true);           // dalles, mobis et reprise a la dalle : une seule action (Ctrl+Z)
+        Map<Integer, Integer> rotEnvoyee = new HashMap<>();
+        java.util.function.Predicate<GroupeCalcul.Cible> arrive = c -> {
+            Integer r = rotEnvoyee.get(c.e.id);
+            return place(c) || r != null && placeTourne(c, r);
+        };
+        List<GroupeCalcul.Cible> repris = List.of();
+        PoseHybride.Bilan rb = null;
         try {
-            // 1. les dalles d'abord
-            for (int passe = 0; passe < 2 && !arrete; passe++) {
-                for (GroupeCalcul.Cible c : cDalles) {
+            // 1. les dalles d'abord : rafale suivie, reprise groupee de celles qui manquent
+            List<GroupeCalcul.Cible> dallesAFaire = new ArrayList<>();
+            for (GroupeCalcul.Cible c : cDalles) if (!place(c)) dallesAFaire.add(c);
+            fait += cDalles.size() - dallesAFaire.size();
+            for (int passe = 0; passe < 2 && !arrete && !dallesAFaire.isEmpty(); passe++) {
+                for (GroupeCalcul.Cible c : dallesAFaire) {
                     if (t.arretee() || !memeSalle(salle)) { arrete = true; break; }
-                    if (place(c)) continue;
+                    Salle.espacer();
                     Salle.deplacerSol(c.e.id, c.x, c.y, c.rot);
                     if (passe == 0) t.progres(++fait, total, "Dalles magiques : " + fait + "/" + cDalles.size());
-                    Salle.sommeil(PAUSE);
                 }
-                Salle.sommeil(900);
+                final List<GroupeCalcul.Cible> l = dallesAFaire;
+                PoseDirecte.suivre(() -> nonPlaces(l).size(), arrete ? 400 : 700, 1500);
+                dallesAFaire = nonPlaces(dallesAFaire);
             }
-            // 2. les mobis, du bas vers le haut, chacun a sa hauteur
+            // 2. les mobis, du bas vers le haut, chacun a sa hauteur. Rafale : pour
+            //    chaque mobi, les dalles dessous a SA hauteur puis le mobi, sans
+            //    attendre qu'il arrive (le serveur traite les paquets dans l'ordre :
+            //    le mobi est pose avant que la dalle change pour le suivant). Ceux
+            //    qui manquent sont repris en groupe avec la rotation suivante.
             cMobis.sort(Comparator.comparingDouble((GroupeCalcul.Cible c) -> c.z).thenComparingInt(c -> c.e.id));
             Map<Integer, Integer> hauteurDalle = new HashMap<>();
+            long[] dernierReglage = {0};
+            List<GroupeCalcul.Cible> aFaire = new ArrayList<>(cMobis);
             int n = 0;
-            for (GroupeCalcul.Cible c : cMobis) {
-                if (t.arretee() || !memeSalle(salle)) { arrete = true; break; }
-                int lx = q % 2 == 1 ? c.e.ey : c.e.ex, ly = q % 2 == 1 ? c.e.ex : c.e.ey;
-                int valeur = (int) Math.round(Math.max(0, c.z) * 100);
-                for (GroupeCalcul.Cible d : cDalles) {
-                    int dlx = q % 2 == 1 ? d.e.ey : d.e.ex, dly = q % 2 == 1 ? d.e.ex : d.e.ey;
-                    boolean dessous = d.x <= c.x + lx - 1 && d.x + dlx - 1 >= c.x && d.y <= c.y + ly - 1 && d.y + dly - 1 >= c.y;
-                    if (!dessous || Objects.equals(hauteurDalle.get(d.e.id), valeur)) continue;
-                    gp.sendToServer(new HPacket("SetCustomStackingHeight", HMessage.Direction.TOSERVER, d.e.id, valeur));
-                    hauteurDalle.put(d.e.id, valeur);
-                    Salle.sommeil(250);           // le serveur ignore les reglages trop rapproches
-                }
-                boolean ok = false;
-                for (int essai = 0; essai <= 2 && !ok; essai++) {
+            for (int essai = 0; essai <= 2 && !aFaire.isEmpty() && !arrete; essai++) {
+                boolean envoye = false;
+                for (GroupeCalcul.Cible c : aFaire) {
+                    if (t.arretee() || !memeSalle(salle)) { arrete = true; break; }
                     int rot = GroupeCalcul.rotationEssai(c.rot, c.e.rot, essai);
                     if (rot < 0 || essai == 2 && c.e.ex != c.e.ey) continue;   // pas dans l'autre sens que le bloc
+                    reglerDalles(gp, c, q, cDalles, hauteurDalle, dernierReglage);
+                    Salle.espacer();
                     Salle.deplacerSol(c.e.id, c.x, c.y, rot);
-                    for (int i = 0; i < 8 && !ok; i++) { Salle.sommeil(150); ok = place(c) || placeTourne(c, rot); }
+                    rotEnvoyee.put(c.e.id, rot);
+                    envoye = true;
+                    if (essai == 0) t.progres(++fait, total, "Pose rapide : " + (++n) + "/" + cMobis.size());
                 }
-                if (!ok) malPlaces++;
-                else {
-                    HFloorItem now = Salle.sol(c.e.id);
-                    if (now != null && Math.abs(now.getTile().getZ() - c.z) > 0.03) hauteursFausses++;
-                }
-                t.progres(++fait, total, "Mobis à leur hauteur : " + (++n) + "/" + cMobis.size());
+                if (!envoye) break;
+                final List<GroupeCalcul.Cible> l = aFaire;
+                PoseDirecte.suivre(() -> malPoses(l, rotEnvoyee).size(), arrete ? 400 : 700, 2000);
+                aFaire = malPoses(aFaire, rotEnvoyee);
             }
             // 3. les muraux (sans pivot seulement : ils ne tournent pas)
             for (GroupeCalcul.Cible c : cMurs) {
                 if (t.arretee() || !memeSalle(salle)) { arrete = true; break; }
+                Salle.espacer();
                 Salle.deplacerMur(c.e.id, SelectionMur.normaliser(c.position));
                 t.progres(++fait, total, "Muraux…");
-                Salle.sommeil(PAUSE);
+            }
+            // 4. verification : les mobis refuses ou a une mauvaise hauteur, et
+            //    seulement eux, repris avec la dalle du moteur de pose
+            if (!arrete && memeSalle(salle)) {
+                PoseDirecte.suivre(() -> aReprendre(cMobis, arrive).size(), 500, 1200);
+                repris = aReprendre(cMobis, arrive);
+                if (!repris.isEmpty()) rb = reprendreCibles(t, salle, repris);
             }
         } finally {
             historiqueGrouper(false);
         }
-        String msg = (arrete ? "Arrêté. " : "") + (cMobis.size() - malPlaces) + "/" + cMobis.size()
-                + " mobi(s) posé(s) à leur hauteur sur " + cDalles.size() + " dalle(s) magique(s)"
-                + (q != 0 ? ", pivotés" : "") + "."
-                + (malPlaces > 0 ? " " + malPlaces + " bloqué(s) (case occupée ou orientation refusée)." : "")
-                + (hauteursFausses > 0 ? " " + hauteursFausses + " à une hauteur différente." : "")
-                + (hors > 0 ? " " + hors + " hors du plan, laissé(s) sur place." : "")
-                + (q != 0 && !ids.get(1).isEmpty() ? " Les muraux ne pivotent pas." : "")
-                + " Ctrl+Z pour annuler.";
-        int echecs = malPlaces + hors;
-        return new Groupes.Resultat(echecs == 0 && !arrete, arrete, total, total - echecs, echecs, msg, null);
+        arrete = arrete || t.arretee() || !memeSalle(salle);
+        String suite = " Sur " + cDalles.size() + " dalle(s) magique(s) du calque."
+                + (q != 0 && !ids.get(1).isEmpty() ? " Les muraux ne pivotent pas." : "");
+        return bilanDeplacement(q != 0 ? "pivoté" : "déplacé", cMobis.size() + hors, hors, repris, rb, true, arrete,
+                arrive, cMobis, suite);
+    }
+
+    /** Le serveur ignore les reglages de hauteur de dalle trop rapproches : au moins ce temps entre deux. */
+    private static final long ECART_DALLE_MS = 250;
+
+    /** Met les dalles magiques sous le mobi a SA hauteur (celles qui n'y sont pas deja). */
+    private static void reglerDalles(GPresets gp, GroupeCalcul.Cible c, int q, List<GroupeCalcul.Cible> cDalles,
+                                     Map<Integer, Integer> hauteurDalle, long[] dernierReglage) {
+        int lx = q % 2 == 1 ? c.e.ey : c.e.ex, ly = q % 2 == 1 ? c.e.ex : c.e.ey;
+        int valeur = (int) Math.round(Math.max(0, c.z) * 100);
+        for (GroupeCalcul.Cible d : cDalles) {
+            int dlx = q % 2 == 1 ? d.e.ey : d.e.ex, dly = q % 2 == 1 ? d.e.ex : d.e.ey;
+            boolean dessous = d.x <= c.x + lx - 1 && d.x + dlx - 1 >= c.x && d.y <= c.y + ly - 1 && d.y + dly - 1 >= c.y;
+            if (!dessous || Objects.equals(hauteurDalle.get(d.e.id), valeur)) continue;
+            long reste = ECART_DALLE_MS - (System.currentTimeMillis() - dernierReglage[0]);
+            if (reste > 0) Salle.sommeil(reste);
+            Salle.espacer();
+            gp.sendToServer(new HPacket("SetCustomStackingHeight", HMessage.Direction.TOSERVER, d.e.id, valeur));
+            dernierReglage[0] = System.currentTimeMillis();
+            hauteurDalle.put(d.e.id, valeur);
+        }
+    }
+
+    private static List<GroupeCalcul.Cible> nonPlaces(List<GroupeCalcul.Cible> l) {
+        List<GroupeCalcul.Cible> r = new ArrayList<>();
+        for (GroupeCalcul.Cible c : l) if (!place(c)) r.add(c);
+        return r;
+    }
+
+    /** Ceux qui ne sont pas a leur case avec la rotation voulue, son equivalente ou celle envoyee. */
+    private static List<GroupeCalcul.Cible> malPoses(List<GroupeCalcul.Cible> l, Map<Integer, Integer> rotEnvoyee) {
+        List<GroupeCalcul.Cible> r = new ArrayList<>();
+        for (GroupeCalcul.Cible c : l) {
+            Integer rot = rotEnvoyee.get(c.e.id);
+            if (!(place(c) || rot != null && placeTourne(c, rot))) r.add(c);
+        }
+        return r;
     }
 
     /** Le mobi de sol est-il a sa case d'arrivee (rotation voulue ou equivalente) ? */
@@ -921,7 +1407,7 @@ final class GroupeActions {
     }
 
     /** « :abort » donne directement a l'importeur (rien ne part au serveur), a defaut par le chat. */
-    private static void abandonner(GPresetImporter imp, GPresets gp) {
+    static void abandonner(GPresetImporter imp, GPresets gp) {
         try {
             java.lang.reflect.Method m = GPresetImporter.class.getDeclaredMethod("onChat", HMessage.class);
             m.setAccessible(true);

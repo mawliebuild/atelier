@@ -48,6 +48,7 @@ public class OutilDeplacer {
         codeSel.setMaxWidth(Double.MAX_VALUE);
         codeSel.setPromptText(":w=21,25 l=3,-257 r");
         codeSel.setOnAction(e -> appliquerCode());   // Entree applique le code
+        codeSel.setTooltip(bulle("Position du mur. Modifie-la puis Entrée pour y envoyer le mur."));
 
         pasPosition = spin(1);
         pasDecalage = spin(1);
@@ -59,11 +60,17 @@ public class OutilDeplacer {
 
         Button pivoter = new Button("Pivoter");
         pivoter.setMaxWidth(Double.MAX_VALUE);
+        pivoter.setGraphic(Icones.petite(Icones.PIVOTER, 16, false));
+        pivoter.setGraphicTextGap(7);
+        pivoter.setTooltip(bulle("Passer le mobi sur l'autre face du mur (gauche ↔ droite)"));
         pivoter.setOnAction(e -> pivoter());
 
         Button dupliquer = new Button("Dupliquer ce mur");
         dupliquer.getStyleClass().add("primaire");
         dupliquer.setMaxWidth(Double.MAX_VALUE);
+        dupliquer.setGraphic(Icones.petite(Icones.DUPLIQUER, 16, true));
+        dupliquer.setGraphicTextGap(7);
+        dupliquer.setTooltip(bulle("Poser une copie de ce mur à la position du code ci-dessus"));
         dupliquer.setOnAction(e -> dupliquer());
 
         etat = Ui.etat();
@@ -307,6 +314,8 @@ public class OutilDeplacer {
     }
 
     // ---------------------------------------------------------------- outils
+
+    private static Tooltip bulle(String s) { return CalqueFenetre.bulle(s); }
 
     private static Label gras(String s) {
         Label l = new Label(s);

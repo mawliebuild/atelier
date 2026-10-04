@@ -72,9 +72,27 @@ public class OutilCouleur {
 
         etat = Ui.etat();
 
+        // Le champ s'etire, la palette garde sa taille ; dessous, ce que le mobi recoit.
+        palette.setMinWidth(Region.USE_PREF_SIZE);
+        palette.setStyle("-fx-color-label-visible: false;");   // la pastille seule, sans nom coupe
+        HBox saisie = new HBox(8, Icones.petit(Icones.GOUTTE), code, palette);
+        saisie.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
+        HBox.setHgrow(code, Priority.ALWAYS);
+        Label valeurs = Ui.discret("");
+        valeurs.setStyle("-fx-font-style: normal;");
+        Runnable majValeurs = () -> {
+            Color c = palette.getValue();
+            if (c == null) { valeurs.setText(""); return; }
+            double[] hsl = versHsl(c);
+            valeurs.setText(String.format(java.util.Locale.FRANCE, "Teinte\u00a0%d° · saturation\u00a0%d\u00a0%% · luminosité\u00a0%d\u00a0%%",
+                    Math.round(hsl[0]), Math.round(hsl[1] * 100), Math.round(hsl[2] * 100)));
+        };
+        palette.valueProperty().addListener((o, a, c) -> majValeurs.run());
+        majValeurs.run();
+
         VBox v = new VBox(12,
                 Ui.bloc("Couleur",
-                        Ui.ligne(code, palette),
+                        saisie, valeurs,
                         Ui.aide("Colle un code (#ff56c2) ou choisis dans la palette : "
                                 + "la couleur change dans le jeu toute seule.")),
                 etat);

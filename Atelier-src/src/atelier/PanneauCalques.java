@@ -225,7 +225,7 @@ public class PanneauCalques implements Ancrage.Ancrable {
             boolean on = grille.isSelected();
             if (!GrilleVue.montrer(on)) grille.setSelected(false);
         });
-        Button escalier = icone(Icones.ESCALIER, "Escalier / rampe : ouvre la fenêtre de l'outil", () -> {
+        Button escalier = icone(Icones.ESCALIER, "Escalier : ouvre la fenêtre de l'outil", () -> {
             Runnable r = surEscalier;
             if (r == null) dire("L'escalier n'est pas encore branché."); else r.run();
         });
@@ -318,7 +318,7 @@ public class PanneauCalques implements Ancrage.Ancrable {
         bFusion = icone(Icones.FUSIONNER, "Fusionner : plusieurs calques dans le plus haut ; un seul avec celui du dessous (Cmd + E)",
                 this::fusionnerChoisis);
         bNouveau = icone(Icones.CALQUE_NOUVEAU, "Nouveau calque : les mobis sélectionnés y passent (vide sans sélection)", this::nouveauCalque);
-        bDupliquer = icone(Icones.DUPLIQUER, "Dupliquer le calque choisi : la copie devient un nouveau calque, puis tu la déplaces",
+        bDupliquer = icone(Icones.DUPLIQUER, "Dupliquer le calque choisi : une copie fantôme à placer, puis Poser",
                 () -> surCible(actions::dupliquer));
         bSupprimer = icone(Icones.CORBEILLE, "Supprimer les calques choisis : leurs mobis sont ramassés (Cmd+Z les repose). Pour les garder, fusionne.",
                 this::supprimerChoisis);
@@ -889,7 +889,7 @@ public class PanneauCalques implements Ancrage.Ancrable {
                 if (voulu != null)
                     for (Groupes.Info i : l) if (i.id.equals(voulu)) {
                         liste.getSelectionModel().select(i);
-                        liste.scrollTo(i);
+                        montrer(l.indexOf(i));
                         if (voulu.equals(aChoisir)) { aChoisir = null; preferSelection = false; }
                         break;
                     }
@@ -926,6 +926,29 @@ public class PanneauCalques implements Ancrage.Ancrable {
         return cal != null ? cal : sel;
     }
 
+    /**
+     * Rend la ligne visible SANS faire defiler la liste quand ce n'est pas
+     * utile. ListView.scrollTo met toujours la ligne EN HAUT, meme quand tout
+     * tient : a chaque rafraichissement (masquer un calque, par exemple) le
+     * calque choisi remontait en haut et les lignes au-dessus de lui sortaient
+     * de la vue (« le calque masque disparait de la liste »). Liste courte
+     * (tout tient) : toujours depuis le haut. Liste longue : on ne defile que
+     * si la ligne est hors de vue.
+     */
+    private void montrer(int index) {
+        int n = liste.getItems().size();
+        if (index < 0 || index >= n) return;
+        if (n <= LIGNES_MAX) { liste.scrollTo(0); return; }
+        javafx.scene.Node f = liste.lookup(".virtual-flow");
+        if (f instanceof javafx.scene.control.skin.VirtualFlow) {
+            javafx.scene.control.skin.VirtualFlow<?> v = (javafx.scene.control.skin.VirtualFlow<?>) f;
+            IndexedCell<?> premiere = v.getFirstVisibleCell(), derniere = v.getLastVisibleCell();
+            // la premiere et la derniere peuvent n'etre visibles qu'en partie
+            if (premiere != null && derniere != null && index > premiere.getIndex() && index < derniere.getIndex()) return;
+        }
+        liste.scrollTo(index);
+    }
+
     /** Selectionne ce calque dans la liste (seul), maintenant ou des qu'il y apparait. */
     private void choisirCalque(String id) {
         if (id == null) return;
@@ -935,7 +958,7 @@ public class PanneauCalques implements Ancrage.Ancrable {
             choixParProgramme = true;
             try {
                 for (Groupes.Info i : liste.getItems())
-                    if (i.id.equals(id)) { liste.getSelectionModel().clearAndSelect(liste.getItems().indexOf(i)); liste.scrollTo(i); aChoisir = null; break; }
+                    if (i.id.equals(id)) { liste.getSelectionModel().clearAndSelect(liste.getItems().indexOf(i)); montrer(liste.getItems().indexOf(i)); aChoisir = null; break; }
             } finally { choixParProgramme = false; }
         };
         if (Platform.isFxApplicationThread()) r.run(); else Platform.runLater(r);
@@ -991,7 +1014,7 @@ public class PanneauCalques implements Ancrage.Ancrable {
 
     // ============================================================ branchements
 
-    /** Ce que fait « Escalier » (AtelierLauncher : ouvrir le menu Escalier / rampe). */
+    /** Ce que fait « Escalier » (AtelierLauncher : ouvrir le menu « Escalier »). */
     public void surEscalier(Runnable r) { surEscalier = r; }
 
     /** Ce que fait la regle (AtelierLauncher : basculer la mesure de BarreMesure). */

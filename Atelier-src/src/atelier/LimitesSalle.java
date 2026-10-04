@@ -41,35 +41,57 @@ final class LimitesSalle {
         extension.GPresets gp = Salle.gp();
         if (gp == null) return;
         try {
+            // Users porte toutes les entites (avatars, figures...) : il est lu sur
+            // le fil SUIVI, pas dans l'intercepteur. Les trois ecoutes y passent
+            // pour garder l'ordre (une entite ajoutee puis retiree).
             if (!brancheUsers) {
                 gp.intercept(HMessage.Direction.TOCLIENT, "Users", m -> {
                     try {
-                        verifierSalle();
-                        for (HEntity e : HEntity.parse(new HPacket(m.getPacket()))) {
-                            if (e == null) continue;
-                            HEntityType t = e.getEntityType();
-                            if (t == HEntityType.PET || t == HEntityType.BOT || t == HEntityType.OLD_BOT) entites.put(e.getIndex(), t);
-                        }
+                        HPacket copie = new HPacket(m.getPacket());
+                        SUIVI.execute(() -> lireUsers(copie));
                     } catch (Throwable ignored) { }
                 });
                 brancheUsers = true;
             }
             if (!brancheRemove) {
                 gp.intercept(HMessage.Direction.TOCLIENT, "UserRemove", m -> {
-                    if (entites.isEmpty()) return;          // test avant toute copie
-                    try { entites.remove(Integer.parseInt(new HPacket(m.getPacket()).readString().trim())); }
-                    catch (Throwable ignored) { }
+                    try {
+                        String index = m.getPacket().readString(6);      // lecture sur place, sans copie
+                        SUIVI.execute(() -> {
+                            if (entites.isEmpty()) return;
+                            try { entites.remove(Integer.parseInt(index.trim())); } catch (Throwable ignored) { }
+                        });
+                    } catch (Throwable ignored) { }
                 });
                 brancheRemove = true;
             }
             if (!brancheReady) {
-                gp.intercept(HMessage.Direction.TOCLIENT, "RoomReady", m -> { entites.clear(); salle = -1; });
+                gp.intercept(HMessage.Direction.TOCLIENT, "RoomReady", m -> SUIVI.execute(() -> { entites.clear(); salle = -1; }));
                 brancheReady = true;
             }
             branche = true;
         } catch (Throwable t) {
             System.err.println("[Atelier] limites de l'appart : " + t);
         }
+    }
+
+    /** Un seul fil, demon : la lecture des entites, dans l'ordre des paquets. */
+    private static final java.util.concurrent.ExecutorService SUIVI =
+            java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+                Thread t = new Thread(r, "atelier-limites-entites");
+                t.setDaemon(true);
+                return t;
+            });
+
+    private static void lireUsers(HPacket p) {
+        try {
+            verifierSalle();
+            for (HEntity e : HEntity.parse(p)) {
+                if (e == null) continue;
+                HEntityType t = e.getEntityType();
+                if (t == HEntityType.PET || t == HEntityType.BOT || t == HEntityType.OLD_BOT) entites.put(e.getIndex(), t);
+            }
+        } catch (Throwable ignored) { }
     }
 
     private static void verifierSalle() {

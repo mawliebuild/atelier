@@ -56,6 +56,9 @@ public class OngletApparts {
         public String getProprietaire() { return proprietaire; }
         /** Prix de la ligne (quantite comprise), en credits ; -1 inconnu. Pas dans « Copier la liste ». */
         private long prix = -1;
+        /** Classe et revision du mobi, pour son icone dans le tableau (vides si inconnues). */
+        private volatile String classe;
+        private volatile int revision;
         public String getPrix() {
             return prix < 0 ? "—" : java.text.NumberFormat.getIntegerInstance(java.util.Locale.FRANCE).format(prix) + " c";
         }
@@ -77,6 +80,7 @@ public class OngletApparts {
     private Label salleActuelle, salleActuelle2;
     private ComboBox<String> choixProprio;
     private HBox ligneProprio;
+    private TextField rechercheSalle;
 
     /** Choix par defaut du filtre par personne. */
     private static final String TOUT_LE_MONDE = "Tout le monde";
@@ -163,9 +167,23 @@ public class OngletApparts {
             return r;
         });
 
-        Button copier = plein("Copier la liste",
-                e -> copier(tableSalle, "Ma salle"));
+        Button copier = Icones.sur(new Button("Copier la liste"), Icones.DUPLIQUER);
+        copier.setOnAction(e -> copier(tableSalle, "Ma salle"));
         copier.getStyleClass().add("primaire");
+        copier.setMinWidth(Region.USE_PREF_SIZE);
+        copier.setTooltip(bulle("Le tableau tel qu'il est filtré, prêt à coller (une ligne « - Nom xQuantité » par mobi)."));
+
+        // Recherche par nom, au-dessus du tableau
+        rechercheSalle = new TextField();
+        rechercheSalle.setPromptText("Chercher un mobi");
+        rechercheSalle.textProperty().addListener((o, a, b) -> filtrerSalle());
+        rechercheSalle.setMaxWidth(Double.MAX_VALUE);
+        Button effacerRecherche = Icones.seul(Icones.VIDER, "Effacer la recherche");
+        effacerRecherche.setOnAction(e -> rechercheSalle.clear());
+        effacerRecherche.visibleProperty().bind(rechercheSalle.textProperty().isNotEmpty());
+        HBox barreMobis = new HBox(8, Icones.petit(Icones.LOUPE), rechercheSalle, effacerRecherche, copier);
+        barreMobis.setAlignment(Pos.CENTER_LEFT);
+        HBox.setHgrow(rechercheSalle, Priority.ALWAYS);
 
 
         choixProprio = new ComboBox<>();
@@ -209,8 +227,16 @@ public class OngletApparts {
         blocSalle.setPrefWidth(200);
         blocFiltres.setPrefWidth(300);
 
-        VBox blocMobis = Ui.bloc("Mobis", tableSalle, copier,
-                Ui.aide("La liste suit la salle toute seule, en temps réel. "
+        // « À qui » : la colonne n'a de sens qu'avec plusieurs poseurs, comme le filtre.
+        for (TableColumn<Ligne, ?> c : tableSalle.getColumns())
+            if ("À qui".equals(c.getText())) c.visibleProperty().bind(ligneProprio.visibleProperty());
+        Label videSalle = new Label("Aucun mobi à afficher.");
+        videSalle.getStyleClass().add("aide-vide");
+        tableSalle.setPlaceholder(videSalle);
+
+        VBox blocMobis = Ui.bloc("Mobis", barreMobis, tableSalle,
+                Ui.aide("La liste suit la salle toute seule, en temps réel. Clique un intitulé de colonne "
+                        + "pour trier ; la ligne choisie s'allume dans l'appart. "
                         + "Copier la liste : le tableau tel qu'il est filtré, prêt à coller."));
         // Le tableau prend toute la hauteur restante.
         VBox.setVgrow(blocMobis, Priority.ALWAYS);
@@ -375,9 +401,10 @@ public class OngletApparts {
 
     private Pane voletAppart() {
         salleActuelle2 = Ui.valeur("—");
+        salleActuelle2.setWrapText(true);
 
         nomNouvelAppart = new TextField();
-        nomNouvelAppart.setPromptText("Nom de la copie (par défaut : le nom de l'appart)");
+        nomNouvelAppart.setPromptText("Nom (par défaut : celui de l'appart)");
         nomNouvelAppart.setMaxWidth(Double.MAX_VALUE);
         nomNouvelAppart.setOnAction(e -> copierSalleVersAppart());
 
@@ -386,9 +413,10 @@ public class OngletApparts {
         etTout = radio("L'appart entier", gEtendue, true);
         etZone = radio("Une zone", gEtendue, false);
         coinsLbl = Ui.valeur(Zone.texte());
+        coinsLbl.setWrapText(true);
         Zone.ecouter(() -> coinsLbl.setText(Zone.texte()));
         Zone.ecouter(this::suivreZone);
-        Button choisirZone = new Button("Choisir la zone dans le jeu");
+        Button choisirZone = Icones.sur(new Button("Choisir la zone dans le jeu"), Icones.CIBLE);
         choisirZone.setOnAction(e -> choisirZone());
         VBox blocZone = new VBox(6, coinsLbl, choisirZone);
         blocZone.visibleProperty().bind(etZone.selectedProperty());
@@ -399,26 +427,45 @@ public class OngletApparts {
         cpMurs  = new CheckBox("Murs");   cpMurs.setSelected(true);
         cpWired = new CheckBox("Wired");  cpWired.setSelected(true);
 
-        Button copierSalle = plein("Copier", e -> copierSalleVersAppart());
+        Button copierSalle = Icones.sur(plein("Copier", e -> copierSalleVersAppart()), Icones.DUPLIQUER);
         copierSalle.getStyleClass().add("primaire");
 
-        // --- 2. mes copies : coller, renommer, supprimer
+        // --- 2. mes copies : une carte par copie (apercu, nom, contenu, date)
         choixAppart = new ComboBox<>();             // garde la selection (lue partout) ; la liste l'affiche
         choixAppart.valueProperty().addListener((o, a, b) -> { lireAppart(); majFloor(); });
         ListView<String> liste = new ListView<>(choixAppart.getItems());
-        liste.setPrefHeight(220);
-        liste.setPlaceholder(Ui.discret("Aucune copie pour l'instant."));
+        liste.setPrefHeight(250);
+        liste.setMinHeight(150);
+        Label vide = new Label("Aucune copie pour l'instant : copie un appart au-dessus.");
+        vide.setWrapText(true);
+        vide.getStyleClass().add("aide-vide");
+        liste.setPlaceholder(vide);
         liste.setCellFactory(lv -> new ListCell<>() {
+            {
+                // la cellule suit la largeur de la liste : le texte passe a la ligne, pas d'ascenseur de cote
+                setPrefWidth(0);
+            }
             @Override protected void updateItem(String nom, boolean vide) {
                 super.updateItem(nom, vide);
                 if (vide || nom == null) { setText(null); setGraphic(null); return; }
                 Label n = new Label(nom);
                 n.setStyle("-fx-font-weight: bold;");
-                Label d = Ui.discret(resumeCopie(nom));
-                VBox texte = new VBox(1, n, d);
+                n.setWrapText(true);
+                String[] r = Ui.accorder(resumeCopie(nom)).split(" · ");
+                Label d = Ui.discret(r.length >= 2 ? Ui.majuscule(r[0] + " · " + r[1]) : r[0]);
+                d.setStyle("-fx-font-style: normal; -fx-opacity: 0.7; -fx-font-size: 11px;");
+                VBox texte = new VBox(2, n, d);
+                if (r.length >= 3) {
+                    Label q = Ui.discret(r[2]);
+                    q.setStyle("-fx-font-style: normal; -fx-opacity: 0.55; -fx-font-size: 11px;");
+                    texte.getChildren().add(q);
+                }
                 texte.setAlignment(Pos.CENTER_LEFT);
+                texte.setMinWidth(0);
+                HBox.setHgrow(texte, Priority.ALWAYS);
                 HBox h = new HBox(10, vignetteCopie(nom, lv), texte);
                 h.setAlignment(Pos.CENTER_LEFT);
+                h.setPadding(new Insets(2, 0, 2, 0));
                 setGraphic(h);
                 setText(null);
             }
@@ -429,6 +476,8 @@ public class OngletApparts {
         });
 
         cptAppart = new Label("--");
+        cptAppart.getStyleClass().add("salle-compte");
+        cptAppart.setWrapText(true);
 
         ToggleGroup source = new ToggleGroup();
         sInv   = radio("Inventaire", source, true);
@@ -440,22 +489,66 @@ public class OngletApparts {
         avecFloor.setWrapText(true);
         avecFloor.setSelected(true);
 
-        Button poser = plein("Coller ici", e -> collerAppart());
+        Button poser = Icones.sur(plein("Coller ici", e -> collerAppart()), Icones.COLLER);
         poser.getStyleClass().add("primaire");
-        Button renommer = new Button("Renommer…");
+        // Pendant un collage : « Arrêter » a la place de « Coller ici »
+        Button arreter = plein("Arrêter le collage", e -> arreterCollage());
+        arreter.visibleProperty().bind(collageEnCours);
+        arreter.managedProperty().bind(collageEnCours);
+        poser.visibleProperty().bind(collageEnCours.not());
+        poser.managedProperty().bind(collageEnCours.not());
+        boutonArreter = arreter;
+        // Actions sur la copie choisie : des icones, avec leur bulle
+        Button renommer = Icones.seul(Icones.CRAYON, "Renommer la copie");
         renommer.setOnAction(e -> renommerCopie());
-        Button supprimer = new Button("Supprimer");
+        Button supprimer = Icones.seul(Icones.CORBEILLE, "Supprimer la copie (définitif)");
         supprimer.setOnAction(e -> supprimerCopie());
-        Button apercu = new Button("Reprendre l'aperçu");
+        Button apercu = Icones.seul(Icones.CAPTURE, "Reprendre l'aperçu : nouvelle photo de la copie choisie, "
+                + "depuis l'appart où tu es (pour une zone : la zone choisie). "
+                + "Utile pour les copies faites avant les aperçus.");
+        apercu.getTooltip().setWrapText(true);
+        apercu.getTooltip().setMaxWidth(300);
         apercu.setOnAction(e -> reprendreApercu(liste));
-        apercu.setTooltip(new Tooltip("Reprend la photo de la copie choisie, depuis l'appart où tu es "
-                + "(pour une zone : la zone choisie). Utile pour les copies faites avant les aperçus."));
         for (Button b : new Button[]{poser, renommer, supprimer, apercu})
             b.disableProperty().bind(liste.getSelectionModel().selectedItemProperty().isNull());
+        HBox actions = new HBox(4, renommer, apercu, supprimer);
+        actions.setAlignment(Pos.CENTER_RIGHT);
+        actions.setMinWidth(Region.USE_PREF_SIZE);
+        HBox sousListe = new HBox(8, cptAppart, actions);
+        sousListe.setAlignment(Pos.CENTER_LEFT);
+        HBox.setHgrow(cptAppart, Priority.ALWAYS);
+        cptAppart.setMaxWidth(Double.MAX_VALUE);
+
+        // Source des mobis : un reglage rare, replie derriere un ⚙ (le choix en cours reste ecrit).
+        Label sourceTxt = new Label();
+        sourceTxt.setWrapText(true);
+        Runnable majSource = () -> sourceTxt.setText("Mobis pris : " + (sInv.isSelected() ? "inventaire"
+                : sBc.isSelected() ? "BC" : sBcInv.isSelected() ? "BC, puis inventaire" : "inventaire, puis BC") + ".");
+        source.selectedToggleProperty().addListener((o, a, b) -> majSource.run());
+        majSource.run();
+        VBox choixSource = new VBox(4, sInv, sInvBc, sBc, sBcInv);
+        choixSource.setPadding(new Insets(0, 0, 0, 4));
+        choixSource.setVisible(false);
+        choixSource.setManaged(false);
+        Button reglerSource = Icones.seul(Icones.REGLAGES, "Changer d'où viennent les mobis");
+        reglerSource.setOnAction(e -> {
+            boolean v = !choixSource.isVisible();
+            choixSource.setVisible(v);
+            choixSource.setManaged(v);
+        });
+        HBox ligneSource = new HBox(8, sourceTxt, reglerSource);
+        ligneSource.setAlignment(Pos.CENTER_LEFT);
+        HBox.setHgrow(sourceTxt, Priority.ALWAYS);
+        sourceTxt.setMaxWidth(Double.MAX_VALUE);
+
+        Label salleLbl = Ui.etiquette("Salle actuelle");
+        salleLbl.setMinWidth(Region.USE_PREF_SIZE);
+        HBox ligneSalle = new HBox(8, salleLbl, salleActuelle2);
+        ligneSalle.setAlignment(Pos.BASELINE_LEFT);
 
         contenuAppart = new VBox(14,
                 Ui.bloc("Copier",
-                        ligne("Salle actuelle :", salleActuelle2),
+                        ligneSalle,
                         Ui.ligne(etTout, etZone), blocZone,
                         Ui.ligne(cpSols, cpMurs, cpWired),
                         nomNouvelAppart,
@@ -466,14 +559,15 @@ public class OngletApparts {
                                 + "elle s'affiche dans « Mes copies », clique-la pour l'agrandir.")),
                 Ui.bloc("Mes copies",
                         liste,
-                        ligne("Contenu :", cptAppart),
-                        Ui.ligne(renommer, supprimer, apercu),
-                        Ui.bloc("Coller dans l'appart où je suis",
-                                new VBox(4, sInv, sInvBc, sBc, sBcInv),
-                                avecFloor,
-                                poser,
-                                Ui.aide("Sans le floor (ou pour une zone), clique dans le jeu la case du coin "
-                                        + "haut-gauche. Les mobis introuvables sont signalés et le reste est collé."))));
+                        sousListe,
+                        Ui.aide("Clique un aperçu pour l'agrandir. Les icônes sous la liste renomment, "
+                                + "reprennent la photo ou suppriment la copie choisie.")),
+                Ui.bloc("Coller dans l'appart où je suis",
+                        ligneSource, choixSource,
+                        avecFloor,
+                        poser, boutonArreter,
+                        Ui.aide("Sans le floor (ou pour une zone), clique dans le jeu la case du coin "
+                                + "haut-gauche. Les mobis introuvables sont signalés et le reste est collé.")));
         contenuAppart.setFillWidth(true);
 
         vSalle2 = new Ui.Voyant("Salle");
@@ -525,21 +619,23 @@ public class OngletApparts {
     private javafx.scene.Node vignetteCopie(String nom, Control lv) {
         File png = ApercuPreset.de(new File(dossierApparts(), nom + ".json"));
         StackPane cadre = new StackPane();
-        cadre.setMinSize(96, 64); cadre.setPrefSize(96, 64); cadre.setMaxSize(96, 64);
-        cadre.setStyle("-fx-background-color: rgba(0,0,0,0.12); -fx-background-radius: 4;");
+        cadre.setMinSize(88, 60); cadre.setPrefSize(88, 60); cadre.setMaxSize(88, 60);
+        cadre.setStyle("-fx-background-color: rgba(0,0,0,0.08); -fx-background-radius: 4;");
         if (!png.isFile()) {
-            Label l = Ui.discret("Pas d'aperçu");
-            l.setStyle("-fx-font-size: 9px;");
-            cadre.getChildren().add(l);
+            // pas encore de photo : un appareil grise, l'icone « reprendre l'apercu » sous la liste en fait une
+            javafx.scene.Node ic = Icones.petit(Icones.CAPTURE);
+            ic.setOpacity(0.45);
+            cadre.getChildren().add(ic);
+            Tooltip.install(cadre, bulle("Pas encore d'aperçu."));
             return cadre;
         }
         javafx.scene.image.Image img = vignettes.computeIfAbsent(png.getPath() + "@" + png.lastModified(),
-                k -> new javafx.scene.image.Image(png.toURI().toString(), 96 * 3, 64 * 3, true, true, true));
+                k -> new javafx.scene.image.Image(png.toURI().toString(), 88 * 3, 60 * 3, true, true, true));
         javafx.scene.image.ImageView iv = new javafx.scene.image.ImageView(img);
-        iv.setFitWidth(96); iv.setFitHeight(64); iv.setPreserveRatio(true);
+        iv.setFitWidth(88); iv.setFitHeight(60); iv.setPreserveRatio(true);
         cadre.getChildren().add(iv);
         cadre.setCursor(javafx.scene.Cursor.HAND);
-        Tooltip.install(cadre, new Tooltip("Agrandir"));
+        Tooltip.install(cadre, bulle("Agrandir"));
         cadre.setOnMouseClicked(e -> {
             e.consume();
             String css = lv.getScene() == null || lv.getScene().getStylesheets().isEmpty()
@@ -732,34 +828,119 @@ public class OngletApparts {
                     if (racine == null) { dire.accept("Collage impossible : pas de clic dans le jeu en 2 minutes."); return; }
                 }
 
-                // Sans reglages wired : pose directe, mobi par mobi, chacun a son altitude
-                // (@altitude), sans dalle magique. Avec des wired : le moteur de pose (il sait les regler).
-                if (!aDesWired(brut)) {
+                // Pose directe, mobi par mobi, chacun a son altitude (@altitude), sans dalle
+                // magique, wired compris. Les reglages des wired sont ensuite appliques par le
+                // moteur de pose (ReglagesWired), sur les wired qu'on vient de poser. Si ce
+                // n'est pas possible (autre version du moteur, valeurs de variables portees
+                // par les mobis), on garde l'ancien chemin : dalle magique + moteur de pose.
+                boolean avecWired = aDesWired(brut);
+                String pasDirect = avecWired ? ReglagesWired.nonGere(cfg) : null;
+                if (pasDirect != null) Journal.debug("collage « " + nom + " » : moteur de pose complet (" + pasDirect + ")");
+                if (pasDirect == null) {
                     double ancre = cfg.getSrcAnchorFloorHeight() == null ? 0 : cfg.getSrcAnchorFloorHeight();
                     double sol0 = Math.max(0, Salle.hauteurSol(racine.getX(), racine.getY()));
                     List<PoseDirecte.Sol> sols = new ArrayList<>();
                     for (extension.tools.presetconfig.furni.PresetFurni pf : cfg.getFurniture()) {
                         gearth.extensions.parsers.HPoint l = pf.getLocation();
                         sols.add(new PoseDirecte.Sol(pf.getClassName(), racine.getX() + l.getX(), racine.getY() + l.getY(),
-                                Math.max(0, l.getZ() - ancre + sol0), pf.getRotation(), pf.getState()));
+                                Math.max(0, l.getZ() - ancre + sol0), pf.getRotation(), pf.getState(), pf.getFurniId()));
                     }
-                    List<PoseDirecte.Mur> murs = new ArrayList<>();
-                    for (extension.tools.presetconfig.furni.PresetWallFurni pw : cfg.getWallFurniture()) {
-                        utils.WallPosition w = pw.getLocation();
-                        murs.add(new PoseDirecte.Mur(pw.getClassName(), new utils.WallPosition(w.getX() + racine.getX(),
-                                w.getY() + racine.getY(), w.getOffsetX(), w.getOffsetY(), w.getDirection(), w.getAltitude()).toString()));
+                    // Pose HYBRIDE (PoseHybride) : 1. les sols en rafale (inventaire / BC), chacun
+                    // a son altitude (@altitude) ; 2. ceux que le jeu refuse ou laisse a une
+                    // mauvaise hauteur, et seulement eux, repris avec la dalle magique (moteur
+                    // de pose) ; 3. sans @altitude, les sols en hauteur passent directement par
+                    // la dalle. Tout est une seule action pour Ctrl+Z.
+                    collageArrete = false;
+                    Platform.runLater(() -> collageEnCours.set(true));
+                    int salle0 = Groupes.salleCourante();
+                    java.util.function.BooleanSupplier stop = () -> collageArrete || Groupes.salleCourante() != salle0;
+                    long[] derniere = {0};
+                    java.util.function.BiConsumer<String, int[]> etape = (quoi, kn) -> {
+                        long t = System.currentTimeMillis();
+                        if (kn[0] < kn[1] && t - derniere[0] < 250) return;
+                        derniere[0] = t;
+                        note(quoi + " : " + kn[0] + "/" + kn[1]);
+                    };
+                    PoseDirecte.Resultat pr;
+                    PoseHybride.Bilan rb = null;
+                    boolean altitude = true;
+                    int mursPoses = 0;
+                    ReglagesWired.Bilan rw = null;
+                    Map<Integer, Integer> cles;
+                    Historique.grouper(true);
+                    try {
+                        boolean enHauteur = false;
+                        for (PoseDirecte.Sol so : sols)
+                            if (!PoseHybride.parRafale(so.z, Salle.hauteurSol(so.x, so.y), false)) { enHauteur = true; break; }
+                        if (enHauteur) altitude = PoseHybride.altitudeDisponible(this::note);
+                        List<PoseDirecte.Sol> rafale = new ArrayList<>();
+                        List<PoseHybride.Piece> reprise = new ArrayList<>();
+                        for (PoseDirecte.Sol so : sols) {
+                            if (PoseHybride.parRafale(so.z, Salle.hauteurSol(so.x, so.y), altitude)) rafale.add(so);
+                            else reprise.add(PoseHybride.Piece.depuis(so, -1));
+                        }
+                        pr = PoseDirecte.poser(rafale, List.of(), src, m -> { }, stop,
+                                (k, tot) -> etape.accept("Pose rapide", new int[]{k, tot}), altitude);
+                        // verification : refuses et mauvaises hauteurs -> dalle
+                        if (!stop.getAsBoolean()) {
+                            for (PoseDirecte.Sol so : pr.solsRefuses) reprise.add(PoseHybride.Piece.depuis(so, -1));
+                            for (Map.Entry<Integer, PoseDirecte.Sol> e : pr.solsPoses.entrySet()) {
+                                gearth.extensions.parsers.HFloorItem now = Salle.sol(e.getKey());
+                                if (now != null && PoseHybride.trier(true, true, now.getTile().getZ(), e.getValue().z)
+                                        == PoseHybride.Issue.HAUTEUR) reprise.add(PoseHybride.Piece.depuis(e.getValue(), e.getKey()));
+                            }
+                            if (!reprise.isEmpty()) {
+                                Journal.debug("collage « " + nom + " » : " + reprise.size() + " mobi(s) repris à la dalle.");
+                                note("Reprise à la dalle : 0/" + reprise.size());
+                                rb = PoseHybride.reprendre(reprise, src, m -> Journal.debug("reprise : " + m), stop,
+                                        (k, tot) -> etape.accept("Reprise à la dalle", new int[]{k, tot}));
+                            }
+                        }
+                        // furniId du preset -> id reel, apres la reprise (nouveaux ids)
+                        cles = new LinkedHashMap<>(pr.cles);
+                        if (rb != null) {
+                            Set<Integer> partis = rb.ramassesSols;
+                            cles.values().removeIf(partis::contains);
+                            cles.putAll(rb.cles);
+                        }
+                        // muraux : le moteur de pose, en « muraux seulement » (pas de dalle) ; il regle
+                        // aussi leur hauteur et leur decalage (variables du jeu), sinon refuses
+                        if (!cfg.getWallFurniture().isEmpty() && !stop.getAsBoolean())
+                            mursPoses = poserMuraux(gp, imp, cfg, nom, src, racine);
+                        // enfin les reglages des wired, sur les wired poses (cle -> id reel)
+                        if (avecWired && !stop.getAsBoolean()) {
+                            note("Réglages des wired…");
+                            rw = ReglagesWired.appliquer(gp, imp, cfg, cles, racine);
+                        }
+                    } finally {
+                        Historique.grouper(false);
+                        Platform.runLater(() -> collageEnCours.set(false));
                     }
-                    // mobis introuvables (ni inventaire ni BC) : signales, le reste est pose
-                    dire.accept("« " + nom + " » : pose de " + n + " mobis, un par un…");
-                    PoseDirecte.Resultat pr = PoseDirecte.poser(sols, murs, src, dire, () -> false,
-                            (k, tot) -> { if (k % 20 == 0) note("Pose : " + k + "/" + tot); });
-                    int poses = pr.sols.size() + pr.murs.size();
-                    // Pas de « x/n » : la ligne d'etat le prendrait pour une progression.
-                    // Un manque ou une hauteur fausse en fait une erreur (Journal.ERREUR).
-                    dire.accept(poses + " mobi(s) posé(s) sur " + n
-                            + (pr.manquants > 0 ? ", " + pr.manquants + " introuvable(s) ou refusé(s)" : "")
-                            + (pr.hauteursFausses > 0 ? ", " + pr.hauteursFausses + " pas pu être posé(s) à la bonne hauteur" : "")
-                            + (pr.etatsFaux > 0 ? ", " + pr.etatsFaux + " pas dans le bon état" : "") + ".");
+                    boolean arrete = stop.getAsBoolean();
+                    int solsPoses = pr.sols.size() - (rb == null ? 0 : rb.ramassesSols.size()) + (rb == null ? 0 : rb.obtenus());
+                    int hauteursFausses = rb == null ? pr.hauteursFausses : rb.hauteursFausses;
+                    if (rb != null && (rb.raison != null || rb.arrete))       // pas reprises : restees fausses
+                        for (Map.Entry<Integer, PoseDirecte.Sol> e : pr.solsPoses.entrySet()) {
+                            if (rb.ramassesSols.contains(e.getKey())) continue;
+                            gearth.extensions.parsers.HFloorItem now = Salle.sol(e.getKey());
+                            if (now != null && Math.abs(now.getTile().getZ() - e.getValue().z) > PoseHybride.TOLERANCE) hauteursFausses++;
+                        }
+                    int introuvables = Math.max(0, pr.manquants - pr.solsRefuses.size());
+                    // Un seul bilan. Un manque ou une hauteur fausse en fait une erreur (Journal.ERREUR).
+                    String bilan = PoseHybride.bilan("posé", n, solsPoses + mursPoses,
+                            rb == null ? 0 : rb.obtenus(), hauteursFausses, arrete);
+                    bilan = bilan.substring(0, bilan.length() - 1)
+                            + (introuvables > 0 ? " ; " + introuvables + " introuvable(s) dans la source choisie" : "")
+                            + (pr.etatsFaux > 0 ? " ; " + pr.etatsFaux + " pas dans le bon état" : "")
+                            + (rb != null && rb.raison != null && !arrete ? " ; reprise à la dalle impossible (" + rb.raison + ")" : "");
+                    if (rw != null && !rw.possible)
+                        bilan += " ; réglages des wired pas appliqués (" + rw.raison + ")";
+                    else if (rw != null && rw.attendus > 0)
+                        bilan += " ; " + rw.regles + " wired réglé(s) sur " + rw.attendus
+                                + (rw.rates > 0 ? ", " + rw.rates + " pas confirmé(s)" : "")
+                                + (rw.relusDifferents > 0 ? ", " + rw.relusDifferents + " relu(s) différent(s)" : "");
+                    bilan += "." + (!altitude ? PoseHybride.SANS_ALTITUDE : "");
+                    dire.accept(Ui.accorder(bilan));
                     return;
                 }
 
@@ -782,6 +963,52 @@ public class OngletApparts {
                 dire.accept("Collage impossible : " + lisible(t) + ".");
             }
         });
+    }
+
+    /** Demande d'arret du collage en cours (pose hybride) : plus rien ne part ensuite. */
+    private volatile boolean collageArrete = false;
+    /** Un collage tourne : « Arrêter le collage » remplace « Coller ici ». Fil JavaFX. */
+    private final javafx.beans.property.BooleanProperty collageEnCours = new javafx.beans.property.SimpleBooleanProperty(false);
+    private Button boutonArreter;
+
+    /** Arrete le collage en cours (rafale ou reprise a la dalle). A brancher sur un bouton « Arrêter ». */
+    void arreterCollage() { collageArrete = true; }
+
+    /**
+     * Les muraux d'un preset, par le moteur de pose en « muraux seulement »
+     * (« :ip x,y » sans mobi de sol : pas de dalle magique). Attend la fin de la
+     * pose ; renvoie le nombre de muraux apparus. Sans message pendant la pose.
+     */
+    private int poserMuraux(GPresets gp, extension.tools.GPresetImporter imp,
+                            extension.tools.presetconfig.PresetConfig cfg, String nom,
+                            Generateur.Source src, gearth.extensions.parsers.HPoint racine) {
+        try {
+            JSONObject o = cfg.toJsonObject();
+            o.put("furni", new JSONArray());
+            // le moteur de pose exige « wired » (getJSONObject) : vide, pas absent
+            JSONObject w = new JSONObject();
+            for (String k : new String[]{"conditions", "effects", "triggers"}) w.put(k, new JSONArray());
+            JSONObject vm = o.optJSONObject("wired") == null ? null : o.getJSONObject("wired").optJSONObject("variables_map");
+            if (vm != null) w.put("variables_map", vm);
+            o.put("wired", w);
+            o.put("bindings", new JSONArray());
+            o.remove("adsBackgrounds");
+            extension.tools.presetconfig.PresetConfig seuls = new extension.tools.presetconfig.PresetConfig(o);
+            int avant = Salle.murs().size();
+            if (!Generateur.importer(gp, imp, seuls, nom, src, racine, m -> { }, "")) return 0;
+            long fin = System.currentTimeMillis() + 120_000;
+            Salle.sommeil(800);
+            while (System.currentTimeMillis() < fin) {
+                extension.tools.GPresetImporter.BuildingImportState st = null;
+                try { st = imp.getState(); } catch (Throwable ignored) { }
+                if (st == null || st == extension.tools.GPresetImporter.BuildingImportState.NONE) break;
+                Salle.sommeil(250);
+            }
+            return Math.max(0, Salle.murs().size() - avant);
+        } catch (Throwable t) {
+            Journal.debug("muraux : " + t);
+            return 0;
+        }
     }
 
     /** Le preset a-t-il des reglages wired (que seul le moteur de pose sait poser) ? */
@@ -836,7 +1063,6 @@ public class OngletApparts {
         }
         FloorReseau.installer();
         long t0 = System.currentTimeMillis();
-        dire.accept("J'applique le floor de l'appart (" + m.largeur + "×" + m.longueur + ", hauteur des murs et épaisseurs comprises) : la salle va se recharger...");
         if (!FloorReseau.envoyerPlan(m)) { dire.accept("Collage impossible : envoi du floor au jeu impossible."); return false; }
         for (int i = 0; i < 100; i++) {          // 15 s au plus
             Salle.sommeil(150);
@@ -1127,6 +1353,11 @@ public class OngletApparts {
             int u = prixConnus.computeIfAbsent(l.getNom() + "|" + l.getType(),
                     k -> OngletValeur.prixUnitaire(gp, "mur".equals(l.getType()), t));
             if (u >= 0) l.prix = (long) u * l.getQuantite();
+            if (fd) {   // l'icone du mobi (affichage seulement)
+                boolean m = "mur".equals(l.getType());
+                l.classe = cls(gp, t, m);
+                l.revision = PrixTexte.revision(gp, m, l.classe);
+            }
         }
         boolean manque = false;
         for (Ligne l : lignes) if (l.prix < 0) { manque = true; break; }
@@ -1247,11 +1478,16 @@ public class OngletApparts {
         String type = tSols.isSelected() ? "sol" : tMurs.isSelected() ? "mur" : null;
         String qui = choixProprio.getValue();
         if (TOUT_LE_MONDE.equals(qui)) qui = null;
+        String cherche = rechercheSalle == null || rechercheSalle.getText() == null ? ""
+                : rechercheSalle.getText().trim().toLowerCase(Locale.FRANCE);
         List<Ligne> vue = new ArrayList<>();
         for (Ligne l : brutSalle)
             if ((orig == null || orig.equals(l.getOrigine()))
                     && (type == null || type.equals(l.getType()))
-                    && (qui == null || qui.equals(l.getProprietaire()))) vue.add(l);
+                    && (qui == null || qui.equals(l.getProprietaire()))
+                    && (cherche.isEmpty() || l.getNom().toLowerCase(Locale.FRANCE).contains(cherche))) vue.add(l);
+        // Le tri choisi en cliquant un intitule de colonne tient malgre le suivi en temps reel.
+        if (tableSalle.getComparator() != null) vue.sort(tableSalle.getComparator());
 
         // Mise a jour EN PLACE et seulement si quelque chose a change : le suivi
         // en temps reel ne fait donc sauter ni l'ascenseur ni la selection.
@@ -1283,7 +1519,7 @@ public class OngletApparts {
     static String cleLigne(Ligne l, boolean avecQuantite) {
         // Avec la quantite, aussi le prix : une ligne dont le prix arrive est remplacee.
         return l.getNom() + "\0" + l.getType() + "\0" + l.getOrigine() + "\0" + l.getProprietaire()
-                + (avecQuantite ? "\0" + l.getQuantite() + "\0" + l.prix : "");
+                + (avecQuantite ? "\0" + l.getQuantite() + "\0" + l.prix + "\0" + l.revision : "");
     }
 
     static boolean memesLignes(List<Ligne> a, List<Ligne> b) {
@@ -1558,31 +1794,84 @@ public class OngletApparts {
         // Colonnes courtes a largeur FIXE (leur contenu tient toujours sur une
         // ligne) ; « Mobi » et « À qui » se partagent le reste et passent a la
         // ligne si besoin — jamais en dessous d'une largeur lisible.
+        TableColumn<Ligne, Ligne> ci = new TableColumn<>("");
+        ci.setCellValueFactory(c -> new javafx.beans.property.ReadOnlyObjectWrapper<>(c.getValue()));
+        ci.setCellFactory(c -> new CelluleIcone());
+        ci.setSortable(false);
+        fixe(ci, 30);
         TableColumn<Ligne, String> cn = new TableColumn<>("Mobi");
         cn.setCellValueFactory(new PropertyValueFactory<>("nom"));
-        cn.setMinWidth(140); cn.setPrefWidth(200); cn.setMaxWidth(4000);
+        cn.setComparator(String.CASE_INSENSITIVE_ORDER);
+        cn.setMinWidth(120); cn.setPrefWidth(200); cn.setMaxWidth(4000);
         TableColumn<Ligne, Integer> cq = new TableColumn<>("Qté");
         cq.setCellValueFactory(new PropertyValueFactory<>("quantite"));
-        fixe(cq, 44);
+        cq.setStyle("-fx-alignment: CENTER-RIGHT;");
+        fixe(cq, 48);
         TableColumn<Ligne, String> ct = new TableColumn<>("Type");
         ct.setCellValueFactory(new PropertyValueFactory<>("type"));
-        fixe(ct, 52);
+        // la valeur reste « sol » / « mur » (filtre, copie) ; seul l'affichage prend la majuscule
+        ct.setCellFactory(c -> new TableCell<>() {
+            @Override protected void updateItem(String v, boolean vide) {
+                super.updateItem(v, vide);
+                setText(vide || v == null ? null : Ui.majuscule(v));
+            }
+        });
+        fixe(ct, 50);
         TableColumn<Ligne, String> co = new TableColumn<>("Origine");
         co.setCellValueFactory(new PropertyValueFactory<>("origine"));
-        fixe(co, 84);
+        fixe(co, 78);
         TableColumn<Ligne, String> cp = new TableColumn<>("À qui");
         cp.setCellValueFactory(new PropertyValueFactory<>("proprietaire"));
-        cp.setMinWidth(90); cp.setPrefWidth(110); cp.setMaxWidth(2000);
+        cp.setComparator(String.CASE_INSENSITIVE_ORDER);
+        cp.setMinWidth(80); cp.setPrefWidth(110); cp.setMaxWidth(2000);
         TableColumn<Ligne, String> cx = new TableColumn<>("Prix");
         cx.setCellValueFactory(new PropertyValueFactory<>("prix"));
-        fixe(cx, 84);
-        t.getColumns().add(cn); t.getColumns().add(cq);
+        cx.setStyle("-fx-alignment: CENTER-RIGHT;");
+        // tri sur le nombre (« 1 029 c » apres « 147 c »), les prix inconnus en dernier
+        cx.setComparator(Comparator.comparingLong(OngletApparts::valeurPrix));
+        fixe(cx, 82);
+        t.getColumns().add(ci); t.getColumns().add(cn); t.getColumns().add(cq);
         t.getColumns().add(ct); t.getColumns().add(co);
         t.getColumns().add(cp); t.getColumns().add(cx);
         Ui.retourALaLigne(cn); Ui.retourALaLigne(cp);
         t.setPrefHeight(220);
         t.setMaxSize(Double.MAX_VALUE, Double.MAX_VALUE);
         VBox.setVgrow(t, Priority.ALWAYS);
+        return t;
+    }
+
+    /** « 1 029 c » -> 1029 ; « — » (inconnu) -> -1. Logique pure. */
+    static long valeurPrix(String p) {
+        if (p == null) return -1;
+        String c = p.replaceAll("[^0-9]", "");
+        if (c.isEmpty()) return -1;
+        try { return Long.parseLong(c); } catch (NumberFormatException e) { return -1; }
+    }
+
+    /** Icone du mobi (images.habbo.com), chargee en fond, seulement pour les lignes visibles. */
+    private static final class CelluleIcone extends TableCell<Ligne, Ligne> {
+        private final javafx.scene.image.ImageView vue = new javafx.scene.image.ImageView();
+        CelluleIcone() {
+            vue.setFitWidth(PrixVignettes.TAILLE);
+            vue.setFitHeight(PrixVignettes.TAILLE);
+            vue.setPreserveRatio(true);
+            setAlignment(Pos.CENTER);
+        }
+        @Override protected void updateItem(Ligne l, boolean vide) {
+            super.updateItem(l, vide);
+            javafx.scene.image.Image i = vide || l == null ? null : PrixVignettes.icone(l.classe, l.revision);
+            vue.setImage(i);
+            setGraphic(i == null ? null : vue);
+            setText(null);
+        }
+    }
+
+    /** Bulle d'aide rapide (150 ms), qui passe a la ligne. */
+    private static Tooltip bulle(String texte) {
+        Tooltip t = new Tooltip(texte);
+        t.setShowDelay(javafx.util.Duration.millis(150));
+        t.setWrapText(true);
+        t.setMaxWidth(300);
         return t;
     }
 

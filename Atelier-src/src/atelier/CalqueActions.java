@@ -12,7 +12,9 @@ import javafx.scene.layout.VBox;
 import javafx.stage.Window;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.function.Consumer;
 import java.util.function.Function;
 
@@ -130,8 +132,10 @@ final class CalqueActions {
         fleches.setHgap(5); fleches.setVgap(5);
         fleches.add(xm, 0, 0); fleches.add(ym, 1, 0);
         fleches.add(yp, 0, 1); fleches.add(xp, 1, 1);
-        Button pivI = fleche("↺", "Un quart de tour dans le sens inverse", () -> { d[2] = (d[2] + 3) & 3; maj.run(); });
-        Button pivH = fleche("↻", "Un quart de tour dans le sens horaire", () -> { d[2] = (d[2] + 1) & 3; maj.run(); });
+        Button pivI = fleche("", "Un quart de tour dans le sens inverse", () -> { d[2] = (d[2] + 3) & 3; maj.run(); });
+        Button pivH = fleche("", "Un quart de tour dans le sens horaire", () -> { d[2] = (d[2] + 1) & 3; maj.run(); });
+        pivI.setGraphic(Icones.petite(Icones.PIVOTER_INVERSE, 15, false));
+        pivH.setGraphic(Icones.petite(Icones.PIVOTER, 15, false));
         VBox pivots = new VBox(5, pivI, pivH);
         HBox commandes = new HBox(14, fleches, pivots);
         commandes.setAlignment(Pos.CENTER_LEFT);
@@ -178,62 +182,143 @@ final class CalqueActions {
     // ============================================================== dupliquer
 
     /**
-     * Dupliquer : quoi copier (sols, murs, wired) et d'ou viennent les mobis ;
-     * la copie est posee a la meme place (dalles magiques dessous), devient un
-     * nouveau calque, puis la fenetre Deplacer s'ouvre pour elle.
+     * Dupliquer : RIEN n'est pose tout de suite. Une copie fantome (chez toi
+     * seulement) apparait juste a cote du calque ; fleches, pivots et miroir
+     * la placent sans rien envoyer au serveur ; « Poser » la pose vraiment a
+     * cette place (pose hybride : rafale, puis la dalle magique pour les seuls
+     * mobis refuses ; voir PoseHybride) et elle devient un nouveau
+     * calque. Annuler, Echap ou fermer : les fantomes partent, rien n'est pose.
+     * Permis sur un calque verrouille (c'est une copie).
      */
     void dupliquer(Groupes.Info i) {
+        copier("Dupliquer « " + i.nom + " »", i.id, null, dessus(i.id), GroupeCalcul.Transfo.NEUTRE);
+    }
+
+    /** Ctrl+V dans le meme appart : meme fenetre que Dupliquer, avec les mobis copies. */
+    void coller(GroupePressePapier.Copie c) {
+        List<Set<Integer>> ids = List.of(new LinkedHashSet<>(c.sols), new LinkedHashSet<>(c.murs));
+        copier("Coller « " + c.nom + " »", null, ids, Groupes.dessusCollage(c.calqueId), GroupeCalcul.Transfo.NEUTRE);
+    }
+
+    /** La copie va au-dessus de son calque (en haut si c'est la selection). */
+    private static String dessus(String calqueId) { return Groupes.SELECTION.equals(calqueId) ? null : calqueId; }
+
+    /**
+     * La fenetre de la copie a placer.
+     * @param calque calque d'origine (null : mobis donnes)
+     * @param ids    null : les mobis du calque
+     * @param base   pivot / miroir de depart (copie pivotee, copie miroir)
+     */
+    private void copier(String titre, String calque, List<Set<Integer>> ids, String dessus, GroupeCalcul.Transfo base) {
         if (occupe()) { refus("Une action est déjà en cours."); return; }
-        Groupes.Compte c = Groupes.compter(i.id);
-        int autres = c.sols - c.wired;
-        if (c.total() == 0) { refus("« " + i.nom + " » est vide : rien à dupliquer."); return; }
-        CalqueFenetre f = ouvrir("Dupliquer « " + i.nom + " »");
-        CheckBox sols = new CheckBox("Sols (" + autres + ")");
-        CheckBox murs = new CheckBox("Muraux (" + c.murs + ")");
-        CheckBox wired = new CheckBox("Wired, avec leur réglage (" + c.wired + ")");
-        sols.setSelected(autres > 0); sols.setDisable(autres == 0);
-        murs.setSelected(c.murs > 0); murs.setDisable(c.murs == 0);
-        wired.setSelected(c.wired > 0); wired.setDisable(c.wired == 0);
+        List<Set<Integer>> lus = ids != null ? ids : Groupes.mobis(calque);
+        int[] n = GroupeActions.sortes(lus);                      // sols, wired, muraux
+        if (n[0] + n[1] + n[2] == 0) { refus("Rien à copier : aucun de ces mobis n'est dans la salle."); return; }
+        int salle = Groupes.salle();
+        CalqueFenetre f = ouvrir(titre);
+        CheckBox sols = new CheckBox("Sols (" + n[0] + ")");
+        CheckBox murs = new CheckBox("Muraux (" + n[2] + ")");
+        CheckBox wired = new CheckBox("Wired, avec leur réglage (" + n[1] + ")");
+        sols.setSelected(n[0] > 0); sols.setDisable(n[0] == 0);
+        murs.setSelected(n[2] > 0); murs.setDisable(n[2] == 0);
+        wired.setSelected(n[1] > 0 && base.miroir == 0); wired.setDisable(n[1] == 0);
+        GroupeCalcul.Transfo[] tr = {GroupeCalcul.depart(GroupeActions.elements(lus.get(0), lus.get(1)), base, Salle::hauteurSol)};
         FenetreOptions.Source src = new FenetreOptions.Source(source);
-        f.contenu(Ui.bloc("À copier", sols, murs, wired), src.bloc());
-        f.dire("La copie est posée à la même place, chaque mobi à sa hauteur, puis tu la déplaces avec les flèches.");
+        Node blocSource = src.bloc();
+        Label quoi = new Label();
+        quoi.getStyleClass().add("calques-valeur");
+        Button poser = CalqueFenetre.bouton("Poser", true, () -> { });
         Button annuler = CalqueFenetre.bouton("Annuler", false, f::fermer);
         Button arreter = arreter();
-        Button ok = CalqueFenetre.bouton("Dupliquer", true, () -> { });
-        ok.setOnAction(e -> {
-            if (!sols.isSelected() && !murs.isSelected() && !wired.isSelected()) { f.dire("Coche au moins une sorte de mobis."); return; }
+        boolean[] pose = {false};
+
+        Button[] mir = new Button[2];
+        Runnable maj = () -> {
+            if (pose[0]) return;
+            if (Groupes.salle() != salle || (calque != null && Groupes.info(calque) == null)) { f.fermer(); return; }
             boolean bs = sols.isSelected(), bm = murs.isSelected(), bw = wired.isSelected();
+            // le collage wired ne sait pas retourner : miroir ou wired, pas les deux
+            for (Button b : mir) b.setDisable(bw);
+            wired.setDisable(n[1] == 0 || tr[0].miroir != 0);
+            quoi.setText(decalage(tr[0].dx, tr[0].dy, tr[0].quarts) + (tr[0].miroir != 0 ? ", miroir" : ""));
+            if (!bs && !bm && !bw) {
+                Groupes.annulerApercu();
+                poser.setDisable(true);
+                f.dire("Coche au moins une sorte de mobis.");
+                return;
+            }
+            Groupes.previsualiserCopie(calque, ids, tr[0], bs, bm, bw);
+            poser.setDisable(false);
+            f.dire("Les fantômes montrent la copie, chez toi seulement. Place-la, puis Poser."
+                    + (bm && n[2] > 0 && !tr[0].glissement() ? " Les muraux ne pivotent pas : ils ne seront pas copiés." : ""));
+        };
+        java.util.function.Consumer<java.util.function.UnaryOperator<GroupeCalcul.Transfo>> changer = op -> { tr[0] = op.apply(tr[0]); maj.run(); };
+        Button xm = fleche("↖", "Vers le haut à gauche", () -> changer.accept(t -> t.deplace(-1, 0)));
+        Button xp = fleche("↘", "Vers le bas à droite", () -> changer.accept(t -> t.deplace(1, 0)));
+        Button ym = fleche("↗", "Vers le haut à droite", () -> changer.accept(t -> t.deplace(0, -1)));
+        Button yp = fleche("↙", "Vers le bas à gauche", () -> changer.accept(t -> t.deplace(0, 1)));
+        GridPane fleches = new GridPane();
+        fleches.setHgap(5); fleches.setVgap(5);
+        fleches.add(xm, 0, 0); fleches.add(ym, 1, 0);
+        fleches.add(yp, 0, 1); fleches.add(xp, 1, 1);
+        Button pivI = fleche("", "Un quart de tour dans le sens inverse", () -> changer.accept(t -> t.pivote(false)));
+        Button pivH = fleche("", "Un quart de tour dans le sens horaire", () -> changer.accept(t -> t.pivote(true)));
+        pivI.setGraphic(Icones.petite(Icones.PIVOTER_INVERSE, 15, false));
+        pivH.setGraphic(Icones.petite(Icones.PIVOTER, 15, false));
+        mir[0] = fleche("↔", "Miroir gauche ↔ droite (pas avec les wired)", () -> changer.accept(GroupeCalcul.Transfo::miroirX));
+        mir[1] = fleche("↕", "Miroir haut ↕ bas (pas avec les wired)", () -> changer.accept(GroupeCalcul.Transfo::miroirY));
+        VBox pivots = new VBox(5, pivI, pivH);
+        VBox miroirs = new VBox(5, mir[0], mir[1]);
+        HBox commandes = new HBox(14, fleches, pivots, miroirs);
+        commandes.setAlignment(Pos.CENTER_LEFT);
+        for (CheckBox c : List.of(sols, murs, wired)) c.selectedProperty().addListener((o, a, b) -> maj.run());
+
+        List<Node> controles = List.of(sols, murs, wired, blocSource, xm, xp, ym, yp, pivI, pivH, mir[0], mir[1], poser, annuler);
+        poser.setOnAction(e -> {
+            boolean bs = sols.isSelected(), bm = murs.isSelected(), bw = wired.isSelected();
+            if (!bs && !bm && !bw) { f.dire("Coche au moins une sorte de mobis."); return; }
+            if (occupe()) { f.dire("Une action est déjà en cours."); return; }
             Generateur.Source so = src.valeur();
             source = so;
-            for (Node n : List.of(sols, murs, wired, ok, annuler)) n.setDisable(true);
+            pose[0] = true;
+            for (Node x : controles) x.setDisable(true);
             arreter.setVisible(true);
             f.dire("Pose de la copie…");
-            tache = Groupes.dupliquerOptions(i.id, bs, bm, bw, so, progression(f, this::apresCopie));
+            tache = Groupes.poserCopie(calque, ids, dessus, tr[0], bs, bm, bw, so, progression(f, r -> {
+                if (r.nouveauCalque == null && r.reussis == 0 && !r.arrete && f.ouverte()) {
+                    // rien n'est pose (refus, moteur occupe...) : on garde la copie fantome pour reessayer
+                    pose[0] = false;
+                    arreter.setVisible(false);
+                    for (Node x : controles) x.setDisable(false);
+                    sols.setDisable(n[0] == 0);
+                    murs.setDisable(n[2] == 0);
+                    maj.run();
+                    f.dire(r.message);
+                    return;
+                }
+                apresCopie(r);
+            }));
         });
-        f.boutons(annuler, arreter, ok);
+        Runnable garde = () -> {
+            if (!f.ouverte()) return;
+            if (Groupes.salle() != salle) { f.fermer(); return; }
+            // appart recharge : le client a jete les fantomes, on les remontre
+            if (!pose[0] && GroupeApercu.demande() == null
+                    && (sols.isSelected() || murs.isSelected() || wired.isSelected())) maj.run();
+        };
+        Groupes.ecouter(garde);
+        f.surFermeture(() -> { Groupes.retirerEcouteur(garde); Groupes.annulerApercu(); });
+        f.contenu(Ui.bloc("Place la copie", commandes, quoi), Ui.bloc("À copier", sols, murs, wired), blocSource);
+        f.boutons(annuler, arreter, poser);
+        maj.run();
         f.montrer();
     }
 
-    /** Une copie vient d'etre posee : elle devient le calque choisi, et on propose de la deplacer. */
+    /** Une copie vient d'etre posee : elle devient le calque choisi (mis en valeur). */
     private void apresCopie(Groupes.Resultat r) {
         fermer();
         if (r == null || r.nouveauCalque == null) return;
         choisir.accept(r.nouveauCalque);
-        Groupes.Info n = Groupes.info(r.nouveauCalque);
-        if (n != null) deplacer(n, true);
-    }
-
-    /** Ctrl+V dans le meme appart : copie posee sur place, puis Deplacer. */
-    void coller(GroupePressePapier.Copie c) {
-        if (occupe()) { refus("Une action est déjà en cours."); return; }
-        CalqueFenetre f = ouvrir("Coller « " + c.nom + " »");
-        f.contenu(new Label(GroupePressePapier.mobis(c.nombre()) + " à poser sur place, dans un nouveau calque."));
-        f.dire("Pose de la copie…");
-        Button arreter = arreter();
-        arreter.setVisible(true);
-        f.boutons(arreter);
-        f.montrer();
-        tache = Groupes.collerCopie(c.sols, c.murs, c.calqueId, progression(f, this::apresCopie));
     }
 
     // ================================================================ hauteur
@@ -295,7 +380,7 @@ final class CalqueActions {
 
     // ================================================================= miroir
 
-    /** Miroir : l'axe, et retourner sur place ou poser une copie a cote (nouveau calque). */
+    /** Miroir : l'axe, et retourner sur place, ou une copie a cote (fantomes, puis Poser : nouveau calque). */
     void miroir(Groupes.Info i) {
         if (occupe()) { refus("Une action est déjà en cours."); return; }
         CalqueFenetre f = ouvrir("Miroir « " + i.nom + " »");
@@ -306,7 +391,7 @@ final class CalqueActions {
         Runnable maj = () -> {
             boolean surX = gAxe.getSelectedToggle() != axeY, enCopie = gMode.getSelectedToggle() != place;
             f.dire((surX ? "Gauche ↔ droite" : "Haut ↔ bas") + ", "
-                    + (enCopie ? "copie posée juste " + (surX ? "à droite" : "en dessous") + " : elle devient un nouveau calque."
+                    + (enCopie ? "une copie fantôme apparaît à côté : tu la places, puis Poser. Elle devient un nouveau calque."
                                : "retournés sur place, dans le cadre qui les contient.")
                     + (c.murs > 0 ? " Les " + c.murs + " mobi(s) mural(aux) ne sont pas retournés." : ""));
         };
@@ -314,24 +399,23 @@ final class CalqueActions {
             g.selectedToggleProperty().addListener((o, a, b) -> { if (b == null) a.setSelected(true); else maj.run(); });
         f.contenu(Ui.bloc("Axe", new HBox(5, axeX, axeY)), Ui.bloc("Résultat", new HBox(5, copie, place)));
         Button annuler = CalqueFenetre.bouton("Annuler", false, f::fermer);
-        Button arreter = arreter();
         Button ok = CalqueFenetre.bouton("Confirmer", true, () -> { });
         ok.setOnAction(e -> {
             boolean surX = gAxe.getSelectedToggle() != axeY, enCopie = gMode.getSelectedToggle() != place;
-            if (!enCopie) {
-                String v = Groupes.refusVerrou(i.id);
-                if (v != null) { f.dire(v); return; }
+            if (enCopie) {
+                // copie : d'abord en fantomes, posee vraiment par « Poser » (dalle magique)
+                GroupeCalcul.Transfo m = surX ? GroupeCalcul.Transfo.NEUTRE.miroirX() : GroupeCalcul.Transfo.NEUTRE.miroirY();
+                copier("Copie miroir de « " + i.nom + " »", i.id, null, dessus(i.id), m);
+                return;
             }
+            String v = Groupes.refusVerrou(i.id);
+            if (v != null) { f.dire(v); return; }
             if (occupe()) { f.dire("Une action est déjà en cours."); return; }
             for (Node n : List.of(axeX, axeY, copie, place, ok, annuler)) n.setDisable(true);
             // sur place : OutilMiroir ne sait pas s'arreter, pas de bouton Arreter trompeur
-            arreter.setVisible(enCopie);
-            if (enCopie) {
-                f.dire("Pose de la copie miroir…");
-                tache = Groupes.dupliquerMiroir(i.id, surX, 1, source, progression(f, this::apresCopie));
-            } else miroirSurPlace(f, i.id, surX);
+            miroirSurPlace(f, i.id, surX);
         });
-        f.boutons(annuler, arreter, ok);
+        f.boutons(annuler, ok);
         maj.run();
         f.montrer();
     }
@@ -366,43 +450,68 @@ final class CalqueActions {
     // ================================================================ pivoter
 
     /**
-     * Pivoter : tout de suite (Cmd+Z annule), tout le calque d'un bloc (comme
-     * une voiture entiere) ; ou une copie pivotee posee a cote (nouveau calque, puis Deplacer).
-     * La fenetre reste ouverte pour tourner encore.
+     * Pivoter : tout le calque d'un bloc (comme une voiture entiere). Chaque
+     * clic tourne d'abord des FANTOMES (chez toi seulement, rien n'est
+     * envoye) ; « Appliquer » pivote vraiment (dalles du calque s'il en a,
+     * Cmd+Z annule). La copie pivotee ouvre la fenetre de copie (fantomes,
+     * puis Poser). La fenetre reste ouverte pour tourner encore.
      */
     void pivoter(Groupes.Info i) {
         if (occupe()) { refus("Une action est déjà en cours."); return; }
         CalqueFenetre f = ouvrir("Pivoter « " + i.nom + " »");
-        List<Button> tous = new ArrayList<>();
+        int[] q = {0};
+        boolean[] enCours = {false};
+        Label quoi = new Label();
+        quoi.getStyleClass().add("calques-valeur");
         Button arreter = arreter();
-        Consumer<Function<Groupes.Progression, Groupes.Tache>> lancer = act -> {
+        Button appliquer = CalqueFenetre.bouton("Appliquer", true, () -> { });
+        Runnable maj = () -> {
+            if (enCours[0]) return;
+            if (Groupes.info(i.id) == null) { f.fermer(); return; }
+            quoi.setText(decalage(0, 0, q[0]));
+            if (q[0] == 0) {
+                Groupes.annulerApercu();
+                appliquer.setDisable(true);
+                f.dire("Tourne le bloc : des fantômes montrent le résultat, chez toi seulement. Rien ne bouge avant Appliquer.");
+            } else {
+                Groupes.previsualiser(i.id, 0, 0, q[0]);
+                appliquer.setDisable(false);
+                f.dire("Les fantômes montrent le résultat. Appliquer pour pivoter vraiment (Cmd+Z annule). Les muraux ne pivotent pas.");
+            }
+        };
+        Button blocI = petit(Icones.PIVOTER_INVERSE, "Inverse", "Un quart de tour dans le sens inverse (fantômes)",
+                () -> { q[0] = (q[0] + 3) & 3; maj.run(); });
+        Button blocH = petit(Icones.PIVOTER, "Horaire", "Un quart de tour dans le sens horaire (fantômes)",
+                () -> { q[0] = (q[0] + 1) & 3; maj.run(); });
+        Button copieH = petit(Icones.PIVOTER, "Horaire", "Copie tournée d'un quart de tour horaire, à placer puis poser", () -> copieTournee(i, 1));
+        Button copieI = petit(Icones.PIVOTER_INVERSE, "Inverse", "Copie tournée d'un quart de tour inverse, à placer puis poser", () -> copieTournee(i, 3));
+        Button copieD = petit("Demi-tour", "Copie tournée d'un demi-tour, à placer puis poser", () -> copieTournee(i, 2));
+        Button fermer = CalqueFenetre.bouton("Fermer", false, f::fermer);
+        List<Button> tous = List.of(blocI, blocH, copieH, copieI, copieD, appliquer, fermer);
+        appliquer.setOnAction(e -> {
+            if (q[0] == 0) return;
+            String v = Groupes.refusVerrou(i.id);
+            if (v != null) { f.dire(v); return; }
             if (occupe()) { f.dire("Une action est déjà en cours."); return; }
+            enCours[0] = true;
             for (Button b : tous) b.setDisable(true);
             arreter.setVisible(true);
             f.dire("Pivot en cours…");
-            tache = act.apply(progression(f, r -> {
+            // meme calcul que les fantomes (GroupeCalcul.transformer, centre du cadre)
+            tache = Groupes.deplacer(i.id, 0, 0, q[0], progression(f, r -> {
+                enCours[0] = false;
                 for (Button b : tous) b.setDisable(false);
                 arreter.setVisible(false);
-                f.dire(r.ok ? "" : r.message);        // echec : la raison reste lisible
+                if (r.reussis > 0) q[0] = 0;
+                maj.run();
+                if (!r.ok) f.dire(r.message);        // echec : la raison reste lisible
             }));
-        };
-        Consumer<Function<Groupes.Progression, Groupes.Tache>> modifier = act -> {
-            String v = Groupes.refusVerrou(i.id);
-            if (v != null) { f.dire(v); return; }
-            lancer.accept(act);
-        };
-        Button blocI = petit("↺ Inverse", "Tout le calque d'un bloc, un quart de tour dans le sens inverse",
-                () -> modifier.accept(p -> Groupes.pivoter(i.id, false, true, p)));
-        Button blocH = petit("↻ Horaire", "Tout le calque d'un bloc, un quart de tour dans le sens horaire",
-                () -> modifier.accept(p -> Groupes.pivoter(i.id, true, true, p)));
-        Button copieH = petit("↻ Horaire", "Copie tournée d'un quart de tour horaire, posée à côté", () -> copieTournee(f, i, 1, tous, arreter));
-        Button copieI = petit("↺ Inverse", "Copie tournée d'un quart de tour inverse, posée à côté", () -> copieTournee(f, i, 3, tous, arreter));
-        Button copieD = petit("Demi-tour", "Copie tournée d'un demi-tour, posée à côté", () -> copieTournee(f, i, 2, tous, arreter));
-        tous.addAll(List.of(blocI, blocH, copieH, copieI, copieD));
-        f.contenu(Ui.bloc("Tout le calque d'un bloc", new HBox(5, blocI, blocH)),
+        });
+        f.contenu(Ui.bloc("Tout le calque d'un bloc", new HBox(5, blocI, blocH), quoi),
                 Ui.bloc("Copie pivotée à côté", new HBox(5, copieH, copieI, copieD)));
-        f.dire("Tout de suite, sans confirmer : Cmd+Z pour annuler.");
-        f.boutons(CalqueFenetre.bouton("Fermer", false, f::fermer), arreter);
+        f.boutons(fermer, arreter, appliquer);
+        f.surFermeture(Groupes::annulerApercu);
+        maj.run();
         f.montrer();
     }
 
@@ -479,10 +588,10 @@ final class CalqueActions {
         // changements
         Label compte = Ui.valeur("");
         compte.setWrapText(true);
-        Button an = CalqueFenetre.bouton("↶ Annuler", false, ModeCases::annuler);
-        Button re = CalqueFenetre.bouton("↷ Rétablir", false, ModeCases::retablir);
-        Button effacer = CalqueFenetre.bouton("Tout effacer", false, ModeCases::effacer);
-        Button revenir = CalqueFenetre.bouton("Remettre le floor d'avant", false,
+        Button an = CalqueFenetre.bouton(Icones.ANNULER, "", "Annuler le dernier changement", false, ModeCases::annuler);
+        Button re = CalqueFenetre.bouton(Icones.RETABLIR, "", "Rétablir", false, ModeCases::retablir);
+        Button effacer = CalqueFenetre.bouton(Icones.CORBEILLE, "Tout effacer", "Effacer tous les changements pas encore appliqués", false, ModeCases::effacer);
+        Button revenir = CalqueFenetre.bouton(Icones.PIVOTER_INVERSE, "Remettre le floor d'avant", null, false,
                 () -> Salle.tache("floor-revenir", ModeCases::revenir));
         Button appliquer = CalqueFenetre.bouton("Appliquer", true, () -> Salle.tache("floor-appliquer", ModeCases::appliquer));
 
@@ -518,10 +627,7 @@ final class CalqueActions {
                                 + "blanc pâle : case possible). Rien ne change avant « Appliquer » : "
                                 + "l'appart se recharge une seule fois.")),
                 Ui.bloc("Pinceau", pinceaux, rect),
-                Ui.bloc("Murs et sol",
-                        Ui.ligne(new Label("Hauteur des murs"), mur, Ui.discret("−1 = auto")),
-                        Ui.ligne(new Label("Épaisseur murs"), epMur),
-                        Ui.ligne(new Label("Épaisseur sol"), epSol)),
+                Ui.bloc("Murs et sol", grilleMurs(mur, epMur, epSol)),
                 Ui.bloc("Changements", compte, Ui.ligne(an, re, effacer), revenir));
         f.boutons(CalqueFenetre.bouton("Fermer", false, f::fermer), appliquer);
         f.dire("Lecture du floor…");
@@ -534,6 +640,20 @@ final class CalqueActions {
                 rafraichir.run();
             });
         });
+    }
+
+    /** Murs et sol : libelles a gauche, saisies alignees dans une meme colonne. */
+    private static GridPane grilleMurs(Spinner<Integer> mur, ComboBox<String> epMur, ComboBox<String> epSol) {
+        GridPane g = new GridPane();
+        g.setHgap(8); g.setVgap(6);
+        g.addRow(0, new Label("Hauteur des murs"), mur, Ui.discret("−1 = auto"));
+        g.addRow(1, new Label("Épaisseur des murs"), epMur);
+        g.addRow(2, new Label("Épaisseur du sol"), epSol);
+        GridPane.setColumnSpan(epMur, 2);
+        GridPane.setColumnSpan(epSol, 2);
+        for (javafx.scene.Node n : g.getChildren())
+            if (n instanceof Label) GridPane.setValignment(n, javafx.geometry.VPos.CENTER);
+        return g;
     }
 
     // ========================================================= etats d'une zone
@@ -611,12 +731,17 @@ final class CalqueActions {
         f.montrer();
     }
 
-    private void copieTournee(CalqueFenetre f, Groupes.Info i, int quarts, List<Button> tous, Button arreter) {
-        if (occupe()) { f.dire("Une action est déjà en cours."); return; }
-        for (Button b : tous) b.setDisable(true);
-        arreter.setVisible(true);
-        f.dire("Pose de la copie pivotée…");
-        tache = Groupes.dupliquerTourne(i.id, quarts, source, progression(f, this::apresCopie));
+    /** Copie tournee : la fenetre de copie, deja tournee et posee a cote (fantomes, puis Poser). */
+    private void copieTournee(Groupes.Info i, int quarts) {
+        copier("Copie pivotée de « " + i.nom + " »", i.id, null, dessus(i.id), new GroupeCalcul.Transfo(0, 0, quarts, 0));
+    }
+
+    /** Idem, avec son pictogramme devant le texte. */
+    private static Button petit(String icone, String texte, String aide, Runnable r) {
+        Button b = petit(texte, aide, r);
+        b.setGraphic(Icones.petite(icone, 15, false));
+        b.setGraphicTextGap(5);
+        return b;
     }
 
     private static Button petit(String texte, String aide, Runnable r) {

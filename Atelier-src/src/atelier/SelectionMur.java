@@ -154,7 +154,7 @@ public final class SelectionMur {
         // tout ce qui suit doit rester bon marche. Taille d'abord, sans copie.
         int taille = m.getPacket().getBytesLength();
         if (!trace && taille > 40) return;        // un clic est un petit paquet
-        HPacket p = new HPacket(m.getPacket());
+        HPacket p = m.getPacket();                  // lectures a position fixe : pas de copie
 
         // Trace AVANT tout test : c'est elle qui doit dire si les paquets
         // arrivent. La mettre apres le test inRoom() la rendait muette des que

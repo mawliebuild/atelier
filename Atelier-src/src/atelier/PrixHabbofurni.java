@@ -4,14 +4,9 @@ import org.json.JSONObject;
 
 import java.io.File;
 import java.io.IOException;
-import java.net.URI;
 import java.net.URLEncoder;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.function.Consumer;
@@ -31,7 +26,7 @@ import java.util.regex.Pattern;
  * « classe_3 », puis la classe de base (prix signale « de la base »).
  *
  * Politesse envers le site : au plus 2 requetes a la fois, ~300 ms entre deux
- * departs. Cache memoire + disque (prix.json), valable 24 h.
+ * departs. Cache memoire + disque (prix.json, ecrit via PrixFichier), valable 24 h.
  */
 public final class PrixHabbofurni {
 
@@ -49,8 +44,6 @@ public final class PrixHabbofurni {
 
     private static final long VALIDITE = 24L * 3600 * 1000;
     private static final String SITE = "https://habbofurni.xyz/furni_habbo/";
-    private static final String UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-            + "(KHTML, like Gecko) Chrome/124.0 Safari/537.36";
 
     private static final Map<String, Entree> memoire = new ConcurrentHashMap<>();
     private static final Set<String> enCours = ConcurrentHashMap.newKeySet();
@@ -63,7 +56,6 @@ public final class PrixHabbofurni {
     private static final Object rythme = new Object();
     private static long dernierDepart = 0;
     private static volatile int echecsReseau = 0;
-    private static volatile HttpClient client;
 
     // ------------------------------------------------------------ lectures
 
@@ -156,25 +148,11 @@ public final class PrixHabbofurni {
     private static Double[] page(String nom) throws IOException, InterruptedException {
         attendreTour();
         String url = SITE + URLEncoder.encode(nom, StandardCharsets.UTF_8).replace("+", "%20") + "/";
-        HttpRequest rq = HttpRequest.newBuilder(URI.create(url))
-                .timeout(Duration.ofSeconds(10))
-                .header("User-Agent", UA)
-                .header("Accept", "text/html")
-                .header("Accept-Language", "fr-FR,fr;q=0.9")
-                .GET().build();
-        HttpResponse<String> r = client().send(rq, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-        if (r.statusCode() == 404 || r.statusCode() == 410) return null;
-        if (r.statusCode() != 200) throw new IOException("réponse HTTP " + r.statusCode());
-        return new Double[]{extraire(r.body())};
-    }
-
-    private static HttpClient client() {
-        if (client == null)
-            client = HttpClient.newBuilder()
-                    .connectTimeout(Duration.ofSeconds(10))
-                    .followRedirects(HttpClient.Redirect.NORMAL)
-                    .build();
-        return client;
+        // PrixReseau : gzip, et repli sur l'autre adresse du site (son IPv4 refuse les connexions)
+        PrixReseau.Reponse r = PrixReseau.lire(url);
+        if (r.code == 404 || r.code == 410) return null;
+        if (r.code != 200) throw new IOException("réponse HTTP " + r.code);
+        return new Double[]{extraire(r.corps)};
     }
 
     private static void attendreTour() throws InterruptedException {
@@ -271,12 +249,7 @@ public final class PrixHabbofurni {
                 j.put("t", e.getValue().date);
                 o.put(e.getKey(), j);
             }
-            File f = fichier();
-            File d = f.getParentFile();
-            if (d != null) d.mkdirs();
-            File tmp = new File(f.getPath() + ".tmp");
-            Files.write(tmp.toPath(), o.toString(1).getBytes(StandardCharsets.UTF_8));
-            Files.move(tmp.toPath(), f.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            if (!PrixFichier.ecrire(fichier(), o)) System.err.println("[Atelier] cache des prix non enregistré.");
         } catch (Throwable t) {
             System.err.println("[Atelier] cache des prix non enregistré : " + t);
         }

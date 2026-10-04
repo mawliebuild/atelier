@@ -165,6 +165,7 @@ public final class BarrePremierPlan {
             Stage s = (Stage) w;
             if (estPanneau(s.getTitle())) menu(s);
             suivre(s);
+            Ui.bullesRapides(s.getScene());   // bulles a 150 ms dans toutes les fenetres de l'Atelier
             if (WIN) hwnds.remove(s);       // nouvelle fenetre native a chaque show
             // apres le show : le NSWindow existe et Glass a fini de le regler
             Platform.runLater(() -> niveau(s));

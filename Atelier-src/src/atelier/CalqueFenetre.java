@@ -72,7 +72,8 @@ final class CalqueFenetre {
         boutons.setAlignment(Pos.CENTER_RIGHT);
         boutons.managedProperty().bind(boutons.visibleProperty());
         VBox corps = new VBox(10, contenu, etat, boutons);
-        corps.setPadding(new Insets(12, 14, 14, 14));
+        // en style : la feuille (.fenetre-corps, padding 0 2 2 2) l'emporterait sur setPadding
+        corps.setStyle("-fx-padding: 12 14 14 14;");
         corps.setPrefWidth(300);
         corps.getStyleClass().add("fenetre-corps");
 
@@ -182,6 +183,15 @@ final class CalqueFenetre {
         if (principal) { b.getStyleClass().add("primaire"); b.setDefaultButton(true); }
         b.setFocusTraversable(false);
         b.setOnAction(e -> r.run());
+        return b;
+    }
+
+    /** Un bouton avec son pictogramme (Icones) devant le texte ; texte vide = icone seule (avec bulle). */
+    static Button bouton(String icone, String texte, String aide, boolean principal, Runnable r) {
+        Button b = bouton(texte == null ? "" : texte, principal, r);
+        b.setGraphic(Icones.petite(icone, 16, principal));
+        b.setGraphicTextGap(6);
+        if (aide != null) b.setTooltip(bulle(aide));
         return b;
     }
 

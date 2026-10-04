@@ -6,9 +6,6 @@ import gearth.protocol.HPacket;
 
 import org.json.JSONObject;
 
-import java.io.File;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
@@ -28,7 +25,10 @@ import java.util.concurrent.ConcurrentHashMap;
  * silence. Les reponses a NOS demandes sont bloquees, le client ne les a pas
  * demandees.
  *
- * Les prix sont gardes dans repertoire/prix.json et redemandes apres 24 h.
+ * Les prix sont gardes dans prix-marche.json (dossier de l'Atelier, voir
+ * PrixFichier) et redemandes apres 24 h. Jamais de rafale vers le serveur :
+ * au moins 0,5 s entre deux demandes, quel que soit l'appelant. Un mobi
+ * sans reponse n'est redemande qu'apres 30 min.
  */
 public final class Marche {
 
@@ -41,7 +41,12 @@ public final class Marche {
     }
 
     private static final long VALIDITE = 24 * 3600_000L;
-    private static final File FICHIER = new File("repertoire", "prix.json");
+    private static final String NOM = "prix-marche.json", ANCIEN = "prix.json";
+    static final long ECART_MS = 500, REESSAI_MS = 30 * 60_000L;
+    private static final Object rythme = new Object();
+    private static long derniereDemande = 0;
+    /** Cle -> moment de la derniere demande restee sans reponse. */
+    private static final Map<String, Long> sansReponse = new ConcurrentHashMap<>();
     private static final Map<String, Prix> prix = new ConcurrentHashMap<>();
     private static final Map<String, Object> attente = new ConcurrentHashMap<>();
     private static volatile boolean installe = false, charge = false;
@@ -57,7 +62,25 @@ public final class Marche {
 
     public static boolean aJour(boolean mur, int typeId) {
         Prix p = prix(mur, typeId);
-        return p != null && System.currentTimeMillis() - p.le < VALIDITE;
+        return p != null && !PrixFichier.perime(p.le, VALIDITE, System.currentTimeMillis());
+    }
+
+    /** Reste sans reponse il y a moins de 30 min : inutile de redemander. */
+    static boolean sansReponseRecente(boolean mur, int typeId) {
+        Long t = sansReponse.get(cle(mur, typeId));
+        return t != null && System.currentTimeMillis() - t < REESSAI_MS;
+    }
+
+    /** Attend son tour : au moins ECART_MS depuis la demande precedente. */
+    private static void attendreTour() throws InterruptedException {
+        long attente;
+        synchronized (rythme) {
+            long t = System.currentTimeMillis();
+            long depart = Math.max(t, derniereDemande + ECART_MS);
+            derniereDemande = depart;
+            attente = depart - t;
+        }
+        if (attente > 0) Thread.sleep(attente);
     }
 
     /**
@@ -66,7 +89,10 @@ public final class Marche {
      */
     public static Prix demander(GPresets gp, boolean mur, int typeId) throws InterruptedException {
         installer(gp);
+        chargerUneFois();
+        attendreTour();
         String k = cle(mur, typeId);
+        Prix avant = prix.get(k);
         Object signal = new Object();
         attente.put(k, signal);
         try {
@@ -83,7 +109,10 @@ public final class Marche {
         } finally {
             attente.remove(k);
         }
-        return prix.get(k);
+        Prix p = prix.get(k);
+        if (p == null || p == avant) { sansReponse.put(k, System.currentTimeMillis()); return null; }
+        sansReponse.remove(k);
+        return p;
     }
 
     private static synchronized void installer(GPresets gp) {
@@ -123,12 +152,13 @@ public final class Marche {
     private static synchronized void chargerUneFois() {
         if (charge) return;
         charge = true;
-        if (!FICHIER.exists()) return;
+        JSONObject o = PrixFichier.lire(NOM, ANCIEN);
+        if (o == null) return;
         try {
-            JSONObject o = new JSONObject(new String(Files.readAllBytes(FICHIER.toPath()), StandardCharsets.UTF_8));
             for (String k : o.keySet()) {
-                JSONObject j = o.getJSONObject(k);
-                prix.put(k, new Prix(j.optInt("moyen"), j.optInt("offres"), j.optInt("vendus"), j.optLong("le")));
+                JSONObject j = o.optJSONObject(k);
+                if (j == null || !k.matches("[12]:\\d+")) continue;
+                prix.putIfAbsent(k, new Prix(j.optInt("moyen"), j.optInt("offres"), j.optInt("vendus"), j.optLong("le")));
             }
         } catch (Throwable t) {
             Journal.debug("prix : fichier illisible, il sera refait : " + t);
@@ -136,6 +166,7 @@ public final class Marche {
     }
 
     public static synchronized void sauver() {
+        chargerUneFois();      // ne jamais ecraser le fichier par une memoire pas encore lue
         try {
             JSONObject o = new JSONObject();
             for (Map.Entry<String, Prix> e : new TreeMap<>(prix).entrySet()) {
@@ -146,13 +177,10 @@ public final class Marche {
                 j.put("le", e.getValue().le);
                 o.put(e.getKey(), j);
             }
-            File d = FICHIER.getParentFile();
-            if (!d.exists()) d.mkdirs();
-            File tmp = new File(d, "prix.json.tmp");
-            Files.write(tmp.toPath(), o.toString(1).getBytes(StandardCharsets.UTF_8));
-            Files.move(tmp.toPath(), FICHIER.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            if (!PrixFichier.ecrire(NOM, o)) System.err.println("[Atelier] prix : sauvegarde impossible.");
         } catch (Throwable t) {
             System.err.println("[Atelier] prix : sauvegarde impossible : " + t);
         }
     }
 }
+

@@ -1882,3 +1882,158 @@ VBox > .split-menu-button.last > .arrow-button {
 /* Panneau Calques : « Tout réafficher » et le total, a la taille du reste */
 .label.calques-total { -fx-font-size: 11px; -fx-font-weight: normal; }
 .button.calques-tout, .calques-familles .button.calques-tout { -fx-font-size: 11px; -fx-padding: 4 10 4 10; }
+
+/* --- main au survol de tout ce qui se clique (boutons, cases, menus, onglets...) --- */
+.button, .toggle-button, .radio-button, .check-box, .hyperlink, .menu-button, .split-menu-button,
+.combo-box, .choice-box, .color-picker, .date-picker .arrow-button, .spinner .increment-arrow-button,
+.spinner .decrement-arrow-button, .tab, .slider .thumb, .slider .track, .scroll-bar .thumb,
+.scroll-bar .increment-button, .scroll-bar .decrement-button, .menu-item, .list-cell:filled,
+.table-row-cell:filled, .tree-cell:filled, .color-palette .color-square {
+    -fx-cursor: hand;
+}
+.button:disabled, .toggle-button:disabled, .radio-button:disabled, .check-box:disabled,
+.combo-box:disabled, .color-picker:disabled, .hyperlink:disabled {
+    -fx-cursor: default;
+}
+
+/* Monster Plants : pastilles d etat */
+.plante-a-recolter { -fx-fill: #3E86AC; -fx-background-color: #3E86AC; }
+.plante-pousse     { -fx-fill: #9CCB7E; -fx-background-color: #9CCB7E; }
+
+/* ==========================================================================
+   Cadre commun des fenetres (revue UI) : bulles, focus, etats desactives,
+   champs, tableaux, barres de progression, boutons a pictogramme. Tout est
+   prefixe par .fenetre (sauf les bulles et les listes deroulantes, qui
+   s'ouvrent dans leur propre fenetre) : les autres panneaux ne bougent pas.
+   ========================================================================== */
+
+/* Couleur de focus de la palette (anneaux des cases, listes, curseurs). */
+.fenetre { -fx-focus-color: #3E86AC; -fx-faint-focus-color: #3E86AC22; -fx-accent: #3E86AC; }
+
+/* Intitules et lignes d'etat un peu plus contrastes. */
+.fenetre .intitule { -fx-text-fill: #4F4B42; }
+.fenetre .etat-ligne { -fx-text-fill: #5A574F; }
+
+/* --- bulles : celles du jeu (filet noir, fond blanc), rapides, lisibles --- */
+.tooltip {
+    -fx-background-color: #000000, #FFFFFF;
+    -fx-background-insets: 0, 1;
+    -fx-background-radius: 5, 4;
+    -fx-border-width: 0;
+    -fx-text-fill: #1D1C19;
+    -fx-font-family: "Ubuntu", "Helvetica Neue", "Arial";
+    -fx-font-size: 12px;
+    -fx-padding: 6 9 6 9;
+    -fx-effect: dropshadow(one-pass-box, rgba(0,0,0,0.25), 0, 0, 0, 2);
+    -fx-show-delay: 150ms;
+}
+.tooltip.info-bulle { -fx-show-delay: 80ms; -fx-hide-delay: 80ms; }
+
+/* --- etats desactives : grises mais encore lisibles --- */
+.fenetre .label:disabled, .fenetre .check-box:disabled, .fenetre .radio-button:disabled { -fx-opacity: 0.6; }
+.fenetre .button:disabled, .fenetre .toggle-button:disabled, .fenetre .text-field:disabled,
+.fenetre .combo-box:disabled, .fenetre .choice-box:disabled, .fenetre .spinner:disabled,
+.fenetre .slider:disabled, .fenetre .color-picker:disabled, .fenetre .table-view:disabled,
+.fenetre .list-view:disabled, .fenetre .progress-bar:disabled { -fx-opacity: 0.5; }
+
+/* --- focus clavier : un filet bleu, pas d'anneau flou --- */
+.fenetre .button:focused, .fenetre .toggle-button:focused {
+    -fx-background-color: #3E86AC, linear-gradient(to bottom, #FFFFFF, #E2DFD4);
+}
+.fenetre .button:focused:hover, .fenetre .toggle-button:focused:hover {
+    -fx-background-color: #3E86AC, linear-gradient(to bottom, #FFFFFF, #EDEBE3);
+}
+.fenetre .button.primaire:focused { -fx-background-color: #1B4D60, linear-gradient(to bottom, #5CBA5F, #3B9A3F); }
+.fenetre .button.primaire:focused:hover { -fx-background-color: #1B4D60, linear-gradient(to bottom, #6CC66F, #45A649); }
+.fenetre .toggle-button:selected:focused { -fx-background-color: #1B4D60, #3E86AC; }
+.fenetre .choice-box:focused, .fenetre .color-picker:focused { -fx-background-color: #3E86AC, #FFFFFF; }
+.fenetre .table-view:focused, .fenetre .list-view:focused { -fx-background-color: #3E86AC, #FFFFFF; }
+
+/* --- boutons : pictogramme + texte, ou pictogramme seul --- */
+.icone-bouton {
+    -fx-fill: transparent; -fx-stroke: #5A564C; -fx-stroke-width: 2;
+    -fx-stroke-line-cap: round; -fx-stroke-line-join: round;
+}
+.button.primaire .icone-bouton, .toggle-button:selected .icone-bouton { -fx-stroke: #FFFFFF; }
+.fenetre .button.avec-icone { -fx-padding: 3 10 3 8; }
+.fenetre .button.bouton-icone { -fx-padding: 3 5 3 5; -fx-min-width: 26; }
+
+/* --- champs --- */
+.fenetre .text-field, .fenetre .text-area { -fx-prompt-text-fill: #8A867B; }
+.fenetre .text-field { -fx-padding: 4 7 4 7; }
+.fenetre .text-area {
+    -fx-background-color: #9E9A8D, #FFFFFF;
+    -fx-background-insets: 0, 1;
+    -fx-background-radius: 3, 2;
+    -fx-border-width: 0;
+}
+.fenetre .text-area:focused { -fx-background-color: #3E86AC, #FFFFFF; }
+.fenetre .text-area .content { -fx-background-color: #FFFFFF; }
+.fenetre .choice-box {
+    -fx-background-color: #9E9A8D, #FFFFFF;
+    -fx-background-insets: 0, 1;
+    -fx-background-radius: 3, 2;
+    -fx-border-width: 0;
+}
+.fenetre .hyperlink { -fx-text-fill: #2B6688; -fx-border-color: transparent; }
+.fenetre .hyperlink:hover { -fx-underline: true; }
+
+/* --- listes deroulantes (fenetre a part, d'ou l'absence de .fenetre) --- */
+.combo-box-popup > .list-view {
+    -fx-background-color: #000000, #FFFFFF;
+    -fx-background-insets: 0, 1;
+    -fx-background-radius: 3, 2;
+    -fx-padding: 1;
+}
+.combo-box-popup > .list-view > .virtual-flow > .clipped-container > .sheet > .list-cell {
+    -fx-background-color: #FFFFFF; -fx-text-fill: #1D1C19; -fx-padding: 4 8 4 8;
+    -fx-font-family: "Ubuntu", "Helvetica Neue", "Arial"; -fx-font-size: 12px;
+}
+.combo-box-popup > .list-view > .virtual-flow > .clipped-container > .sheet > .list-cell:filled:hover {
+    -fx-background-color: #F4F2EA;
+}
+.combo-box-popup > .list-view > .virtual-flow > .clipped-container > .sheet > .list-cell:filled:selected {
+    -fx-background-color: #DCEBF3; -fx-text-fill: #1D1C19;
+}
+
+/* --- tableaux et listes : en-tetes lisibles, selection bleu clair, texte sombre --- */
+.fenetre .table-view .placeholder .label, .fenetre .list-view .placeholder .label {
+    -fx-text-fill: #6F6B60; -fx-font-style: italic; -fx-wrap-text: true; -fx-text-alignment: center;
+}
+.fenetre .table-row-cell:selected .table-cell { -fx-text-fill: #1D1C19; }
+.table-row-cell:selected .texte-cellule, .fenetre .table-row-cell:selected .texte-cellule { -fx-fill: #1D1C19; }
+.fenetre .list-view {
+    -fx-background-color: #9E9A8D, #FFFFFF;
+    -fx-background-insets: 0, 1;
+    -fx-background-radius: 4, 3;
+    -fx-padding: 1;
+    -fx-border-width: 0;
+}
+.fenetre .list-view .list-cell { -fx-background-color: #FFFFFF; -fx-text-fill: #1D1C19; -fx-padding: 4 6 4 6; }
+.fenetre .list-view .list-cell:filled:hover { -fx-background-color: #F4F2EA; }
+.fenetre .list-view .list-cell:filled:selected { -fx-background-color: #DCEBF3; -fx-text-fill: #1D1C19; }
+
+/* --- barres de progression : piste blanche a filet, barre bleu Habbo --- */
+.fenetre .progress-bar > .track {
+    -fx-background-color: #9E9A8D, #FFFFFF;
+    -fx-background-insets: 0, 1;
+    -fx-background-radius: 4, 3;
+    -fx-effect: null;
+    -fx-pref-height: 10;
+}
+.fenetre .progress-bar > .bar {
+    -fx-background-color: #2B6688, #3E86AC;
+    -fx-background-insets: 1, 2;
+    -fx-background-radius: 3, 2;
+    -fx-padding: 3;
+}
+.fenetre .progress-bar { -fx-indeterminate-bar-length: 50; }
+
+/* --- curseurs et ascenseur : la prise se voit au survol --- */
+.fenetre .slider .thumb:hover { -fx-background-color: #2B6688, #4E97BE; }
+.fenetre .scroll-bar .thumb:hover, .fenetre .scroll-bar .thumb:pressed { -fx-background-color: #8F8B7F; }
+.fenetre .separator .line { -fx-border-color: #C9C5B8; }
+
+/* --- poignee de largeur, sur le bord gauche de la fenetre --- */
+.fenetre-poignee { -fx-background-color: transparent; }
+.fenetre-poignee:hover { -fx-background-color: rgba(62,134,172,0.45); -fx-background-radius: 3; }

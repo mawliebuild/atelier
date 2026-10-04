@@ -39,12 +39,14 @@ public final class EcartsDefaut {
 
     /** D'ou vient une valeur. */
     public enum Origine {
-        ENREGISTRE("enregistré par toi"),
-        DEFAUT("livré avec le programme"),
-        MESURE("mesuré sur les copies déjà posées"),
-        BASE("valeur de base");
+        ENREGISTRE("enregistré par toi", "enregistré"),
+        DEFAUT("livré avec le programme", "livré"),
+        MESURE("mesuré sur les copies déjà posées", "mesuré"),
+        BASE("valeur de base", "de base");
         public final String texte;
-        Origine(String t) { texte = t; }
+        /** Pour une pastille : un mot. */
+        public final String court;
+        Origine(String t, String c) { texte = t; court = c; }
     }
 
     /** Les ecarts d'un mobi. */
@@ -222,6 +224,54 @@ public final class EcartsDefaut {
         for (Ecart d : defauts) if (!pris.contains(d)) r.add(new Ligne(d.copie(), null, d));
         r.sort(Comparator.comparing(l -> cleTri(l.effectif)));
         return r;
+    }
+
+    // ------------------------------------------------------------ textes
+
+    /** « → 2 pans · ↑ 32 px » ; un axe inconnu (<= 0) est omis. */
+    public static String court(int droite, int haut) {
+        List<String> p = new ArrayList<>();
+        if (droite > 0) p.add("→ " + droite + (droite > 1 ? " pans" : " pan"));
+        if (haut > 0) p.add("↑ " + haut + " px");
+        return p.isEmpty() ? "Aucun écart" : String.join(" · ", p);
+    }
+
+    /** « → 2 pans côte à côte · ↑ 32 px en hauteur » (bulle). */
+    public static String enClair(int droite, int haut) {
+        List<String> p = new ArrayList<>();
+        if (droite > 0) p.add("→ " + droite + (droite > 1 ? " pans" : " pan") + " côte à côte");
+        if (haut > 0) p.add("↑ " + haut + " px en hauteur");
+        return p.isEmpty() ? "Aucun écart" : String.join(" · ", p);
+    }
+
+    /** La pastille d'une ligne de la liste : « enregistré » ou « livré ». */
+    public static String pastille(Ligne l) {
+        return l.enregistre != null ? Origine.ENREGISTRE.court : Origine.DEFAUT.court;
+    }
+
+    /** D'ou vient l'ecart d'une ligne, en une phrase (bulle de la pastille). */
+    public static String detail(Ligne l) {
+        if (l.enregistre == null) return "Livré avec le programme.";
+        if (l.defaut == null) return "Enregistré par toi.";
+        boolean d = l.effectif.droite <= 0 || l.origine(true) == Origine.ENREGISTRE;
+        boolean h = l.effectif.haut <= 0 || l.origine(false) == Origine.ENREGISTRE;
+        if (d && h) return "Enregistré par toi. Il remplace celui livré avec le programme.";
+        return "En partie enregistré par toi. Le reste est livré avec le programme.";
+    }
+
+    /**
+     * Pastille du bandeau : un mot si tous les axes ont la meme origine
+     * (« enregistré »), sinon axe par axe (« → enregistré · ↑ livré »).
+     * {@code droite[i]} : l'axe de {@code origines[i]}.
+     */
+    public static String pastille(boolean[] droite, Origine[] origines) {
+        if (origines == null || origines.length == 0) return "";
+        boolean memes = true;
+        for (Origine o : origines) if (o != origines[0]) memes = false;
+        if (memes) return origines[0].court;
+        List<String> p = new ArrayList<>();
+        for (int i = 0; i < origines.length; i++) p.add((droite[i] ? "→ " : "↑ ") + origines[i].court);
+        return String.join(" · ", p);
     }
 
     // ------------------------------------------------------------ mesure

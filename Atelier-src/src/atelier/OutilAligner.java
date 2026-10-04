@@ -28,8 +28,8 @@ import java.util.List;
  *            a gauche, les colonnes vont a droite et les rangees vers le haut,
  *            avec un espacement pour chacun.
  * L'ecart de chaque mobi est retenu (Ecarts, EcartsDefaut) : sous les
- * champs, EcartsBandeau dit d'ou il vient et permet de l'enregistrer ; le
- * volet « Écarts enregistrés » (EcartsVolet) en fait la liste.
+ * champs, EcartsBandeau montre le mobi et l'origine de son ecart (actions
+ * dans son ⚙) ; le volet « Écarts » (EcartsVolet) en fait la liste en cartes.
  */
 public class OutilAligner {
 
@@ -82,13 +82,19 @@ public class OutilAligner {
         HBox ecartLigne = champ("Écart", espacement, null);
         ecartLigne.getChildren().add(unite);
 
+        // Sens : deux colonnes (droite / gauche, puis haut / bas) au lieu de quatre lignes
+        GridPane sens = new GridPane();
+        sens.setHgap(14); sens.setVgap(6);
+        sens.addRow(0, dDroite, dGauche);
+        sens.addRow(1, dHaut, dBas);
         reglages = new VBox(10,
-                champ("Nombre", nombre, "copies"),
-                ecartLigne,
-                bandeauLigne,
-                Ui.aide("Écart : en pans de mur vers la droite ou la gauche, en pixels vers le haut ou le bas."),
-                Ui.bloc("Sens", new VBox(6, dDroite, dGauche, dHaut, dBas)),
-                Ui.bloc("Source", new VBox(6, sInv, sBc, sInvBc)));
+                Ui.bloc("Copies",
+                        champ("Nombre", nombre, "copies"),
+                        ecartLigne,
+                        bandeauLigne,
+                        Ui.aide("Écart : en pans de mur vers la droite ou la gauche, en pixels vers le haut ou le bas.")),
+                Ui.bloc("Sens", sens),
+                Ui.bloc("Source", Ui.ligne(sInv, sBc, sInvBc)));
 
         VBox v = new VBox(12, reglages, ajouter, etat);   // le mur choisi est dit dans les prerequis
         v.setFillWidth(true);
@@ -145,7 +151,7 @@ public class OutilAligner {
                                 + "de copies sur la ligne, et l'écart en pans de mur. Vers le haut : "
                                 + "combien de rangées, et l'écart en pixels. 5 × 3 = 15 mobis, dont "
                                 + "celui déjà posé.")),
-                Ui.bloc("Source", new VBox(6, gInv, gBc, gInvBc)));
+                Ui.bloc("Source", Ui.ligne(gInv, gBc, gInvBc)));
 
         VBox v = new VBox(12, reglagesGrille, ajouterGrille, etatGrille);
         v.setFillWidth(true);

@@ -914,7 +914,7 @@ def rendu_grille():
     DISP = 'getlex QName(%s,"_display")' % RSC
     u = list(pcode_origine("com.sulake.room.renderer.§_-b2M§", "render"))
     im, il = u.index("maxstack 7"), u.index("localcount 11")
-    u[im] = "maxstack 16"; u[il] = "localcount 26"
+    u[im] = "maxstack 16"; u[il] = "localcount 28"
     c = ['getlex QName(%s,"_-Tr")' % RSC, 'pushstring "atelier_grille"',
          'callproperty QName(%s,"getChildByName"), 1' % PUB, 'coerce_a', 'setlocal 11',
          'getlocal 11', 'iffalse atl_g_fin']
@@ -951,10 +951,10 @@ def rendu_grille():
           'callproperty QName(%s,"split"), 1' % AS3, 'coerce_a', 'setlocal 25',
           'getlocal 25', 'pushbyte 0', MULTI_L, 'coerce_s', 'pushstring "/"',
           'callproperty QName(%s,"split"), 1' % AS3, 'coerce_a', 'setlocal 13',
-          'pushnull', 'setlocal 23',
+          'pushnull', 'setlocal 26',
           'getlocal 25', LENGTH, 'pushbyte 1', 'ifle atl_gm_sans',
           'getlocal 25', 'pushbyte 1', MULTI_L, 'coerce_s', 'pushstring "/"',
-          'callproperty QName(%s,"split"), 1' % AS3, 'coerce_a', 'setlocal 23',
+          'callproperty QName(%s,"split"), 1' % AS3, 'coerce_a', 'setlocal 26',
           'atl_gm_sans:',
           'pushbyte 0', 'setlocal 14',
           'atl_gy:', 'label',
@@ -978,13 +978,13 @@ def rendu_grille():
           'getlocal 20', 'getlocal 14', 'pushtrue', 'setproperty ' + MULTI_L[len('getproperty '):]]
     c += numero(14, 'getlocal 16', 'convert_d', 'pushdouble 1.0', 'subtract', 'getlocal 14', 'convert_d', 'gy')
     c += ['atl_gn_f:']
-    c += ['getlocal 23', 'iffalse atl_gm_fin',
-          'getlocal 23', 'getlocal 14', MULTI_L, 'coerce_s', 'getlocal 16',
-          'callproperty QName(%s,"charAt"), 1' % AS3, 'coerce_s', 'setlocal 24']
+    c += ['getlocal 26', 'iffalse atl_gm_fin',
+          'getlocal 26', 'getlocal 14', MULTI_L, 'coerce_s', 'getlocal 16',
+          'callproperty QName(%s,"charAt"), 1' % AS3, 'coerce_s', 'setlocal 27']
     for lettre, couleur, alpha, suite in (("a", 0x2ECC40, 0.6, "atl_gm_r"), ("r", 0xE74C3C, 0.65, "atl_gm_h"),
                                           ("h", 0x3498DB, 0.55, "atl_gm_p"), ("p", 0xF39C12, 0.75, "atl_gm_g"),
                                           ("g", 0xFFFFFF, 0.3, "atl_gm_fin")):
-        c += ['getlocal 24', 'pushstring "%s"' % lettre, 'ifne ' + suite,
+        c += ['getlocal 27', 'pushstring "%s"' % lettre, 'ifne ' + suite,
               'getlocal 12', 'pushint %d' % couleur, 'pushdouble %s' % alpha,
               'callpropvoid QName(%s,"beginFill"), 2' % PUB, 'jump atl_gm_fin', suite + ':']
     c = c[:-1]          # le dernier « suite » est atl_gm_fin lui-meme
@@ -1008,6 +1008,48 @@ def rendu_grille():
     chemin = os.path.join(TRAVAIL, "render.pcode")
     open(chemin, "w", encoding="utf-8").write("\n".join(u))
     return chemin
+
+
+def style_salle(CEH):
+    """
+    « atelier:style=<contour|remplissage|les2>;<RRGGBB>;<epaisseur 1-10> » :
+    style de mise en valeur choisi dans l'Atelier, range sur la grille
+    (atl_sm mode 1/2/3, atl_sc couleur, atl_se epaisseur). Lu a chaque
+    « atelier:surligner= ». Registres : 11 conteneur, 12 grille, 13 morceaux.
+    """
+    PUB = 'PackageNamespace("")'
+    MC = 'QName(PackageNamespace("flash.display"),"MovieClip")'
+    def pose(nom, val):
+        return ['getlocal 12', val, 'setproperty QName(%s,"%s")' % (PUB, nom)]
+    PI = 'QName(PackageNamespace(""),"parseInt")'
+    return (['getlocal 6', 'pushstring "atelier:style="', INDEXOF, 'pushbyte 0', 'ifne atl_pas_style']
+        + trouver_canevas(CEH, 'st')
+        + ['getlocal 10', 'getproperty QName(%s,"displayObject")' % PUB, 'coerce_a', 'setlocal 11',
+           'getlocal 11', 'pushstring "atelier_grille"', 'callproperty QName(%s,"getChildByName"), 1' % PUB,
+           'coerce_a', 'setlocal 12',
+           'getlocal 12', 'iftrue atl_st_a',
+           'findpropstrict ' + MC, 'constructprop %s, 0' % MC, 'coerce_a', 'setlocal 12']
+        + pose('name', 'pushstring "atelier_grille"') + pose('mouseEnabled', 'pushfalse')
+        + pose('mouseChildren', 'pushfalse') + pose('alpha', 'pushdouble 0.55')
+        + pose('atl_d', 'pushstring ""') + pose('atl_u', 'pushbyte -1')
+        + ['getlocal 11', 'getlocal 12', 'callpropvoid QName(%s,"addChild"), 1' % PUB,
+           'atl_st_a:',
+           'getlocal 6', 'pushbyte 14', 'callproperty QName(%s,"substr"), 1' % AS3,
+           'pushstring ";"', 'callproperty QName(%s,"split"), 1' % AS3, 'coerce_a', 'setlocal 13',
+           'getlocal 13', LENGTH, 'pushbyte 3', 'iflt atl_st_fin',
+           # mode : contour 1, remplissage 2, les2 3
+           'getlocal 12', 'pushbyte 1', 'setproperty QName(%s,"atl_sm")' % PUB,
+           'getlocal 13', 'pushbyte 0', MULTI_L, 'coerce_s', 'pushstring "remplissage"', 'ifne atl_st_m3',
+           'getlocal 12', 'pushbyte 2', 'setproperty QName(%s,"atl_sm")' % PUB,
+           'atl_st_m3:',
+           'getlocal 13', 'pushbyte 0', MULTI_L, 'coerce_s', 'pushstring "les2"', 'ifne atl_st_c',
+           'getlocal 12', 'pushbyte 3', 'setproperty QName(%s,"atl_sm")' % PUB,
+           'atl_st_c:',
+           'getlocal 12', 'findpropstrict ' + PI, 'getlocal 13', 'pushbyte 1', MULTI_L, 'pushbyte 16',
+           'callproperty %s, 2' % PI, 'convert_i', 'setproperty QName(%s,"atl_sc")' % PUB,
+           'getlocal 12', 'findpropstrict ' + PI, 'getlocal 13', 'pushbyte 2', MULTI_L, 'pushbyte 10',
+           'callproperty %s, 2' % PI, 'convert_i', 'setproperty QName(%s,"atl_se")' % PUB,
+           'atl_st_fin:', 'returnvoid', 'atl_pas_style:'])
 
 
 def cases_salle(CEH):
@@ -1253,7 +1295,7 @@ def chat_salle():
     FILTRES = 'setproperty QName(PackageNamespace(""),"filters")'
     c = list(pcode_origine("com.sulake.habbo.freeflowchat.data.ChatEventHandler", "onRoomChat"))
     im, il = c.index("maxstack 6"), c.index("localcount 6")
-    c[im] = "maxstack 40"; c[il] = "localcount 13"
+    c[im] = "maxstack 40"; c[il] = "localcount 16"
     p = ['getlocal1', 'getproperty QName(PackageNamespace(""),"text")', 'coerce_s', 'setlocal 6']
     p += capture_salle(CEH)
     p += annuler_deplacement(CEH)
@@ -1261,11 +1303,33 @@ def chat_salle():
         p += grille_salle(CEH)
         p += zone_salle(CEH)
         p += cases_salle(CEH)
+        p += style_salle(CEH)
         p += dalles_salle(CEH)
     p += ['getlocal 6', 'pushstring "atelier:surligner="', INDEXOF, 'pushbyte 0', 'ifne atl_normal',
          'getlex QName(%s,"_-017")' % CEH, 'getproperty QName(PackageNamespace(""),"roomEngine")', 'coerce_a', 'setlocal 7',
          'getlocal1', 'getproperty QName(PackageNamespace(""),"session")',
-         'getproperty QName(Namespace("com.sulake.habbo.session:IRoomSession"),"roomId")', 'convert_i', 'setlocal 8',
+         'getproperty QName(Namespace("com.sulake.habbo.session:IRoomSession"),"roomId")', 'convert_i', 'setlocal 8']
+    # 0. le style choisi dans l'Atelier (atelier:style=, range sur la grille) :
+    #    13 couleur, 14 epaisseur, 15 mode ; sinon le jaune d'avant, contour de 3 px
+    p += ['pushint %d' % HALO, 'setlocal 13', 'pushbyte 3', 'setlocal 14', 'pushbyte 1', 'setlocal 15',
+          'pushbyte 0', 'setlocal 9',
+          'atl_sy_cv:', 'label',
+          'getlocal 9', 'pushbyte 20', 'ifge atl_sy_fin',
+          'getlocal 7', 'getlocal 8', 'getlocal 9',
+          'callproperty QName(PackageNamespace(""),"getRoomCanvas"), 2', 'coerce_a', 'setlocal 10',
+          'getlocal 10', 'iftrue atl_sy_ok',
+          'inclocal_i 9', 'jump atl_sy_cv',
+          'atl_sy_ok:',
+          'getlocal 10', 'getproperty QName(PackageNamespace(""),"displayObject")', 'coerce_a',
+          'pushstring "atelier_grille"', 'callproperty QName(PackageNamespace(""),"getChildByName"), 1',
+          'coerce_a', 'setlocal 12',
+          'getlocal 12', 'iffalse atl_sy_fin',
+          'getlocal 12', 'getproperty QName(PackageNamespace(""),"atl_sm")', 'iffalse atl_sy_fin',
+          'getlocal 12', 'getproperty QName(PackageNamespace(""),"atl_sc")', 'convert_i', 'setlocal 13',
+          'getlocal 12', 'getproperty QName(PackageNamespace(""),"atl_se")', 'convert_i', 'setlocal 14',
+          'getlocal 12', 'getproperty QName(PackageNamespace(""),"atl_sm")', 'convert_i', 'setlocal 15',
+          'atl_sy_fin:']
+    p += [
          # 1. eteindre : tous les mobis de sol (10) puis muraux (20)
          'pushbyte 10', 'setlocal 9',
          'atl_cat:', 'label',
@@ -1315,11 +1379,17 @@ def chat_salle():
          # halo jaune seul ; FurnitureVisualization.updateSpriteFilters le reconnait
          # a sa couleur et ne le pose que sur la couche de base (pas de trait
          # au milieu du mobi, aux jonctions des couches).
+         # marqueur du style : [GlowFilter HALO (blurX = epaisseur, blurY = mode),
+         # GlowFilter de la couleur choisie] ; le dessin est fait par contour()
          'findpropstrict ' + GLOW,
          'pushint %d' % HALO,
+         'pushbyte 1', 'getlocal 14', 'convert_d', 'getlocal 15', 'convert_d', 'pushbyte 3', 'pushbyte 2', 'pushfalse', 'pushfalse',
+         'constructprop %s, 8' % GLOW,
+         'findpropstrict ' + GLOW,
+         'getlocal 13',
          'pushbyte 1', 'pushbyte 8', 'pushbyte 8', 'pushbyte 3', 'pushbyte 2', 'pushfalse', 'pushfalse',
          'constructprop %s, 8' % GLOW,
-         'newarray 1', FILTRES,
+         'newarray 2', FILTRES,
          'jump atl_tok',
          'atl_fin:', 'returnvoid',
          'atl_normal:']
@@ -1347,7 +1417,7 @@ def filtres_couche():
     u[im] = "maxstack 12"; u[il] = "localcount 8"
     p = ['getlex QName(%s,"_filters")' % FVN, 'coerce_a', 'setlocal 6',
          'getlocal 6', 'iffalse atl_v_fin',
-         'getlocal 6', LENGTH, 'pushbyte 1', 'ifne atl_v_fin',
+         'getlocal 6', LENGTH, 'pushbyte 1', 'iflt atl_v_fin',
          'getlocal 6', 'pushbyte 0', MULTI_L, 'coerce_a', 'setlocal 7',
          'getlocal 7', 'getlex ' + GLOWQ, 'istypelate', 'iffalse atl_v_fin',
          'getlocal 7', 'getproperty QName(PackageNamespace(""),"color")', 'pushint %d' % HALO, 'ifne atl_v_fin',
@@ -1508,13 +1578,25 @@ def contour():
     OMBRE = 'getlex QName(%s,"_-7i")' % FVR
     u = list(pcode_origine("com.sulake.habbo.room.object.visualization.furniture.FurnitureVisualization", "updateSprites"))
     im, il = u.index("maxstack 3"), u.index("localcount 6")
-    u[im] = "maxstack 24"; u[il] = "localcount 15"
+    u[im] = "maxstack 30"; u[il] = "localcount 22"
+    CT = 'QName(PackageNamespace("flash.geom"),"ColorTransform")'
+    MARGE = 12          # place autour du mobi pour un contour epais (jusqu'a 10 px)
     c = ['getlex QName(%s,"_filters")' % FVP, 'coerce_a', 'setlocal 6',
          'getlocal 6', 'iffalse atl_c_fin',
-         'getlocal 6', LENGTH, 'pushbyte 1', 'ifne atl_c_fin',
+         'getlocal 6', LENGTH, 'pushbyte 1', 'iflt atl_c_fin',
          'getlocal 6', 'pushbyte 0', MULTI_L, 'coerce_a', 'setlocal 7',
          'getlocal 7', 'getlex ' + GLOWQ, 'istypelate', 'iffalse atl_c_fin',
          'getlocal 7', 'getproperty ' + P("color"), 'pushint %d' % HALO, 'ifne atl_c_fin',
+         # style (voir chat_salle) : 15 epaisseur, 16 mode (1 contour, 2 remplissage, 3 les deux), 17 couleur
+         'getlocal 7', 'getproperty ' + P("blurX"), 'convert_i', 'setlocal 15',
+         'getlocal 7', 'getproperty ' + P("blurY"), 'convert_i', 'setlocal 16',
+         'pushint %d' % HALO, 'setlocal 17',
+         'getlocal 6', LENGTH, 'pushbyte 2', 'iflt atl_c_sc',
+         'getlocal 6', 'pushbyte 1', MULTI_L, 'getproperty ' + P("color"), 'convert_i', 'setlocal 17',
+         'atl_c_sc:',
+         'getlocal 15', 'pushbyte 1', 'ifge atl_c_e1', 'pushbyte 3', 'setlocal 15', 'atl_c_e1:',
+         'getlocal 15', 'pushbyte 10', 'ifle atl_c_e2', 'pushbyte 10', 'setlocal 15', 'atl_c_e2:',
+         'getlocal 16', 'pushbyte 1', 'ifge atl_c_m1', 'pushbyte 1', 'setlocal 16', 'atl_c_m1:',
          OMBRE, 'pushbyte 0', 'iflt atl_c_fin',
          'findpropstrict ' + P("getSprite"), OMBRE, 'callproperty %s, 1' % P("getSprite"), 'coerce_a', 'setlocal 7',
          'getlocal 7', 'iffalse atl_c_fin',
@@ -1524,11 +1606,11 @@ def contour():
          'getlocal 8', 'getproperty ' + P("width"), 'pushbyte 0', 'ifle atl_c_fin',
          'getlocal 8', 'getproperty ' + P("height"), 'pushbyte 0', 'ifle atl_c_fin',
          'findpropstrict ' + BMD,
-         'getlocal 8', 'getproperty ' + P("width"), 'pushbyte 8', 'add',
-         'getlocal 8', 'getproperty ' + P("height"), 'pushbyte 8', 'add',
+         'getlocal 8', 'getproperty ' + P("width"), 'pushbyte %d' % (2 * MARGE), 'add',
+         'getlocal 8', 'getproperty ' + P("height"), 'pushbyte %d' % (2 * MARGE), 'add',
          'pushtrue', 'pushbyte 0', 'constructprop %s, 4' % BMD, 'coerce_a', 'setlocal 9',
          'findpropstrict ' + MTX, 'constructprop %s, 0' % MTX, 'coerce_a', 'setlocal 10',
-         'pushshort -1000', 'setlocal 13',
+         'pushshort -1000', 'setlocal 13', 'pushshort 1000', 'setlocal 14',
          'pushbyte 0', 'setlocal 11',
          'jump atl_c_test',
          'atl_c_boucle:', 'label',
@@ -1546,26 +1628,50 @@ def contour():
          'getlocal 10', 'getlocal 12', 'getproperty ' + S("width"), 'pushbyte 0', 'callpropvoid %s, 2' % P("translate"),
          'atl_c_nf:',
          'getlocal 10',
-         'getlocal 12', 'getproperty ' + S("offsetX"), 'getlocal 8', 'getproperty ' + P("left"), 'subtract', 'pushbyte 4', 'add',
-         'getlocal 12', 'getproperty ' + S("offsetY"), 'getlocal 8', 'getproperty ' + P("top"), 'subtract', 'pushbyte 4', 'add',
+         'getlocal 12', 'getproperty ' + S("offsetX"), 'getlocal 8', 'getproperty ' + P("left"), 'subtract', 'pushbyte %d' % MARGE, 'add',
+         'getlocal 12', 'getproperty ' + S("offsetY"), 'getlocal 8', 'getproperty ' + P("top"), 'subtract', 'pushbyte %d' % MARGE, 'add',
          'callpropvoid %s, 2' % P("translate"),
          'getlocal 9', 'getlocal 12', 'getproperty ' + S("asset"), 'getlocal 10', 'callpropvoid %s, 2' % P("draw"),
+         'getlocal 12', 'getproperty ' + S("relativeDepth"), 'getlocal 14', 'ifge atl_c_mn',
+         'getlocal 12', 'getproperty ' + S("relativeDepth"), 'setlocal 14',
+         'atl_c_mn:',
          'getlocal 12', 'getproperty ' + S("relativeDepth"), 'getlocal 13', 'ifle atl_c_suiv',
          'getlocal 12', 'getproperty ' + S("relativeDepth"), 'setlocal 13',
          'atl_c_suiv:', 'inclocal_i 11',
          'atl_c_test:', 'getlocal 11', 'getlex ' + P("spriteCount"), 'iflt atl_c_boucle',
          'getlocal 13', 'pushshort -1000', 'ifle atl_c_fin',
-         # anneau net : glow knockout tres fort, peu flou
+         # remplissage (modes 2 et 3) : copie de la silhouette, teintee de la couleur a 50 %
+         'getlocal 16', 'pushbyte 2', 'iflt atl_c_r0',
+         'getlocal 9', 'callproperty %s, 0' % P("clone"), 'coerce_a', 'setlocal 18',
+         'getlocal 18', 'getlocal 18', 'getproperty ' + P("rect"),
+         'findpropstrict ' + CT, 'pushbyte 0', 'pushbyte 0', 'pushbyte 0', 'pushdouble 0.5',
+         'getlocal 17', 'pushbyte 16', 'rshift', 'pushshort 255', 'bitand',
+         'getlocal 17', 'pushbyte 8', 'rshift', 'pushshort 255', 'bitand',
+         'getlocal 17', 'pushshort 255', 'bitand',
+         'pushbyte 0', 'constructprop %s, 8' % CT,
+         'callpropvoid %s, 2' % P("colorTransform"),
+         'atl_c_r0:',
+         # anneau net (modes 1 et 3) : glow knockout tres fort, flou = epaisseur ;
+         # remplissage seul : l'image repart vide
+         'getlocal 16', 'pushbyte 2', 'ifne atl_c_ring',
+         'getlocal 9', 'getlocal 9', 'getproperty ' + P("rect"), 'pushbyte 0',
+         'callpropvoid %s, 2' % P("fillRect"),
+         'jump atl_c_r1',
+         'atl_c_ring:',
          # bmp.applyFilter(bmp, bmp.rect, new Point(0, 0), glow) : objet, puis 4 arguments
          'getlocal 9', 'getlocal 9', 'getlocal 9', 'getproperty ' + P("rect"),
          'findpropstrict ' + PT, 'pushbyte 0', 'pushbyte 0', 'constructprop %s, 2' % PT,
-         'findpropstrict ' + GLOWQ, 'pushint %d' % HALO, 'pushbyte 1', 'pushbyte 3', 'pushbyte 3',
+         'findpropstrict ' + GLOWQ, 'getlocal 17', 'pushbyte 1', 'getlocal 15', 'convert_d', 'getlocal 15', 'convert_d',
          'pushshort 255', 'pushbyte 1', 'pushfalse', 'pushtrue', 'constructprop %s, 8' % GLOWQ,
          'callpropvoid %s, 4' % P("applyFilter"),
+         'atl_c_r1:',
+         'getlocal 16', 'pushbyte 2', 'iflt atl_c_r2',
+         'getlocal 9', 'getlocal 18', 'callpropvoid %s, 1' % P("draw"),
+         'atl_c_r2:',
          'getlocal 7', 'getlocal 9', 'setproperty ' + S("asset"),
          'getlocal 7', 'pushtrue', 'setproperty ' + S("visible"),
-         'getlocal 7', 'getlocal 8', 'getproperty ' + P("left"), 'pushbyte 4', 'subtract', 'setproperty ' + S("offsetX"),
-         'getlocal 7', 'getlocal 8', 'getproperty ' + P("top"), 'pushbyte 4', 'subtract', 'setproperty ' + S("offsetY"),
+         'getlocal 7', 'getlocal 8', 'getproperty ' + P("left"), 'pushbyte %d' % MARGE, 'subtract', 'setproperty ' + S("offsetX"),
+         'getlocal 7', 'getlocal 8', 'getproperty ' + P("top"), 'pushbyte %d' % MARGE, 'subtract', 'setproperty ' + S("offsetY"),
          'getlocal 7', 'pushshort 255', 'setproperty ' + S("alpha"),
          'getlocal 7', 'pushint 16777215', 'setproperty ' + S("color"),
          'getlocal 7', 'pushstring "normal"', 'setproperty ' + S("blendMode"),
@@ -1576,7 +1682,13 @@ def contour():
          'getlocal 7', 'pushtrue', 'setproperty ' + S("skipMouseHandling"),
          'getlocal 7', 'pushfalse', 'setproperty ' + S("clickHandling"),
          'getlocal 7', 'pushstring "atelier_contour"', 'setproperty ' + S("assetName"),
+         # contour seul : derriere le mobi ; avec remplissage : devant (teinte par-dessus)
+         'getlocal 16', 'pushbyte 2', 'iflt atl_c_derr',
+         'getlocal 7', 'getlocal 14', 'pushdouble 0.001', 'subtract', 'setproperty ' + S("relativeDepth"),
+         'jump atl_c_prof',
+         'atl_c_derr:',
          'getlocal 7', 'getlocal 13', 'pushdouble 0.001', 'add', 'setproperty ' + S("relativeDepth"),
+         'atl_c_prof:',
          'atl_c_fin:']
     k = u.index("returnvoid")
     u = u[:k] + c + u[k:]

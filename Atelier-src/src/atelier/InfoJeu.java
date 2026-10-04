@@ -73,7 +73,27 @@ public final class InfoJeu {
         envoyer(m);
     }
 
+    /**
+     * Le chat du jeu n'affiche que les caracteres latins (accents compris) : les
+     * autres devenaient « ? » (« … » en fin de message). On les remplace par leur
+     * equivalent simple ; ce qui n'en a pas est retire.
+     */
+    static String pourLeJeu(String m) {
+        if (m == null) return "";
+        m = m.replace("…", "...").replace("’", "'").replace("‘", "'").replace("“", "\"").replace("”", "\"")
+             .replace("—", "-").replace("–", "-").replace("−", "-").replace("→", "->").replace("←", "<-")
+             .replace("⌘", "Cmd").replace("⌥", "Option").replace("⇧", "Maj").replace("⌃", "Ctrl")
+             .replace("\u202f", " ").replace("≈", "~").replace("≤", "<=").replace("≥", ">=");
+        StringBuilder b = new StringBuilder(m.length());
+        for (int i = 0; i < m.length(); i++) {
+            char c = m.charAt(i);
+            if (c <= 0xFF) b.append(c);              // latin-1 : passe tel quel
+        }
+        return b.toString().replaceAll(" {2,}", " ").trim();
+    }
+
     private static void envoyer(String m) {
+        m = pourLeJeu(m);
         dernierEnvoi = System.currentTimeMillis();
         dernierTexte = m;
         GPresets gp = Salle.gp();

@@ -1,53 +1,97 @@
 package atelier;
 
 import atelier.PlanteSuivi.Plante;
-import extension.GPresets;
+import atelier.PlanteVue.Bilan;
+import atelier.PlanteVue.Filtre;
 import javafx.animation.KeyFrame;
 import javafx.animation.Timeline;
 import javafx.application.Platform;
-import javafx.beans.property.SimpleStringProperty;
+import javafx.beans.property.ReadOnlyObjectWrapper;
 import javafx.collections.FXCollections;
+import javafx.collections.ListChangeListener;
 import javafx.collections.ObservableList;
+import javafx.collections.transformation.FilteredList;
+import javafx.collections.transformation.SortedList;
 import javafx.geometry.Insets;
+import javafx.geometry.Pos;
+import javafx.scene.Node;
 import javafx.scene.control.*;
 import javafx.scene.layout.*;
+import javafx.scene.input.MouseButton;
+import javafx.scene.input.MouseEvent;
 import javafx.util.Duration;
 
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.function.Function;
+import java.util.function.BiConsumer;
+import java.util.function.Predicate;
+import java.util.function.Supplier;
 
 /**
  * Monster Plants : les plantes monstres de la salle ouverte.
  *
- *  - liste des plantes (paquet Users a l'entree de la salle, voir PlanteSuivi)
- *  - details lus PASSIVEMENT : fiches (PetInfo) que le jeu recoit quand tu
- *    cliques une plante toi-meme, mises a jour de statut / niveau
- *  - fiches lues toutes seules en arriere-plan (demarrerFichesAuto), sans
- *    rien ouvrir dans le jeu.
- *  - « Traiter » (le soin quotidien = respect d'animal), une ou toutes
- *  - pour ses propres plantes : « Recolter » les adultes, « Composter » les mortes
+ *  - En haut, un resume (combien a soigner, a recolter, mortes, adultes) et
+ *    les actions de masse : « Soigner les N », « Récolter les N »... Chacune
+ *    montre d'abord un apercu chiffre, puis agit apres « Confirmer ».
+ *  - Le tableau : nom, rarete, croissance, proprietaire. Tri par colonne,
+ *    recherche, filtres rapides. La selection et le defilement tiennent
+ *    pendant les mises a jour. L'etat (a soigner, mortes...) sert aux
+ *    comptages et aux filtres, sans colonne.
+ *  - Actions sur la selection (multi-selection) : boutons sous le tableau et
+ *    clic droit. Reproduction : deux plantes choisies, ou tous les couples.
  *
- * Rien ne deplace l'avatar : un double-clic pose seulement la zone partagee
- * sur la case de la plante.
+ * La liste vient des paquets recus passivement (PlanteSuivi). Aucun envoi
+ * vers une plante hors d'un geste de l'utilisatrice : un bouton (lancer())
+ * ou un clic de souris sur une ligne (cliquerDansLeJeu()), les deux sous
+ * PlanteSuivi.enActionExplicite. Les fiches (vie, croissance) se lisent en
+ * arriere-plan, une a la fois, sans rien ouvrir dans le jeu : la vie sert a
+ * compter les plantes a soigner.
+ *
+ * Clic sur une ligne : la plante a la fleche de selection du jeu
+ * (MiseEnValeur, jetons « p<index> ») ET elle est cliquee dans le jeu
+ * (LookTo + GetPetInfo, la fiche du jeu s'ouvre). Un envoi par clic, rien
+ * si on reclique la meme ligne dans la seconde ; une selection faite par le
+ * programme (rafraichissement) n'envoie rien. Le survol d'une action de
+ * masse montre les plantes concernees.
  */
 public class OngletPlantes {
 
-    /** Sous ce delai, une plante est en danger (rouge vif). */
-    private static final long URGENT_S = 6 * 3600;
-    /** Sous ce delai, une plante merite un soin bientot (rouge pale). */
-    private static final long BIENTOT_S = 24 * 3600;
+    /** Pause entre deux envois d'une rafale (au moins 150 ms). */
+    private static final long PAUSE_MS = 700;
 
+    // Liste maitresse (ordre d'urgence), puis filtre, puis tri des colonnes.
     private final ObservableList<Plante> lignes = FXCollections.observableArrayList();
+    private final FilteredList<Plante> filtrees = new FilteredList<>(lignes, p -> true);
+    private final SortedList<Plante> triees = new SortedList<>(filtrees);
     private TableView<Plante> table;
-    private Label etat, resume, soinsLbl;
-    private TextField monNomTxt;
-    private Ui.Voyant vSalle, vListe, vInfos, vMoi;
-    private Button stop;
+
+    private Label resume, details, etat, progresTxt, apercu;
+    private ProgressBar progres;
+    private HBox progression;
+    private VBox confirmation;
+    private Button confirmer, stop;
+    private TextField monNomTxt, recherche;
+    private HBox ligneMonNom;
     private Label reproLbl;
-    private final Label apercuRepro = new Label();
-    private Button confirmerRepro, annulerRepro;
-    private VBox confirmationRepro;
+
+    private Button bSoigner, bRecolter, bComposter, bReproduire;                // masse
+    private Button sSoigner, sRecolter, sComposter, sReproduire;        // selection
+    private MenuItem mSoigner, mRecolter, mComposter, mReproduire;      // clic droit
+    private final Map<Filtre, ToggleButton> filtres = new EnumMap<>(Filtre.class);
+    private Filtre filtre = Filtre.TOUTES;
+
+    /** Ids des plantes choisies, ecrits sur le fil JavaFX, lus par MiseEnValeur (autre fil). */
+    private volatile List<Integer> idsChoisis = List.of();
+
+    /** Garde du clic sur une ligne (logique pure, testee). */
+    private final PlanteVue.Clic clic = new PlanteVue.Clic();
+    /** Les clics partent ici, un a la fois, 150 ms au moins entre deux. */
+    private final java.util.concurrent.ExecutorService fileClics =
+            java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+                Thread t = new Thread(r, "atelier-plantes-clic");
+                t.setDaemon(true);
+                return t;
+            });
 
     private final AtomicBoolean occupe = new AtomicBoolean(false);
     private volatile boolean arret = false;
@@ -81,141 +125,171 @@ public class OngletPlantes {
         return sp;
     }
 
+    /** Bulle rapide (150 ms) sur un controle. */
+    private static <T extends Control> T bulle(T c, String texte) {
+        Tooltip t = new Tooltip(WindowsClavier.texte(texte));
+        t.setShowDelay(Duration.millis(150));
+        t.setWrapText(true);
+        t.setMaxWidth(280);
+        c.setTooltip(t);
+        return c;
+    }
+
+    private static Button bouton(String texte, String aide) {
+        Button b = bulle(new Button(texte), aide);
+        b.setMinWidth(Region.USE_PREF_SIZE);
+        return b;
+    }
+
     private Pane volet() {
         etat = Ui.etat();
-        resume = Ui.valeur("Aucune plante vue");
-        soinsLbl = new Label("");
-        soinsLbl.setWrapText(true);
 
-        vSalle = new Ui.Voyant("Salle");
-        vListe = new Ui.Voyant("Plantes");
-        vInfos = new Ui.Voyant("Détails");
-        vMoi = new Ui.Voyant("Moi");
+        // --- resume et actions de masse
+        resume = Ui.valeur("Aucune plante dans cette salle");
+        resume.setWrapText(true);
+        details = new Label();
+        details.getStyleClass().add("etat-ligne");
+        details.setWrapText(true);
+
+        bSoigner = bouton("Soigner", "Le soin du jour (respect d'animal) pour les plantes dont le bien-être baisse. "
+                + "Les plus pressées d'abord. Nombre de soins limité par jour.");
+        bSoigner.getStyleClass().add("primaire");
+        bSoigner.setOnAction(e -> proposerSoins(cibles(PlanteVue::aSoigner)));
+        bRecolter = bouton("Récolter", "Tes plantes adultes : tu reçois leur récompense, la plante disparaît.");
+        bRecolter.setOnAction(e -> proposerRecolte(cibles(this::aRecolter)));
+        bComposter = bouton("Composter", "Tes plantes mortes : elles disparaissent. C'est définitif.");
+        bComposter.setOnAction(e -> proposerCompost(cibles(this::aComposter)));
+        bReproduire = bouton("Reproduire", "Associe tes plantes adultes deux par deux, des plus rares aux moins rares. "
+                + "Une graine par couple, dans ton inventaire.");
+        bReproduire.setOnAction(e -> proposerReproductionTout());
+        MiseEnValeur.auSurvol(bSoigner, () -> jetons(cibles(PlanteVue::aSoigner)));
+        MiseEnValeur.auSurvol(bRecolter, () -> jetons(cibles(this::aRecolter)));
+        MiseEnValeur.auSurvol(bComposter, () -> jetons(cibles(this::aComposter)));
+        MiseEnValeur.auSurvol(bReproduire, () -> {
+            List<Plante> l = new ArrayList<>();
+            for (Plante[] c : couplesPossibles()) { l.add(c[0]); l.add(c[1]); }
+            return jetons(l);
+        });
+        FlowPane masse = new FlowPane(6, 6, bSoigner, bRecolter, bComposter, bReproduire);
+
+        monNomTxt = new TextField();
+        monNomTxt.setPromptText("Ton nom Habbo");
+        monNomTxt.setPrefColumnCount(12);
+        monNomTxt.textProperty().addListener((o, a, b) -> prevoirMaj());
+        Label monNomLbl = new Label("Qui es-tu ?");
+        ligneMonNom = new HBox(6, monNomLbl, monNomTxt);
+        ligneMonNom.setAlignment(Pos.CENTER_LEFT);
+        bulle(monNomTxt, "Ton nom n'est pas encore détecté. Écris-le pour récolter ou composter tes plantes.");
+
+        // --- confirmation (apercu chiffre) et progression
+        apercu = new Label();
+        apercu.setWrapText(true);
+        Button annuler = new Button("Annuler");
+        annuler.setOnAction(e -> cacherConfirmation());
+        confirmer = new Button("Confirmer");
+        confirmer.getStyleClass().add("primaire");
+        confirmation = new VBox(6, apercu, Ui.ligne(annuler, confirmer));
+        montrer(confirmation, false);
+
+        progres = new ProgressBar(0);
+        progres.setPrefWidth(110);
+        progresTxt = new Label();
+        progresTxt.getStyleClass().add("etat-ligne");
+        progresTxt.setMaxWidth(Double.MAX_VALUE);
+        HBox.setHgrow(progresTxt, Priority.ALWAYS);
+        stop = bouton("Arrêter", "Interrompt après la plante en cours.");
+        stop.setOnAction(e -> { arret = true; progresTxt.setText("Arrêt demandé…"); });
+        progression = new HBox(8, progres, progresTxt, stop);
+        progression.setAlignment(Pos.CENTER_LEFT);
+        montrer(progression, false);
+
+        VBox blocResume = Ui.bloc("Résumé", resume, details, masse, ligneMonNom, confirmation, progression);
+
+        // --- recherche et filtres
+        recherche = new TextField();
+        recherche.setPromptText("Chercher un nom");
+        recherche.setPrefColumnCount(10);
+        recherche.textProperty().addListener((o, a, b) -> appliquerFiltre());
+        ToggleGroup groupe = new ToggleGroup();
+        HBox boutonsFiltre = new HBox(4);
+        boutonsFiltre.setAlignment(Pos.CENTER_LEFT);
+        for (Filtre f : Filtre.values()) {
+            ToggleButton b = new ToggleButton(f.texte);
+            b.setToggleGroup(groupe);
+            b.setUserData(f);
+            b.setMinWidth(Region.USE_PREF_SIZE);
+            b.setFocusTraversable(false);
+            filtres.put(f, b);
+            boutonsFiltre.getChildren().add(b);
+        }
+        filtres.get(Filtre.TOUTES).setSelected(true);
+        groupe.selectedToggleProperty().addListener((o, a, b) -> {
+            if (b == null) { if (a != null) a.setSelected(true); return; }   // toujours un filtre choisi
+            filtre = (Filtre) b.getUserData();
+            appliquerFiltre();
+        });
+        FlowPane barre = Ui.ligne(recherche, boutonsFiltre);
+        barre.setHgap(8);
 
         // --- tableau
-        table = new TableView<>(lignes);
+        table = new TableView<>(triees);
+        triees.comparatorProperty().bind(table.comparatorProperty());
         table.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
+        table.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
         table.setStyle("-fx-font-size: 11px;");
-        table.setPlaceholder(new Label("Aucune plante vue dans cette salle."));
-        table.getColumns().add(colonne("Plante", 105,
-                p -> p.nom + "\n" + (p.proprioNom == null || p.proprioNom.isEmpty() ? "?" : p.proprioNom)));
-        // Etat et croissance disent la meme chose : une seule colonne. Une
-        // plante qui pousse montre son niveau et le temps restant.
-        table.getColumns().add(colonne("État", 96, p -> {
-            if (p.morte || p.recoltable || p.adulte()) return p.etat();
-            return "Pousse " + p.croissance();
+        Label vide = new Label("Aucune plante à montrer.");
+        vide.getStyleClass().add("aide-vide");
+        table.setPlaceholder(vide);
+        table.getColumns().add(colonne("Nom", 110, PlanteVue.PAR_NOM, (c, p) -> c.setText(p.nom)));
+        TableColumn<Plante, Plante> rar = colonne("Rareté", 62, PlanteVue.PAR_RARETE,
+                (c, p) -> c.setText(PlanteVue.rarete(p.rarete)));
+        table.getColumns().add(rar);
+        table.getColumns().add(colonne("Croissance", 92, PlanteVue.PAR_CROISSANCE,
+                (c, p) -> barre(c, PlanteVue.partCroissance(p), PlanteVue.texteCroissance(p), "info")));
+        table.getColumns().add(colonne("Propriétaire", 90, PlanteVue.PAR_PROPRIO, (c, p) -> {
+            String n = p.proprioNom == null || p.proprioNom.isEmpty() ? "?" : p.proprioNom;
+            c.setText(aMoi(p) ? n + " (toi)" : n);
         }));
-        table.getColumns().add(colonne("Vie", 52, p -> {
-            if (p.morte) return "—";
-            long r = p.resteVie();
-            return r < 0 ? "?" : PlanteSuivi.duree(r);
-        }));
-        table.getColumns().add(colonne("Rar.", 30, p -> p.rarete < 0 ? "?" : String.valueOf(p.rarete)));
         table.setRowFactory(tv -> {
-            TableRow<Plante> r = new TableRow<>() {
+            TableRow<Plante> row = new TableRow<>() {
                 @Override protected void updateItem(Plante p, boolean vide) {
                     super.updateItem(p, vide);
-                    styler(this);
+                    setOpacity(p != null && !vide && p.morte ? 0.55 : 1);
                 }
             };
-            r.selectedProperty().addListener((o, a, b) -> styler(r));
-            r.setOnMouseClicked(e -> {
-            });
-            return r;
+            // Seul un vrai clic de souris passe ici (pas une selection par le programme).
+            row.addEventHandler(MouseEvent.MOUSE_CLICKED, e -> surClicLigne(row, e));
+            return row;
         });
-        table.setPrefHeight(260);
-        table.setMinHeight(170);
+        table.setContextMenu(menuClicDroit());
+        table.getSelectionModel().getSelectedItems().addListener((ListChangeListener<Plante>) ch -> surSelection());
+        table.getSelectionModel().selectedItemProperty().addListener((o, a, b) -> surSelection());   // la derniere cliquee d'abord
+        table.setPrefHeight(280);
+        table.setMinHeight(160);
         VBox.setVgrow(table, Priority.ALWAYS);
 
-        stop = new Button("Arrêter");
-        stop.setDisable(true);
-        stop.setOnAction(e -> { arret = true; dire("Arrêt demandé…"); });
-
-        // --- soins
-        Button traiter = new Button("Traiter");
-        traiter.setOnAction(e -> {
-            Plante p = choisie();
-            if (p == null) { dire("Choisis une plante dans le tableau."); return; }
-            lancer("plantes-traiter", () -> traiterUne(p, true));
-        });
-        Button traiterToutes = new Button("Tout traiter");
-        // survol : la premiere plante a traiter a la fleche du jeu (une seule a la fois)
-        MiseEnValeur.auSurvol(traiterToutes, () -> {
-            for (Plante p : trier(PlanteSuivi.plantes()))
-                if (!p.morte && p.aBesoin() && p.index >= 0) return List.of("p" + p.index);
-            return List.of();
-        });
-        traiterToutes.getStyleClass().add("primaire");
-        traiterToutes.setMaxWidth(Double.MAX_VALUE);
-        traiterToutes.setOnAction(e -> lancer("plantes-traiter-toutes", this::traiterToutes));
-
-        // --- mes plantes
-        monNomTxt = new TextField();
-        monNomTxt.setPromptText("Mon nom Habbo (si non détecté)");
-        Button recolter = new Button("Récolter");
-        recolter.setTooltip(new Tooltip("Ta plante adulte choisie dans le tableau : tu récupères ses graines / sa récompense (la plante disparaît)."));
-        recolter.setOnAction(e -> {
-            Plante p = choisie();
-            if (p == null) { dire("Choisis une plante dans le tableau."); return; }
-            String nom = monNomTxt.getText();
-            lancer("plantes-recolter", () -> recolterUne(p, nom, true));
-        });
-        Button toutRecolter = new Button("Tout récolter");
-        toutRecolter.setTooltip(new Tooltip("Récolte toutes tes plantes adultes de la salle, une par une."));
-        toutRecolter.setOnAction(e -> {
-            String nom = monNomTxt.getText();
-            lancer("plantes-tout-recolter", () -> toutRecolter(nom));
-        });
-        Button composter = new Button("Composter");
-        composter.setTooltip(new Tooltip("Ta plante MORTE choisie : elle est retirée définitivement (en échange d'un petit gain dans le jeu)."));
-        composter.setOnAction(e -> composter());
-        Button toutComposter = new Button("Tout composter");
-        toutComposter.setTooltip(new Tooltip("Composte toutes tes plantes MORTES de l'appart (définitif)."));
-        toutComposter.setOnAction(e -> toutComposter());
-
-        // --- reproduction
-        reproLbl = new Label();                    // consigne permanente : pas un resultat
+        // --- actions sur la selection
+        sSoigner = bouton("Soigner", "Le soin du jour pour les plantes choisies.");
+        sSoigner.setOnAction(e -> agirSelection("soigner"));
+        sRecolter = bouton("Récolter", "Tes plantes adultes choisies.");
+        sRecolter.setOnAction(e -> agirSelection("recolter"));
+        sComposter = bouton("Composter", "Tes plantes mortes choisies (définitif).");
+        sComposter.setOnAction(e -> agirSelection("composter"));
+        sReproduire = bouton("Reproduire ces 2", "Deux plantes adultes, à toi ou dont la reproduction est permise. "
+                + "Tu reçois une graine.");
+        sReproduire.setOnAction(e -> agirSelection("reproduire"));
+        FlowPane actionsSel = new FlowPane(6, 6, sSoigner, sRecolter, sComposter, sReproduire);
+        reproLbl = new Label("Reproduction : fais-en une à la main une fois dans le jeu, l'Atelier apprend comment faire.");
         reproLbl.getStyleClass().add("etat-ligne");
         reproLbl.setWrapText(true);
-        Button reproduire = new Button("Reproduire toutes les plantes");
-        reproduire.getStyleClass().add("primaire");
-        reproduire.setMaxWidth(Double.MAX_VALUE);
-        reproduire.setOnAction(e -> preparerReproduction());
-        confirmerRepro = new Button("Confirmer");
-        confirmerRepro.getStyleClass().add("primaire");
-        annulerRepro = new Button("Annuler");
-        confirmationRepro = new VBox(6, apercuRepro, Ui.ligne(annulerRepro, confirmerRepro));
-        apercuRepro.setWrapText(true);
-        confirmationRepro.setVisible(false);
-        confirmationRepro.setManaged(false);
-        annulerRepro.setOnAction(e -> montrerConfirmation(false));
+        montrer(reproLbl, false);
 
-        // --- toutes les actions au meme endroit ; « i » explique chaque bouton
-        for (Button b : new Button[]{traiterToutes, reproduire}) b.setMaxWidth(Double.MAX_VALUE);
-        // Un seul « Traiter » : il traite tout seul celles qui en ont besoin.
-        // Les boutons gardent leur texte entier (retour a la ligne si la fenetre est etroite).
-        FlowPane autres = new FlowPane(6, 6, recolter, toutRecolter, composter, toutComposter);
-        for (Button b : new Button[]{recolter, toutRecolter, composter, toutComposter}) b.setMinWidth(Region.USE_PREF_SIZE);
-        VBox boutons = new VBox(6, traiterToutes, reproduire, autres);
-        Label aideActions = Ui.aide(
-                "Tout traiter : le soin du jour (respect d'animal) pour les plantes qui en ont besoin (bien-être bas) ; "
-                + "il remonte au maximum. Nombre de soins limité par jour.\n"
-                + "Reproduire toutes les plantes : couples des plus hauts niveaux de rareté aux plus bas (une plante "
-                + "seule va avec le niveau juste en dessous). La première fois, fais une reproduction à la main "
-                + "dans le jeu : l'Atelier apprend comment faire.\n"
-                + "Récolter : ta plante ADULTE choisie te donne sa récompense (graines…), elle disparaît.\n"
-                + "Tout récolter : toutes tes plantes adultes de l'appart, une par une.\n"
-                + "Composter : supprime ta plante MORTE choisie (définitif).\n"
-                + "Tout composter : toutes tes plantes mortes de l'appart, après confirmation (définitif).\n"
-                + "Récolter et Composter ne marchent que sur tes plantes. Choisis une ligne du tableau : "
-                + "la plante a la flèche de sélection dans le jeu.");
-        VBox actions = Ui.bloc("Actions", soinsLbl, boutons, confirmationRepro, reproLbl, aideActions);
+        Label aide = Ui.aide("Clique une ligne : la plante est choisie dans le jeu, comme si tu cliquais dessus. "
+                + "Cmd/Ctrl + clic ou Maj + clic pour en choisir plusieurs. Clic droit : les actions.");
+        VBox blocListe = Ui.bloc("Plantes de la salle", barre, table, actionsSel, reproLbl, aide);
+        VBox.setVgrow(blocListe, Priority.ALWAYS);
 
-        VBox v = new VBox(12,
-                Ui.bloc("Prérequis", vSalle, vListe, vInfos, vMoi),
-                actions,
-                Ui.bloc("Plantes de la salle", resume, table, Ui.ligne(stop)),
-                etat);
+        VBox v = new VBox(12, blocResume, blocListe, etat);
         v.setFillWidth(true);
         v.setPadding(new Insets(12, 14, 14, 14));
 
@@ -223,51 +297,141 @@ public class OngletPlantes {
         MiseEnValeur.fournir("plantes", this::plantesEnValeur);
         PlanteSuivi.installer();
 
-        demarrerListeAuto();
         demarrerFichesAuto();
         Timeline t = new Timeline(new KeyFrame(Duration.seconds(1), e -> {
-            try { majVoyants(); } catch (Throwable ignored) { }
-            try { majRepro(); } catch (Throwable ignored) { }
-            if (++tic % 20 == 0) { try { table.refresh(); } catch (Throwable ignored) { } }
+            try { majResume(); } catch (Throwable ignored) { }
+            if (++tic % 5 == 0) { try { rafraichirLignes(true); } catch (Throwable ignored) { } }
         }));
         t.setCycleCount(Timeline.INDEFINITE);
         t.play();
         rafraichir();
+        surSelection();
         return v;
     }
 
-    private static TableColumn<Plante, String> colonne(String titre, double larg, Function<Plante, String> f) {
-        TableColumn<Plante, String> c = new TableColumn<>(titre);
-        c.setCellValueFactory(d -> {
-            String s;
-            try { s = d.getValue() == null ? "" : f.apply(d.getValue()); } catch (Throwable t) { s = "?"; }
-            return new SimpleStringProperty(s);
-        });
+    private static void montrer(Node n, boolean v) { n.setVisible(v); n.setManaged(v); }
+
+    /** Une colonne dont la valeur est la plante elle-meme : le tri suit les valeurs vivantes. */
+    private static TableColumn<Plante, Plante> colonne(String titre, double larg, Comparator<Plante> tri,
+                                                        BiConsumer<TableCell<Plante, Plante>, Plante> remplir) {
+        TableColumn<Plante, Plante> c = new TableColumn<>(titre);
+        c.setCellValueFactory(d -> new ReadOnlyObjectWrapper<>(d.getValue()));
+        c.setComparator(tri);
         c.setPrefWidth(larg);
         c.setMaxWidth(larg * 30);
-        c.setSortable(false);
+        c.setCellFactory(col -> new TableCell<>() {
+            @Override protected void updateItem(Plante p, boolean vide) {
+                super.updateItem(p, vide);
+                setGraphic(null);
+                setText(null);
+                if (vide || p == null) return;
+                try { remplir.accept(this, p); } catch (Throwable t) { setGraphic(null); setText("?"); }
+            }
+        });
         return c;
     }
 
-    /** Rouge si elle va bientot mourir, gris si morte ; rien si selectionnee. */
-    private static void styler(TableRow<Plante> r) {
-        Plante p = r.getItem();
-        if (p == null || r.isEmpty() || r.isSelected()) { r.setStyle(""); return; }
-        if (p.morte) { r.setStyle("-fx-opacity: 0.5;"); return; }
-        long v = p.resteVie();
-        if (v >= 0 && v < URGENT_S) r.setStyle("-fx-background-color: #f2b8b0;");
-        else if (v >= 0 && v < BIENTOT_S) r.setStyle("-fx-background-color: #fbe1dc;");
-        else r.setStyle("");
+    /** Petite barre de progression et son texte ; « ? » seul si inconnu. */
+    private static void barre(TableCell<Plante, Plante> c, double part, String texte, String style) {
+        if (part < 0) { c.setText(texte); return; }
+        ProgressBar b = new ProgressBar(part);
+        b.getStyleClass().add(style);
+        b.setPrefWidth(34);
+        b.setMinWidth(24);
+        b.setMaxHeight(8);
+        Label l = new Label(texte);
+        l.setMinWidth(0);
+        HBox h = new HBox(5, b, l);
+        h.setAlignment(Pos.CENTER_LEFT);
+        c.setGraphic(h);
     }
 
-    /** Fenetre Monster Plants ouverte : la plante choisie dans le tableau a la fleche du jeu. */
+    private ContextMenu menuClicDroit() {
+        mSoigner = new MenuItem("Soigner");
+        mSoigner.setOnAction(e -> agirSelection("soigner"));
+        mRecolter = new MenuItem("Récolter");
+        mRecolter.setOnAction(e -> agirSelection("recolter"));
+        mComposter = new MenuItem("Composter…");
+        mComposter.setOnAction(e -> agirSelection("composter"));
+        mReproduire = new MenuItem("Reproduire ces 2");
+        mReproduire.setOnAction(e -> agirSelection("reproduire"));
+        ContextMenu m = new ContextMenu(mSoigner, mRecolter, mComposter, new SeparatorMenuItem(), mReproduire);
+        m.setOnShowing(e -> majBoutonsSelection());
+        return m;
+    }
+
+    // ------------------------------------------------------ selection
+
+    private List<Plante> selection() {
+        return table == null ? List.of() : new ArrayList<>(table.getSelectionModel().getSelectedItems());
+    }
+
+    /** Fil JavaFX : retient les ids choisis (plante focalisee d'abord) pour la fleche du jeu. */
+    private void surSelection() {
+        List<Integer> ids = new ArrayList<>();
+        Plante f = table.getSelectionModel().getSelectedItem();
+        if (f != null) ids.add(f.id);
+        for (Plante p : table.getSelectionModel().getSelectedItems())
+            if (p != null && !ids.contains(p.id)) ids.add(p.id);
+        idsChoisis = List.copyOf(ids);
+        majBoutonsSelection();
+    }
+
+    /** Pour MiseEnValeur (fil de la mise en valeur) : ne lit aucun controle JavaFX. */
     private Collection<String> plantesEnValeur() {
-        Plante p = choisie();
-        return p != null && p.index >= 0 ? List.of("p" + p.index) : List.of();
+        List<String> r = new ArrayList<>();
+        for (int id : idsChoisis) {
+            Plante p = PlanteSuivi.plante(id);
+            if (p != null && p.index >= 0) r.add("p" + p.index);
+        }
+        return r;
     }
 
-    private Plante choisie() {
-        return table == null ? null : table.getSelectionModel().getSelectedItem();
+    /**
+     * Clic de souris sur une ligne (fil JavaFX) : la plante est cliquee dans
+     * le jeu. Clic gauche seulement, ligne restee choisie (un Cmd/Ctrl + clic
+     * qui la retire n'envoie rien), garde anti-repetition de PlanteVue.Clic.
+     */
+    private void surClicLigne(TableRow<Plante> row, MouseEvent e) {
+        if (e.getButton() != MouseButton.PRIMARY || row.isEmpty()) return;
+        Plante p = row.getItem();
+        if (p == null || occupe.get()) return;          // un travail en cours : seulement la fleche
+        if (Salle.gp() == null || !Salle.dansUneSalle() || !PlanteSuivi.branche()) return;
+        if (!clic.accepter(p.id, true, row.isSelected(), System.currentTimeMillis())) return;
+        int id = p.id;
+        fileClics.execute(() -> {
+            try { PlanteSuivi.enActionExplicite(() -> PlanteSuivi.cliquer(id)); }
+            catch (Throwable t) { Journal.debug("clic sur la plante " + id + " : " + t); }
+            Salle.sommeil(150);
+        });
+    }
+
+    private static List<String> jetons(List<Plante> l) {
+        List<String> r = new ArrayList<>();
+        for (Plante p : l) if (p.index >= 0) r.add("p" + p.index);
+        return r;
+    }
+
+    private void majBoutonsSelection() {
+        List<Plante> sel = selection();
+        boolean libre = !occupe.get();
+        int vivantes = 0, recolte = 0, compost = 0;
+        for (Plante p : sel) {
+            if (!p.morte) vivantes++;
+            if (aRecolter(p)) recolte++;
+            if (aComposter(p)) compost++;
+        }
+        boolean couple = Reproduction.appris() && coupleImpossible(sel) == null;
+        sSoigner.setDisable(!libre || vivantes == 0);
+        sRecolter.setDisable(!libre || recolte == 0);
+        sComposter.setDisable(!libre || compost == 0);
+        sReproduire.setDisable(!libre || !couple);
+        if (mSoigner != null) {
+            mSoigner.setDisable(sSoigner.isDisable());
+            mRecolter.setDisable(sRecolter.isDisable());
+            mComposter.setDisable(sComposter.isDisable());
+            mReproduire.setDisable(sReproduire.isDisable());
+        }
     }
 
     // ------------------------------------------------------- mises a jour
@@ -277,101 +441,294 @@ public class OngletPlantes {
             Platform.runLater(() -> { majPrevue.set(false); rafraichir(); });
     }
 
-    /** Ordre : la plus urgente d'abord, inconnues ensuite, mortes a la fin. */
-    private static int rangUrgence(Plante p) { return p.morte ? 2 : (p.resteVie() < 0 ? 1 : 0); }
+    private void rafraichir() {
+        rafraichirLignes(false);
+        majResume();
+    }
 
-    private static List<Plante> trier(List<Plante> l) {
-        l.sort(Comparator.comparingInt(OngletPlantes::rangUrgence)
-                .thenComparingLong(Plante::resteVie)
-                .thenComparing(p -> p.nom == null ? "" : p.nom, String.CASE_INSENSITIVE_ORDER));
+    /**
+     * Met la liste a jour SANS la remplacer : on retire les plantes parties,
+     * on ajoute les nouvelles ; la selection et le defilement restent. Les
+     * valeurs (vie...) sont relues par table.refresh().
+     * @param retrier remet aussi l'ordre d'urgence et reapplique le filtre
+     *                (les etats changent avec le temps).
+     */
+    private void rafraichirLignes(boolean retrier) {
+        garderSelection(() -> {
+            Map<Integer, Plante> actuelles = new HashMap<>();
+            for (Plante p : PlanteSuivi.plantes()) actuelles.put(p.id, p);
+            boolean change = lignes.removeIf(p -> actuelles.get(p.id) != p);
+            Set<Integer> deja = new HashSet<>();
+            for (Plante p : lignes) deja.add(p.id);
+            List<Plante> nouvelles = new ArrayList<>();
+            for (Plante p : actuelles.values()) if (!deja.contains(p.id)) nouvelles.add(p);
+            if (!nouvelles.isEmpty()) {
+                nouvelles.sort(PlanteVue.URGENCE);
+                lignes.addAll(nouvelles);
+                change = true;
+            }
+            if (change || retrier) {
+                List<Plante> ordre = new ArrayList<>(lignes);
+                ordre.sort(PlanteVue.URGENCE);
+                if (!ordre.equals(lignes)) FXCollections.sort(lignes, PlanteVue.URGENCE);
+                if (filtreAChange()) appliquerFiltre();
+            }
+        });
+        table.refresh();
+    }
+
+    /** Une plante entre ou sort du filtre (son etat a change) ? */
+    private boolean filtreAChange() {
+        String r = recherche.getText();
+        Set<Plante> dedans = Collections.newSetFromMap(new IdentityHashMap<>());
+        dedans.addAll(filtrees);
+        for (Plante p : lignes) if (PlanteVue.garder(p, filtre, r, aMoi(p)) != dedans.contains(p)) return true;
+        return false;
+    }
+
+    private void appliquerFiltre() {
+        Filtre f = filtre;
+        String r = recherche.getText();
+        garderSelection(() -> filtrees.setPredicate(p -> PlanteVue.garder(p, f, r, aMoi(p))));
+        majResume();
+    }
+
+    private boolean gardee = false;
+
+    /** Fait r puis rechoisit les memes plantes (par id). */
+    private void garderSelection(Runnable r) {
+        if (gardee) { r.run(); return; }          // deja dans une mise a jour gardee
+        List<Integer> ids = new ArrayList<>(idsChoisis);
+        gardee = true;
+        try { r.run(); } finally { gardee = false; }
+        if (ids.isEmpty()) return;
+        TableView.TableViewSelectionModel<Plante> sm = table.getSelectionModel();
+        Set<Integer> voulus = new HashSet<>(ids);
+        boolean pareil = sm.getSelectedItems().size() == voulus.size();
+        for (Plante p : sm.getSelectedItems()) if (p == null || !voulus.contains(p.id)) { pareil = false; break; }
+        if (pareil) return;
+        sm.clearSelection();
+        int focus = -1;
+        for (int i = 0; i < table.getItems().size(); i++) {
+            Plante p = table.getItems().get(i);
+            if (voulus.contains(p.id)) { sm.select(i); if (p.id == ids.get(0)) focus = i; }
+        }
+        if (focus >= 0) { sm.select(focus); table.getFocusModel().focus(focus); }
+    }
+
+    private void majResume() {
+        List<Plante> toutes = new ArrayList<>(lignes);
+        Bilan b = PlanteVue.bilan(toutes, this::aMoi);
+        boolean libre = !occupe.get();
+
+        if (Salle.gp() == null) resume.setText("L'Atelier n'est pas encore prêt.");
+        else if (!Salle.dansUneSalle()) resume.setText("Entre dans un appart pour voir ses plantes.");
+        else if (!PlanteSuivi.branche()) resume.setText("L'écoute des plantes s'installe…");
+        else if (!PlanteSuivi.listeRecue && b.total == 0) resume.setText("Ressors et reviens dans l'appart pour voir ses plantes.");
+        else resume.setText(PlanteVue.resume(b));
+
+        // Ligne discrete : soins du jour, qui tu es.
+        List<String> d = new ArrayList<>();
+        int s = PlanteSuivi.soinsRestants;
+        d.add(s < 0 ? "Soins du jour : ?" : "Soins du jour : " + s);
+        String moi = moi();
+        if (moi != null) d.add("Toi : " + moi);
+        details.setText(String.join(" · ", d));
+        montrer(ligneMonNom, PlanteSuivi.monId <= 0 && PlanteSuivi.monNom == null);
+
+        int couples = couplesPossibles().size();
+        bSoigner.setText(PlanteVue.libelle("Soigner", b.aSoigner));
+        bRecolter.setText(PlanteVue.libelle("Récolter", b.aRecolter));
+        bComposter.setText(PlanteVue.libelle("Composter", b.aComposter));
+        bReproduire.setText(couples == 0 ? "Reproduire" : couples == 1 ? "Reproduire 1 couple" : "Reproduire " + couples + " couples");
+        bSoigner.setDisable(!libre || b.aSoigner == 0);
+        bRecolter.setDisable(!libre || b.aRecolter == 0);
+        bComposter.setDisable(!libre || b.aComposter == 0);
+        bReproduire.setDisable(!libre || couples == 0 || !Reproduction.appris());
+        montrer(reproLbl, !Reproduction.appris());
+
+        int[] n = {b.total, b.aSoigner, b.aRecolter, b.mortes, b.miennes};
+        for (Filtre f : Filtre.values()) {
+            int k = n[f.ordinal()];
+            filtres.get(f).setText(f == Filtre.TOUTES || k == 0 ? f.texte : f.texte + " " + k);
+        }
+        majBoutonsSelection();
+    }
+
+    // ---------------------------------------------------------- qui suis-je
+
+    /** Nom saisi : lu sur le fil JavaFX seulement, puis passe aux travaux. */
+    private volatile String nomSaisi = "";
+
+    private boolean aMoi(Plante p) {
+        if (Platform.isFxApplicationThread() && monNomTxt != null) nomSaisi = monNomTxt.getText();
+        return PlanteSuivi.estAMoi(p, nomSaisi);
+    }
+
+    private boolean aRecolter(Plante p) { return PlanteVue.aRecolter(p, aMoi(p)); }
+    private boolean aComposter(Plante p) { return PlanteVue.aComposter(p, aMoi(p)); }
+
+    private String moi() {
+        if (PlanteSuivi.monNom != null) return PlanteSuivi.monNom;
+        String s = nomSaisi;
+        return s == null || s.isBlank() ? null : s.trim();
+    }
+
+    /** Les plantes de la salle qui passent ce test, les plus urgentes d'abord. */
+    private List<Plante> cibles(Predicate<Plante> test) {
+        List<Plante> l = new ArrayList<>();
+        for (Plante p : PlanteSuivi.plantes()) if (test.test(p)) l.add(p);
+        l.sort(PlanteVue.URGENCE);
         return l;
     }
 
-    private void rafraichir() {
-        Plante sel = choisie();
-        List<Plante> l = trier(PlanteSuivi.plantes());
-        lignes.setAll(l);
-        if (sel != null) {
-            for (Plante p : l) if (p.id == sel.id) { table.getSelectionModel().select(p); break; }
-        }
-        table.refresh();
-        int vivantes = 0, mortes = 0, aRecolter = 0, danger = 0;
-        for (Plante p : l) {
-            if (p.morte) mortes++; else vivantes++;
-            if (!p.morte && p.recoltable) aRecolter++;
-            long v = p.resteVie();
-            if (!p.morte && v >= 0 && v < URGENT_S) danger++;
-        }
-        resume.setText(l.isEmpty() ? "Aucune plante vue"
-                : l.size() + " plante(s) · " + vivantes + " vivante(s) · " + mortes + " morte(s)"
-                  + (aRecolter > 0 ? " · " + aRecolter + " à récolter" : "")
-                  + (danger > 0 ? " · " + danger + " en danger" : ""));
+    // ----------------------------------------------- apercu puis action
+
+    /** Montre l'apercu chiffre ; l'action ne part qu'apres « Confirmer ». */
+    private void proposer(String texte, String libelle, Runnable action) {
+        apercu.setText(Ui.accorder(texte));
+        confirmer.setText(libelle);
+        confirmer.setOnAction(e -> { cacherConfirmation(); action.run(); });
+        montrer(confirmation, true);
+    }
+
+    private void cacherConfirmation() { montrer(confirmation, false); }
+
+    private static List<Integer> ids(List<Plante> l) {
+        List<Integer> r = new ArrayList<>();
+        for (Plante p : l) r.add(p.id);
+        return r;
+    }
+
+    private void proposerSoins(List<Plante> l) {
+        if (l.isEmpty()) { dire("Aucune plante à soigner."); return; }
         int s = PlanteSuivi.soinsRestants;
-        soinsLbl.setText(s < 0 ? "Soins restants aujourd'hui : inconnu (lu à la connexion)."
-                : "Soins restants aujourd'hui : " + s);
-        if ((monNomTxt.getText() == null || monNomTxt.getText().isBlank()) && PlanteSuivi.monNom != null)
-            monNomTxt.setPromptText("Moi : " + PlanteSuivi.monNom);
+        String reste = s < 0 ? "" : s == 0 ? " Le jeu dit qu'il ne te reste aucun soin aujourd'hui."
+                : " Il te reste " + s + " soin(s) aujourd'hui.";
+        List<Integer> ids = ids(l);
+        proposer("Soigner " + l.size() + " plante(s) : " + PlanteVue.noms(l, 4) + "." + reste,
+                PlanteVue.libelle("Soigner", l.size()), () -> lancer("plantes-soigner", () -> soigner(ids)));
     }
 
-    private void majVoyants() {
-        GPresets gp = Salle.gp();
-        if (gp == null) vSalle.regler("absent", "L'Atelier n'est pas encore prêt");
-        else if (!Salle.dansUneSalle()) vSalle.regler("absent", "Entre dans un appart.");
-        else vSalle.regler("ok", "Oui.");
-
-        int n = lignes.size();
-        if (!PlanteSuivi.branche()) vListe.regler("attente", "Écoute en cours d'installation…");
-        else if (PlanteSuivi.nbUsers == 0)
-            vListe.regler("absent", "Demandée au jeu…");
-        else vListe.regler(n > 0 ? "ok" : "attente", n > 0 ? n + " suivie(s)" : "Aucune vue");
-
-        // Combien de plantes ont leur fiche, et non le nombre de paquets recus
-        // (qui montait sans fin : le jeu en redemande aussi de lui-meme).
-        int avecFiche = 0;
-        for (Plante p : lignes) if (p.infos) avecFiche++;
-        if (n == 0) vInfos.regler("attente", "Aucune plante");
-        else vInfos.regler(avecFiche == n ? "ok" : "attente",
-                avecFiche + " / " + n + " lu(s)"
-                + (avecFiche < n ? (occupe.get() ? " — lecture en cours…" : " — lecture automatique en cours…") : ""));
-
-        String moi = PlanteSuivi.monNom;
-        String saisi = monNomTxt.getText();
-        if (moi != null) vMoi.regler("ok", moi + (PlanteSuivi.monId > 0 ? " (#" + PlanteSuivi.monId + ")" : ""));
-        else if (saisi != null && !saisi.isBlank()) vMoi.regler("ok", saisi.trim() + " (saisi)");
-        else vMoi.regler("attente", "Pas encore détecté (il arrive à la connexion)");
+    private void proposerRecolte(List<Plante> l) {
+        if (l.isEmpty()) { dire("Aucune de tes plantes n'est prête à récolter."); return; }
+        List<Integer> ids = ids(l);
+        proposer("Récolter " + l.size() + " plante(s) : " + PlanteVue.noms(l, 4) + ". Elles disparaissent.",
+                PlanteVue.libelle("Récolter", l.size()), () -> lancer("plantes-recolter", () -> recolter(ids)));
     }
+
+    private void proposerCompost(List<Plante> l) {
+        if (l.isEmpty()) { dire("Aucune de tes plantes n'est morte ici."); return; }
+        List<Integer> ids = ids(l);
+        proposer("Composter " + l.size() + " plante(s) morte(s) : " + PlanteVue.noms(l, 4) + ". C'est définitif.",
+                PlanteVue.libelle("Composter", l.size()), () -> lancer("plantes-composter", () -> composter(ids)));
+    }
+
+    private void proposerReproductionTout() {
+        if (!Reproduction.appris()) { dire("Fais d'abord une reproduction à la main dans le jeu : l'Atelier apprend comment faire."); return; }
+        List<Plante[]> couples = couplesPossibles();
+        if (couples.isEmpty()) { dire("Aucun couple possible : il faut deux plantes adultes qui peuvent se reproduire."); return; }
+        StringBuilder sb = new StringBuilder(couples.size() + " couple(s), des plus rares aux moins rares :");
+        int i = 0;
+        for (Plante[] c : couples) {
+            if (++i > 6) { sb.append("\n…"); break; }
+            sb.append("\n• ").append(c[0].nom).append(" + ").append(c[1].nom)
+              .append(" (rareté ").append(c[0].rarete).append(" et ").append(c[1].rarete).append(')');
+        }
+        List<int[]> l = new ArrayList<>();
+        for (Plante[] c : couples) l.add(new int[]{c[0].id, c[1].id});
+        proposer(sb.toString(), "Reproduire", () -> lancer("plantes-reproduction", () -> reproduire(l)));
+    }
+
+    /** Boutons sous le tableau et clic droit. Une seule plante : tout de suite ; plusieurs : apercu d'abord. */
+    private void agirSelection(String quoi) {
+        List<Plante> sel = selection();
+        if (sel.isEmpty()) { dire("Choisis une plante dans le tableau."); return; }
+        sel.sort(PlanteVue.URGENCE);
+        switch (quoi) {
+            case "soigner": {
+                List<Plante> l = new ArrayList<>();
+                for (Plante p : sel) if (!p.morte) l.add(p);
+                if (l.size() == 1) { int id = l.get(0).id; lancer("plantes-soigner", () -> soigner(List.of(id))); }
+                else proposerSoins(l);
+                break;
+            }
+            case "recolter": {
+                List<Plante> l = new ArrayList<>();
+                for (Plante p : sel) if (aRecolter(p)) l.add(p);
+                if (l.size() == 1) { int id = l.get(0).id; lancer("plantes-recolter", () -> recolter(List.of(id))); }
+                else proposerRecolte(l);
+                break;
+            }
+            case "composter": {
+                List<Plante> l = new ArrayList<>();
+                for (Plante p : sel) if (aComposter(p)) l.add(p);
+                proposerCompost(l);                       // definitif : toujours un apercu
+                break;
+            }
+            case "reproduire": {
+                String non = coupleImpossible(sel);
+                if (non != null) { dire(non); return; }
+                if (!Reproduction.appris()) { dire("Fais d'abord une reproduction à la main dans le jeu : l'Atelier apprend comment faire."); return; }
+                List<int[]> l = List.<int[]>of(new int[]{sel.get(0).id, sel.get(1).id});
+                lancer("plantes-reproduction", () -> reproduire(l));
+                break;
+            }
+            default: break;
+        }
+    }
+
+    private String coupleImpossible(List<Plante> sel) {
+        return PlanteVue.coupleImpossible(sel, p -> Reproduction.disponible(p, nomSaisi));
+    }
+
+    private List<Plante[]> couplesPossibles() {
+        List<Plante> dispo = new ArrayList<>();
+        for (Plante p : PlanteSuivi.plantes()) if (Reproduction.disponible(p, nomSaisi)) dispo.add(p);
+        return Reproduction.couples(dispo);
+    }
+
+    // -------------------------------------------------------------- travaux
 
     private void dire(String s) {
         if (Platform.isFxApplicationThread()) etat.setText(s);
         else Platform.runLater(() -> etat.setText(s));
     }
 
-    /** Resultat d'une action : dans le jeu (Journal), le genre dit explicitement. */
+    /** Resultat d'une action : une seule fois, dans le jeu (Journal). */
     private void succes(String s) { Ui.succes(etat, s); }
     private void erreur(String s) { Ui.erreur(etat, s); }
 
-    // -------------------------------------------------------------- travaux
+    private void avancer(int i, int n, String texte) {
+        Platform.runLater(() -> {
+            progres.setProgress(n <= 0 ? ProgressBar.INDETERMINATE_PROGRESS : i / (double) n);
+            progresTxt.setText(Ui.accorder(texte + (n > 1 ? " (" + i + "/" + n + ")" : "")));
+        });
+    }
 
-    /** Un seul travail reseau a la fois, hors fil JavaFX. */
+    /** Un seul travail reseau a la fois, hors fil JavaFX. Seul endroit ou les envois vers les plantes sont permis. */
     private void lancer(String nom, Runnable r) {
-        if (!occupe.compareAndSet(false, true)) { dire("Un travail est déjà en cours (« Arrêter » pour l'interrompre)."); return; }
+        if (!occupe.compareAndSet(false, true)) { dire("Un travail est déjà en cours : « Arrêter » pour l'interrompre."); return; }
         arret = false;
-        Platform.runLater(() -> stop.setDisable(false));
+        cacherConfirmation();
+        progres.setProgress(ProgressBar.INDETERMINATE_PROGRESS);
+        progresTxt.setText("");
+        montrer(progression, true);
+        majResume();
         Salle.tache(nom, () -> {
-            // Seul endroit ou les envois vers les plantes sont permis : un bouton.
             try { PlanteSuivi.enActionExplicite(r); }
             catch (Throwable t) { Ui.erreur(etat, "Erreur pendant le travail sur les plantes", t); }
             finally {
                 occupe.set(false);
-                Platform.runLater(() -> stop.setDisable(true));
+                Platform.runLater(() -> { montrer(progression, false); rafraichir(); });
             }
         });
     }
 
     private boolean pret() {
         if (Salle.gp() == null) { erreur("Impossible : l'Atelier n'est pas encore prêt."); return false; }
-        if (!Salle.dansUneSalle()) { erreur("Impossible : entre d'abord dans une salle."); return false; }
-        if (!PlanteSuivi.branche()) { dire("L'écoute des paquets s'installe : encore un instant."); return false; }
+        if (!Salle.dansUneSalle()) { erreur("Impossible : entre d'abord dans un appart."); return false; }
+        if (!PlanteSuivi.branche()) { dire("L'écoute des plantes s'installe : encore un instant."); return false; }
         return true;
     }
 
@@ -379,16 +736,17 @@ public class OngletPlantes {
     private boolean lireInfo(Plante p) {
         long t0 = System.currentTimeMillis();
         if (!PlanteSuivi.demanderInfo(p.id)) return false;
+        return attendreFiche(p.id, t0);
+    }
+
+    private static boolean attendreFiche(int id, long t0) {
         for (int i = 0; i < 30; i++) {
             Salle.sommeil(50);
-            Plante q = PlanteSuivi.plante(p.id);
+            Plante q = PlanteSuivi.plante(id);
             if (q != null && q.infoRecue >= t0) return true;
         }
         return false;
     }
-
-
-
 
     /** Resultat d'un soin : fait, refuse par le serveur, ou sans reponse claire. */
     private enum Soin { FAIT, REFUSE, INCERTAIN }
@@ -414,88 +772,115 @@ public class OngletPlantes {
         return PlanteSuivi.dernierRefusSoin >= t0 ? Soin.REFUSE : Soin.INCERTAIN;
     }
 
-    private boolean traiterUne(Plante p, boolean seule) {
-        if (!pret()) return false;
-        if (p.morte) { if (seule) dire(p.nom + " est morte : on ne peut plus la traiter."); return false; }
-        Soin r = traiter(p);
-        prevoirMaj();
-        if (seule) {
-            if (r == Soin.FAIT) succes(p.nom + " traitée.");
-            else erreur(r == Soin.REFUSE ? p.nom + " : soin refusé par le jeu (déjà traitée, ou plus de soins aujourd'hui)."
-                    : p.nom + " : soin envoyé, effet non confirmé.");
-        }
-        return r == Soin.FAIT;
-    }
-
     /**
-     * Traite TOUTES les plantes vivantes (ou seulement celles qui en ont besoin
-     * si la case est cochee). On ne s'arrete plus sur une simple absence de
-     * confirmation : seulement quand le serveur refuse trois fois de suite,
-     * signe qu'il n'y a plus de soins aujourd'hui.
+     * Soigne ces plantes, une par une. On s'arrete quand le serveur refuse
+     * trois fois de suite : plus de soins aujourd'hui.
      */
-    private void traiterToutes() {
+    private void soigner(List<Integer> ids) {
         if (!pret()) return;
-        boolean filtre = true;          // seulement celles qui en ont besoin
-        List<Plante> l = new ArrayList<>();
-        for (Plante p : trier(PlanteSuivi.plantes()))
-            if (!p.morte && (!filtre || p.aBesoin())) l.add(p);
-        if (l.isEmpty()) { dire(filtre ? "Aucune plante n'a besoin de soin." : "Aucune plante vivante."); return; }
         int faits = 0, refus = 0, incertains = 0, refusDeSuite = 0, i = 0;
-        String fin = null;
-        for (Plante p : l) {
+        String fin = null, seul = null;
+        for (int id : ids) {
             if (arret) { fin = "arrêté"; break; }
-            dire("Soins… " + (++i) + "/" + l.size() + " : " + p.nom);
+            Plante p = PlanteSuivi.plante(id);
+            i++;
+            if (p == null || p.morte) continue;
+            seul = p.nom;
+            avancer(i, ids.size(), "Soin de " + p.nom);
             Soin r = traiter(p);
             if (r == Soin.FAIT) { faits++; refusDeSuite = 0; }
             else if (r == Soin.REFUSE) {
                 refus++;
-                if (++refusDeSuite >= 3) { fin = "le jeu refuse : plus de soins disponibles aujourd'hui"; break; }
+                if (++refusDeSuite >= 3) { fin = "le jeu refuse : plus de soins aujourd'hui"; break; }
             } else { incertains++; refusDeSuite = 0; }
-            Salle.sommeil(700);
+            if (i < ids.size()) Salle.sommeil(PAUSE_MS);
         }
         try { PlanteSuivi.demanderProfil(); } catch (Throwable ignored) { }   // soins restants a jour
         prevoirMaj();
-        String bilan = faits + " plante(s) traitée(s)"
+        if (ids.size() == 1 && seul != null) {
+            if (faits == 1) succes(seul + " soignée.");
+            else if (refus == 1) erreur(seul + " : soin refusé par le jeu (déjà soignée, ou plus de soins aujourd'hui).");
+            else erreur(seul + " : soin envoyé, effet non confirmé.");
+            return;
+        }
+        String bilan = faits + " plante(s) soignée(s)"
                 + (incertains > 0 ? ", " + incertains + " sans confirmation" : "")
-                + (refus > 0 ? ", " + refus + " refusée(s) (déjà traitées ?)" : "")
+                + (refus > 0 ? ", " + refus + " refusée(s)" : "")
                 + (fin != null ? " — " + fin + "." : ".");
-        if (faits == 0 && (refus > 0 || incertains > 0)) erreur(bilan); else succes(bilan);
+        if (faits == 0) erreur(bilan); else succes(bilan);
+    }
+
+    private void recolter(List<Integer> ids) {
+        if (!pret()) return;
+        int n = 0, i = 0;
+        String seul = null;
+        for (int id : ids) {
+            if (arret) break;
+            Plante p = PlanteSuivi.plante(id);
+            i++;
+            if (p == null || p.morte) continue;
+            seul = p.nom;
+            avancer(i, ids.size(), "Récolte de " + p.nom);
+            if (PlanteSuivi.recolter(p.id)) n++;
+            if (i < ids.size()) Salle.sommeil(1000);
+        }
+        prevoirMaj();
+        if (n == 0) erreur("Échec : aucune récolte envoyée.");
+        else if (ids.size() == 1) succes("Récolte de " + seul + " demandée.");
+        else succes(n + " récolte(s) demandée(s)" + (arret ? " (arrêté)." : "."));
+    }
+
+    private void composter(List<Integer> ids) {
+        if (!pret()) return;
+        int n = 0, i = 0;
+        for (int id : ids) {
+            if (arret) break;
+            Plante p = PlanteSuivi.plante(id);
+            i++;
+            if (p == null || !p.morte) continue;
+            avancer(i, ids.size(), "Compostage de " + p.nom);
+            if (PlanteSuivi.composter(p.id)) n++;
+            if (i < ids.size()) Salle.sommeil(1000);
+        }
+        prevoirMaj();
+        if (n == 0 && !arret) erreur("Échec : aucun compostage envoyé.");
+        else succes(n + " plante(s) compostée(s)" + (arret ? " (arrêté)." : "."));
+    }
+
+    private void reproduire(List<int[]> couples) {
+        if (!pret()) return;
+        int ok = 0, echecs = 0, i = 0;
+        for (int[] c : couples) {
+            if (arret) break;
+            Plante a = PlanteSuivi.plante(c[0]), b = PlanteSuivi.plante(c[1]);
+            i++;
+            if (a == null || b == null) { echecs++; continue; }
+            avancer(i, couples.size(), "Reproduction de " + a.nom + " + " + b.nom);
+            if (Reproduction.reproduire(a.id, b.id)) ok++; else echecs++;
+            lireInfo(a);
+            lireInfo(b);
+            if (i < couples.size()) Salle.sommeil(1000);
+        }
+        prevoirMaj();
+        String bilan = ok + " reproduction(s) réussie(s)" + (echecs > 0 ? ", " + echecs + " sans réponse du jeu" : "")
+                + (arret ? " (arrêté)." : ".") + (ok > 0 ? " Les graines sont dans ton inventaire." : "");
+        if (ok == 0) erreur(bilan); else succes(bilan);
     }
 
     // ----------------------------------------------------- liste auto
 
     /**
-     * Surveillance passive. Si l'ecoute s'est installee apres ton entree dans
-     * la salle, la liste Users a ete manquee : on redemande le contenu de la
-     * salle (GetHeightMap, comme le moteur de l'Atelier), une fois par salle. Ce n'est pas
-     * un clic : aucune plante n'est visee ni selectionnee. On ne demande
-     * JAMAIS la fiche d'une plante ici (le jeu la montrerait comme un clic).
+     * Les fiches des plantes (vie, croissance) se lisent toutes seules, sans
+     * rien ouvrir dans le jeu (PlanteSuivi.demanderInfoSilencieuse) : celles
+     * jamais lues ou lues il y a plus de 10 min. Une a la fois : on attend la
+     * reponse avant la suivante, puis 150 ms. La vie sert a compter les
+     * plantes a soigner (resume, bouton Soigner, filtre).
+     *
+     * La liste des plantes, elle, n'est jamais redemandee (pas de
+     * GetHeightMap : le jeu rechargerait toute la salle) ; si l'ecoute s'est
+     * installee apres l'entree dans l'appart, le resume demande d'y revenir.
      */
-    private void demarrerListeAuto() {
-        Thread t = new Thread(() -> {
-            while (true) {
-                try {
-                    int salle = -1;
-                    try { salle = Salle.etat() == null ? -1 : Salle.etat().getRoomId(); } catch (Throwable ignored) { }
-                    if (salle > 0 && salle != salleListeDemandee && PlanteSuivi.branche()
-                            && PlanteSuivi.nbUsers == 0 && PlanteSuivi.plantes().isEmpty()) {
-                        salleListeDemandee = salle;
-                        try { PlanteSuivi.redemanderSalle(); } catch (Throwable ignored) { }
-                    }
-                } catch (Throwable ignored) { }
-                Salle.sommeil(2000);
-            }
-        }, "atelier-plantes-liste");
-        t.setDaemon(true);
-        t.start();
-    }
-
-    /**
-     * Les fiches des plantes (vie, croissance, rarete) se lisent toutes seules,
-     * vite et sans rien ouvrir dans le jeu (PlanteSuivi.demanderInfoSilencieuse) :
-     * celles jamais lues ou lues il y a plus de 10 min, une toutes les 150 ms.
-     */
-    private final java.util.Map<Integer, Long> demandees = new java.util.concurrent.ConcurrentHashMap<>();
+    private final Map<Integer, Long> demandees = new java.util.concurrent.ConcurrentHashMap<>();
 
     private void demarrerFichesAuto() {
         Thread t = new Thread(() -> {
@@ -503,7 +888,9 @@ public class OngletPlantes {
                 Salle.sommeil(2000);
                 try {
                     if (!Salle.installeeDepuis(3000) || occupe.get()) continue;
-                    List<Plante> l = PlanteSuivi.aLire(trier(PlanteSuivi.plantes()), System.currentTimeMillis());
+                    List<Plante> tri = PlanteSuivi.plantes();
+                    tri.sort(PlanteVue.URGENCE);
+                    List<Plante> l = PlanteSuivi.aLire(tri, System.currentTimeMillis());
                     int n = 0;
                     long maintenant = System.currentTimeMillis();
                     for (Plante p : l) {
@@ -512,7 +899,9 @@ public class OngletPlantes {
                         if (d != null && maintenant - d < 60_000) continue;     // deja demandee il y a peu
                         demandees.put(p.id, maintenant);
                         n++;
+                        long t0 = System.currentTimeMillis();
                         PlanteSuivi.demanderInfoSilencieuse(p.id);
+                        attendreFiche(p.id, t0);
                         Salle.sommeil(150);
                     }
                     if (n > 0) prevoirMaj();
@@ -521,149 +910,5 @@ public class OngletPlantes {
         }, "atelier-plantes-fiches");
         t.setDaemon(true);
         t.start();
-    }
-
-    // -------------------------------------------------------- reproduction
-
-    private volatile int salleListeDemandee = -1;
-    private List<Plante[]> couplesPrevus = List.of();
-
-    private List<Plante[]> couplesPossibles() {
-        String nom = monNomTxt.getText();
-        List<Plante> dispo = new ArrayList<>();
-        for (Plante p : PlanteSuivi.plantes()) if (Reproduction.disponible(p, nom)) dispo.add(p);
-        return Reproduction.couples(dispo);
-    }
-
-    private void majRepro() {
-        int n = couplesPossibles().size();
-        reproLbl.setText((Reproduction.appris() ? "" : "Pas encore appris : fais une reproduction à la main une fois.  ")
-                + (n == 0 ? "Aucun couple possible pour l'instant." : n + " couple(s) possible(s)."));
-    }
-
-    private void preparerReproduction() {
-        if (!Reproduction.appris()) {
-            dire("Fais d'abord une reproduction à la main dans le jeu : l'Atelier apprend comment faire.");
-            return;
-        }
-        couplesPrevus = couplesPossibles();
-        if (couplesPrevus.isEmpty()) { dire("Aucun couple possible : il faut des plantes adultes qui peuvent se reproduire."); return; }
-        StringBuilder sb = new StringBuilder(couplesPrevus.size() + " couple(s), des plus hauts niveaux aux plus bas :");
-        int i = 0;
-        for (Plante[] c : couplesPrevus) {
-            if (++i > 8) { sb.append("\n…"); break; }
-            sb.append("\n• ").append(c[0].nom).append(" (niveau ").append(c[0].rarete).append(") + ")
-              .append(c[1].nom).append(" (niveau ").append(c[1].rarete).append(')');
-        }
-        apercuRepro.setText(sb.toString());
-        confirmerRepro.setOnAction(e -> {
-            montrerConfirmation(false);
-            List<Plante[]> l = couplesPrevus;
-            lancer("plantes-reproduction", () -> reproduireTout(l));
-        });
-        montrerConfirmation(true);
-    }
-
-    private void montrerConfirmation(boolean v) {
-        confirmationRepro.setVisible(v);
-        confirmationRepro.setManaged(v);
-    }
-
-    private void reproduireTout(List<Plante[]> couples) {
-        if (!pret()) return;
-        int ok = 0, echecs = 0, i = 0;
-        for (Plante[] c : couples) {
-            if (arret) break;
-            dire("Reproduction " + (++i) + "/" + couples.size() + " : " + c[0].nom + " + " + c[1].nom);
-            if (Reproduction.reproduire(c[0].id, c[1].id)) ok++; else echecs++;
-            lireInfo(c[0]);
-            lireInfo(c[1]);
-            Salle.sommeil(1000);
-        }
-        prevoirMaj();
-        String bilan = ok + " reproduction(s) réussie(s)" + (echecs > 0 ? ", " + echecs + " sans résultat du jeu" : "")
-                + (arret ? " (arrêté)." : ".") + (ok > 0 ? " Les graines sont dans ton inventaire." : "");
-        if (ok == 0 && echecs > 0) erreur(bilan); else succes(bilan);
-    }
-
-    private boolean recolterUne(Plante p, String nom, boolean seule) {
-        if (!pret()) return false;
-        if (!aMoiConnu(nom)) return false;
-        if (!PlanteSuivi.estAMoi(p, nom)) { if (seule) dire(p.nom + " n'est pas à toi."); return false; }
-        if (p.morte) { if (seule) dire(p.nom + " est morte : composte-la plutôt."); return false; }
-        if (!p.recoltable && !p.adulte()) { if (seule) dire(p.nom + " n'est pas encore adulte."); return false; }
-        if (!PlanteSuivi.recolter(p.id)) { if (seule) erreur("Échec : récolte de " + p.nom + " non envoyée."); return false; }
-        if (seule) succes("Récolte de " + p.nom + " demandée.");
-        return true;
-    }
-
-    private void toutRecolter(String nom) {
-        if (!pret() || !aMoiConnu(nom)) return;
-        int n = 0;
-        for (Plante p : trier(PlanteSuivi.plantes())) {
-            if (arret) break;
-            if (p.morte || !(p.recoltable || p.adulte()) || !PlanteSuivi.estAMoi(p, nom)) continue;
-            dire("Récolte de " + p.nom + "…");
-            if (recolterUne(p, nom, false)) n++;
-            Salle.sommeil(1000);
-        }
-        if (n == 0) dire("Aucune de tes plantes n'est prête à récolter.");
-        else succes(n + " récolte(s) demandée(s)" + (arret ? " (arrêté)." : "."));
-    }
-
-    private void composter() {
-        Plante p = choisie();
-        if (p == null) { dire("Choisis une plante morte dans le tableau."); return; }
-        String nom = monNomTxt.getText();
-        if (!aMoiConnu(nom)) return;
-        if (!PlanteSuivi.estAMoi(p, nom)) { dire(p.nom + " n'est pas à toi."); return; }
-        if (!p.morte) { dire(p.nom + " est vivante : on ne composte que les plantes mortes."); return; }
-        Alert a = new Alert(Alert.AlertType.CONFIRMATION,
-                "Composter " + p.nom + " ? C'est définitif : la plante disparaît.",
-                ButtonType.OK, ButtonType.CANCEL);
-        a.setHeaderText(null);
-        a.setTitle("Composter");
-        Optional<ButtonType> r = a.showAndWait();
-        if (r.isEmpty() || r.get() != ButtonType.OK) { dire("Compostage annulé."); return; }
-        lancer("plantes-composter", () -> {
-            if (!pret()) return;
-            if (!PlanteSuivi.composter(p.id)) erreur("Échec : compostage de " + p.nom + " non envoyé.");
-            else succes("Compostage de " + p.nom + " demandé.");
-        });
-    }
-
-    /** Composte toutes MES plantes mortes de la salle, apres une seule confirmation. */
-    private void toutComposter() {
-        String nom = monNomTxt.getText();
-        if (!aMoiConnu(nom)) return;
-        List<Plante> mortes = new ArrayList<>();
-        for (Plante p : PlanteSuivi.plantes()) if (p.morte && PlanteSuivi.estAMoi(p, nom)) mortes.add(p);
-        if (mortes.isEmpty()) { dire("Aucune de tes plantes n'est morte dans cet appart."); return; }
-        Alert a = new Alert(Alert.AlertType.CONFIRMATION,
-                "Composter tes " + mortes.size() + " plante(s) morte(s) ? C'est définitif : elles disparaissent.",
-                ButtonType.OK, ButtonType.CANCEL);
-        a.setHeaderText(null);
-        a.setTitle("Tout composter");
-        Optional<ButtonType> r = a.showAndWait();
-        if (r.isEmpty() || r.get() != ButtonType.OK) { dire("Compostage annulé."); return; }
-        lancer("plantes-tout-composter", () -> {
-            if (!pret()) return;
-            int n = 0;
-            for (Plante p : mortes) {
-                if (arret) break;
-                dire("Compostage de " + p.nom + "…");
-                if (PlanteSuivi.composter(p.id)) n++;
-                Salle.sommeil(1000);
-            }
-            String bilan = n + " plante(s) compostée(s)" + (arret ? " (arrêté)." : ".");
-            if (n == 0 && !arret) erreur("Échec : aucun compostage envoyé.");
-            else succes(bilan);
-        });
-    }
-
-    private boolean aMoiConnu(String nom) {
-        if (PlanteSuivi.monId > 0 || PlanteSuivi.monNom != null || (nom != null && !nom.isBlank())) return true;
-        dire("Je ne sais pas qui tu es : écris ton nom Habbo dans le champ « Mes plantes ».");
-        return false;
     }
 }

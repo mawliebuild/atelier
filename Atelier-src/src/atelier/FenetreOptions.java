@@ -66,7 +66,7 @@ final class FenetreOptions {
         HBox boutons = new HBox(8, annuler, ok);
         boutons.setAlignment(Pos.CENTER_RIGHT);
         corps.getChildren().addAll(boutons, etat);
-        corps.setPadding(new Insets(12, 14, 14, 14));
+        corps.setStyle("-fx-padding: 12 14 14 14;");   // la feuille (.fenetre-corps) l'emporte sur setPadding
         corps.setPrefWidth(340);
         corps.getStyleClass().add("fenetre-corps");
 

@@ -128,7 +128,8 @@ public class AtelierLauncher extends GEarth {
 
         onglets.getTabs().add(new OngletInventaire().construire());
         onglets.getTabs().add(new OngletWired().construire());
-        onglets.getTabs().add(new OngletParametres(stage).construire());
+        // Reglages : la connexion y est une partie du menu de gauche
+        onglets.getTabs().add(new OngletParametres(stage).avecConnexion(connexion).construire());
 
         brancherApparts(stage, apparts);
 
@@ -171,7 +172,7 @@ public class AtelierLauncher extends GEarth {
         onglets.getTabs().clear();
         Tab tBuild = parNom.get("Build"), tApparts = parNom.get("Apparts"),
             tWired = parNom.get("Wired"), tInv = parNom.get("Inventaire"),
-            tConnexion = connexion, tParam = parNom.get("Param\u00e8tres");
+            tConnexion = connexion, tParam = parNom.get("Paramètres");
 
         // Les menus suivent le travail, pas l'origine du code :
         //   Construction  un mode : menu lateral en bas a droite (Construction,
@@ -188,7 +189,6 @@ public class AtelierLauncher extends GEarth {
         Tab tInfos = new OngletInfos().construire();
         Tab tConstruction = new OngletConstruction().construire();
         Tab tHistorique = new OutilHistorique().construire();
-        Tab tCapture = new OutilCapture().construire();
         Tab tAnalyse = new OngletAnalyseWired().construire();
         Tab tPlantes = new OngletPlantes().construire();
 
@@ -204,29 +204,27 @@ public class AtelierLauncher extends GEarth {
                 INV = Prerequis.Condition.INVENTAIRE, BC = Prerequis.Condition.BC,
                 MUR = Prerequis.Condition.MUR, COULEUR = Prerequis.Condition.COULEUR;
         // Murs : deux boutons dans le menu lateral, Deplacer et Aligner (ligne / grille).
-        nav.ajouter("murs-deplacer", "D\u00e9placer un mur", Icones.DEPLACER,
-                Navigation.source(tBuild, "D\u00e9placer un mur", "D\u00e9placer").avec(SALLE, DROITS, MUR));
+        nav.ajouter("murs-deplacer", "Déplacer un mur", Icones.DEPLACER,
+                Navigation.source(tBuild, "Déplacer un mur", "Déplacer").avec(SALLE, DROITS, MUR));
         nav.ajouter("murs-aligner", "Aligner des murs", Icones.ALIGNER,
                 Navigation.source(tBuild, "Aligner", "En ligne").avec(SALLE, DROITS, MUR, INV, BC),
                 Navigation.source(tBuild, "Grille", "En grille").avec(SALLE, DROITS, MUR, INV, BC),
-                Navigation.source(tBuild, "\u00c9carts", "\u00c9carts par mobi").avec(NOMS));
+                Navigation.source(tBuild, "Écarts", "Écarts par mobi").avec(NOMS));
         // « Ma salle » n'est plus dans la barre du haut : chacun de ses outils a
         // son bouton en bas a droite du jeu (BarreSalle), qui ouvre la fenetre.
         nav.ajouter("salle-mobis", "Salle", Icones.SALLE,
                 Navigation.source(tApparts, "Ma salle", "Salle")).pleineHauteur();   // seul le tableau defile
-        nav.ajouter("salle-capture", "Capture de l'appart", Icones.CAPTURE,
-                Navigation.source(tCapture, null, "Capture de l'appart").avec(SALLE));
-        nav.ajouter("salle-couleur", "Couleur de d\u00e9cor", Icones.GOUTTE,
-                Navigation.source(tBuild, "Couleur de d\u00e9cor").avec(SALLE, DROITS, COULEUR));
+        nav.ajouter("salle-couleur", "Couleur de décor", Icones.GOUTTE,
+                Navigation.source(tBuild, "Couleur de décor").avec(SALLE, DROITS, COULEUR));
         Tab tHauteur = new OutilHauteur().construire();
         // « Construction » (barre du haut) bascule seulement le mode : pas de fenetre.
         nav.ajouter("construction", "Construction", Icones.CONSTRUCTION);
         nav.ajouter("hauteur-mobis", "Hauteur mobis", Icones.HAUTEUR,
                 Navigation.source(tHauteur, null, "Hauteur fixe").avec(SALLE, DROITS, INV, BC));
-        // Escalier / rampe : ouvert par « Composants » du panneau des calques
+        // Escalier : ouvert par « Composants » du panneau des calques
         // (le miroir, lui, est dans ses Actions). Aucun bouton dans les barres.
-        nav.ajouter("composant-escalier", "Escalier / rampe", Icones.ESCALIER,
-                Navigation.source(tConstruction, "Escalier", "Escalier / rampe").avec(SALLE, DROITS, NOMS, INV, BC));
+        nav.ajouter("composant-escalier", "Escalier", Icones.ESCALIER,
+                Navigation.source(tConstruction, "Escalier", "Escalier").avec(SALLE, DROITS, NOMS, INV, BC));
         // Floor : plus de fenetre d'editeur ; le bouton Floor met l'appart en edition
         // directe (grille du jeu + fenetre d'outils, voir ModeCases / CalqueActions.cases).
         nav.ajouter("apparts", "Apparts", Icones.APPARTS,
@@ -234,10 +232,10 @@ public class AtelierLauncher extends GEarth {
         Tab tCollageWired = new OngletCollageWired().construire();
         nav.ajouter("wired", "Wired", Icones.WIRED,
                 Navigation.source(tWired, "Ordre", "Remettre en ordre").avec(SALLE, WIRED, NOMS),
-                Navigation.source(tAnalyse, "V\u00e9rificateur", "V\u00e9rificateur de wired").avec(SALLE, WIRED, NOMS),
+                Navigation.source(tAnalyse, "Vérificateur", "Vérificateur de wired").avec(SALLE, WIRED, NOMS),
                 Navigation.source(tCollageWired, null, "Copier / coller la config").avec(SALLE, WIRED, NOMS));
         nav.ajouter("plantes", "Monster Plants", Icones.PLANTES,
-                Navigation.source(tPlantes, "Monster Plants"));
+                Navigation.source(tPlantes, "Monster Plants")).pleineHauteur();   // seul le tableau defile
         Tab tValeur = new OngletValeur().construire();
         // Le filtrage de l'inventaire se fait dans le jeu (client modifie) : plus de
         // menu Inventaire. L'onglet reste construit (cache de l'inventaire, liaison
@@ -252,9 +250,8 @@ public class AtelierLauncher extends GEarth {
         Tab tDoc = new OngletDocumentation().construire();
         nav.ajouter("documentation", "Documentation", Icones.DOCUMENTATION, Navigation.source(tDoc)).pleineHauteur();
         java.util.List<Navigation.Source> reglages = new java.util.ArrayList<>();
-        if (tConnexion != null) reglages.add(Navigation.source(tConnexion, null, "Connexion"));
         reglages.add(Navigation.source(tParam));
-        nav.ajouter("reglages", "R\u00e9glages", Icones.REGLAGES,
+        nav.ajouter("reglages", "Réglages", Icones.REGLAGES,
                 reglages.toArray(new Navigation.Source[0])).pleineHauteur();
 
         Fenetre fenetre = new Fenetre(css, nav.zone());
@@ -339,14 +336,25 @@ public class AtelierLauncher extends GEarth {
         };
         panneauCalques.surEscalier(() -> ouvrir.accept("composant-escalier"));
         nav.surChangement(m -> {
-            // Le tableau de la Salle (6 colonnes) a besoin d'une fenetre plus large.
-            // Couleur de decor : un champ et une palette, 50 px de moins suffisent.
-            // Deplacer un mur : deux blocs de fleches, 80 px de moins suffisent.
+            // Largeur par defaut de chaque menu, verifiee hors jeu pour que rien
+            // ne soit coupe (0 = Fenetre.LARGEUR, 334). Le bord gauche de la
+            // fenetre se tire pour l'elargir ; la largeur choisie est retenue
+            // par menu (double-clic sur le bord : retour au defaut).
+            //   Salle : tableau a 6 colonnes. Patrimoine : 6 colonnes (Source se
+            //   masque sous 430). Plantes : rangee de filtres + 4 colonnes.
+            //   Couleur de decor : un champ et une palette. Deplacer un mur :
+            //   deux blocs de fleches. Reglages : 620 (a 760 le contenu flottait).
             double ecran = javafx.stage.Screen.getPrimary().getVisualBounds().getWidth();
-            fenetre.largeur("reglages".equals(m.cle) ? Math.min(1300, ecran * 0.82)
-                    : "salle-mobis".equals(m.cle) || "galerie".equals(m.cle) || "documentation".equals(m.cle) ? 580
-                    : "salle-couleur".equals(m.cle) ? Fenetre.LARGEUR - 50
-                    : "murs-deplacer".equals(m.cle) ? Fenetre.LARGEUR - 80 : 0);
+            double l = switch (m.cle) {
+                case "reglages" -> Math.min(620, ecran * 0.6);
+                case "salle-mobis", "galerie", "documentation" -> 580;
+                case "patrimoine" -> 480;
+                case "plantes" -> 440;
+                case "salle-couleur" -> Fenetre.LARGEUR - 50;
+                case "murs-deplacer" -> Fenetre.LARGEUR - 80;
+                default -> 0;
+            };
+            fenetre.largeur(m.cle, l);
             fenetre.montrer(m.nom, m.contenu(), m.info());
             MiseEnValeur.fenetre(m.cle);
         });
@@ -373,7 +381,8 @@ public class AtelierLauncher extends GEarth {
         final String cssPhoto = css;
         barreMesure.surSalle(() -> basculer.accept("salle-mobis"));
         barreMesure.surFloor(panneauCalques::ouvrirFloor);
-        barreMesure.surPhoto(() -> OutilCapture.photo(cssPhoto, () -> ouvrir.accept("salle-capture")));
+        // appareil photo : format (et reglages GIF) avant la photo, puis l'apercu
+        barreMesure.surPhoto(() -> PhotoAppart.ouvrir(cssPhoto));
         barre.surEtat(() -> ouvrir.accept("salle-mobis"));
         fenetre.surFermeture(() -> {
             MiseEnValeur.fenetre(null);         // plus rien a mettre en valeur pour la fenetre
