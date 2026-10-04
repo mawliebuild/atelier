@@ -368,7 +368,7 @@ public final class EcartsVolet {
         Image i = vignettes.get(classe);
         if (i != null) return i.isError() ? null : i;
         try {
-            furnidata.details.WallItemDetails d = AtelierLauncher.moteur().getFurniDataTools().getWallItemDetails(classe);
+            Furnidata.Mobi d = AtelierLauncher.moteur().getFurniDataTools().getWallItemDetails(classe);
             if (d == null || d.revision <= 0) return null;
             String c = classe.contains("*") ? classe.substring(0, classe.indexOf('*')) : classe;
             i = new Image("https://images.habbo.com/dcr/hof_furni/" + d.revision + "/" + c + "_icon.png", true);

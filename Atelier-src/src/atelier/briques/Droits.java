@@ -4,7 +4,7 @@ import gearth.protocol.HMessage;
 import gearth.protocol.HPacket;
 
 /**
- * Les droits dans la salle ouverte. Remplace game.RoomPermissions, en ecoute seule.
+ * Les droits dans la salle ouverte. Remplace RoomPermissions (ancien module), en ecoute seule.
  *
  * Memes paquets (TOCLIENT sauf Quit) :
  *   WiredPermissions     boolean                -> peutRegler (wired)

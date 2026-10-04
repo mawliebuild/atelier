@@ -48,7 +48,7 @@ final class DallesTraversees {
         boolean rappel = actif && !ids.isEmpty() && t - envoyeA > 20_000;
         if (cle.equals(envoye) && !rappel) return;
         if (!actif && envoye == null && ids.isEmpty()) { envoye = cle; return; }
-        extension.GPresets gp = Salle.gp();
+        Moteur gp = Salle.gp();
         if (gp == null) return;
         gp.sendToClient(new gearth.protocol.HPacket("Whisper", gearth.protocol.HMessage.Direction.TOCLIENT,
                 -1, "atelier:dalles=" + (actif && !ids.isEmpty() ? "1" : "0"), 0, 0, 0, -1));

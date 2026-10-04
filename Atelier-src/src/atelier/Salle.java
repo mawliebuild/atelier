@@ -1,7 +1,5 @@
 package atelier;
 
-import extension.GPresets;
-import game.FloorState;
 import gearth.extensions.parsers.HFloorItem;
 import gearth.extensions.parsers.HPoint;
 import gearth.extensions.parsers.HWallItem;
@@ -15,7 +13,7 @@ import java.util.function.Consumer;
 /**
  * Acces partage a la salle ouverte, pour les outils de l'Atelier.
  *
- * Tout passe par le moteur de l'Atelier, qui tient deja l'etat de la salle (FloorState),
+ * Tout passe par le moteur de l'Atelier, qui tient deja l'etat de la salle (EtatSalle),
  * la furnidata et l'inventaire. Ici on ne fait que rassembler les lectures
  * que chaque outil recopiait, et une seule ecoute des clics du jeu :
  *
@@ -31,13 +29,13 @@ public final class Salle {
 
     // ------------------------------------------------------------- lectures
 
-    public static GPresets gp() { return AtelierLauncher.moteur(); }
+    public static Moteur gp() { return AtelierLauncher.moteur(); }
 
     /** L'etat de la salle, ou null hors salle / Atelier pas pret. */
-    public static FloorState etat() {
-        GPresets gp = gp();
+    public static EtatSalle etat() {
+        Moteur gp = gp();
         if (gp == null) return null;
-        FloorState s = gp.getFloorState();
+        EtatSalle s = gp.getFloorState();
         return (s == null || !s.inRoom()) ? null : s;
     }
 
@@ -45,7 +43,7 @@ public final class Salle {
 
     /** Identifiant de la salle ouverte, -1 hors salle. */
     public static int salleId() {
-        try { FloorState s = etat(); return s == null ? -1 : s.getRoomId(); } catch (Throwable t) { return -1; }
+        try { EtatSalle s = etat(); return s == null ? -1 : s.getRoomId(); } catch (Throwable t) { return -1; }
     }
 
     private static volatile int salleVue = -1;
@@ -68,7 +66,7 @@ public final class Salle {
      * grille dans le jeu, si le moteur de l'Atelier les a vues passer.
      */
     public static List<HFloorItem> sols() {
-        FloorState s = etat();
+        EtatSalle s = etat();
         if (s == null) return List.of();
         try {
             List<HFloorItem> l = s.getItems();
@@ -81,7 +79,7 @@ public final class Salle {
 
     /** Copie des mobis muraux ; jamais null. */
     public static List<HWallItem> murs() {
-        FloorState s = etat();
+        EtatSalle s = etat();
         if (s == null) return List.of();
         try {
             List<HWallItem> l = s.getWallItems();
@@ -93,17 +91,17 @@ public final class Salle {
     }
 
     public static HFloorItem sol(int id) {
-        FloorState s = etat();
+        EtatSalle s = etat();
         try { return s == null ? null : s.furniFromId(id); } catch (Throwable t) { return null; }
     }
 
     public static HWallItem mur(int id) {
-        FloorState s = etat();
+        EtatSalle s = etat();
         try { return s == null ? null : s.wallItemFromId(id); } catch (Throwable t) { return null; }
     }
 
     public static boolean furnidataPrete() {
-        GPresets gp = gp();
+        Moteur gp = gp();
         try { return gp != null && gp.getFurniDataTools() != null && gp.getFurniDataTools().isReady(); }
         catch (Throwable t) { return false; }
     }
@@ -112,7 +110,7 @@ public final class Salle {
     public static String classe(int typeId, boolean mural) {
         if (!furnidataPrete()) return null;
         try {
-            furnidata.FurniDataTools fd = gp().getFurniDataTools();
+            Furnidata fd = gp().getFurniDataTools();
             return mural ? fd.getWallItemName(typeId) : fd.getFloorItemName(typeId);
         } catch (Throwable t) { return null; }
     }
@@ -122,14 +120,14 @@ public final class Salle {
         String c = classe(typeId, mural);
         if (c == null) return "type " + typeId;
         try {
-            furnidata.FurniDataTools fd = gp().getFurniDataTools();
+            Furnidata fd = gp().getFurniDataTools();
             String n = mural ? fd.getWallItemDetails(c).name : fd.getFloorItemDetails(c).name;
             if (n != null && !n.isBlank()) return n;
         } catch (Throwable ignored) { }
         return c;
     }
 
-    public static furnidata.details.FloorItemDetails details(String classe) {
+    public static Furnidata.Mobi details(String classe) {
         if (classe == null || !furnidataPrete()) return null;
         try { return gp().getFurniDataTools().getFloorItemDetails(classe); }
         catch (Throwable t) { return null; }
@@ -141,7 +139,7 @@ public final class Salle {
      */
     public static int[] emprise(HFloorItem it) {
         int lx = 1, ly = 1;
-        furnidata.details.FloorItemDetails d = details(classe(it.getTypeId(), false));
+        Furnidata.Mobi d = details(classe(it.getTypeId(), false));
         if (d != null) { lx = Math.max(1, d.xDim); ly = Math.max(1, d.yDim); }
         int rot = rotation(it);
         return (rot == 2 || rot == 6) ? new int[]{ly, lx} : new int[]{lx, ly};
@@ -169,19 +167,19 @@ public final class Salle {
 
     /** Hauteur du sol nu d'une case (0..), -1 si case hors plan ou vide. */
     public static int hauteurSol(int x, int y) {
-        FloorState s = etat();
+        EtatSalle s = etat();
         if (s == null) return -1;
         try {
             char c = s.floorHeight(x, y);
             if (c == 'x' || c == 'X' || c == 0) return -1;
-            return extension.tools.PresetUtils.heightFromChar(c);
+            return PoseOutils.hauteurCaractere(c);
         } catch (Throwable t) { return -1; }
     }
 
     // -------------------------------------------------------------- envois
 
     public static void envoyer(HPacket p) {
-        GPresets gp = gp();
+        Moteur gp = gp();
         if (gp != null) gp.sendToServer(p);
     }
 
@@ -231,7 +229,7 @@ public final class Salle {
     }
 
     /** PlaceObject depuis l'inventaire : "idInventaire x y rot" pour un mobi de sol. */
-    /** Format du moteur de pose (GPresetImporter) : « -idInventaire x y rot ». */
+    /** Format de l'ancien moteur de pose : « -idInventaire x y rot ». */
     public static void poserSol(int idInventaire, int x, int y, int rot) {
         envoyer(new HPacket("PlaceObject", HMessage.Direction.TOSERVER,
                 "-" + Math.abs(idInventaire) + " " + x + " " + y + " " + rot));
@@ -263,7 +261,7 @@ public final class Salle {
         enCours = true;
         Thread t = new Thread(() -> {
             for (int i = 0; i < 900 && !branche; i++) {
-                GPresets gp = gp();
+                Moteur gp = gp();
                 if (gp != null) {
                     try {
                         gp.intercept(HMessage.Direction.TOSERVER, m -> {
@@ -284,7 +282,7 @@ public final class Salle {
     private static void examiner(HMessage m) {
         int taille = m.getPacket().getBytesLength();
         if (taille > 40) return;
-        FloorState s = etat();
+        EtatSalle s = etat();
         if (s == null) return;
         HPacket p = m.getPacket();                  // lectures a position fixe : pas de copie
 

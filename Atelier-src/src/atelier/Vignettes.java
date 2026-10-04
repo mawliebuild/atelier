@@ -1,6 +1,5 @@
 package atelier;
 
-import extension.GPresets;
 import javafx.scene.image.Image;
 
 import java.util.*;
@@ -61,7 +60,7 @@ public final class Vignettes {
 
     /** Furnidata et inventaire prets : sinon un echec ne veut rien dire. */
     private static boolean pret() {
-        GPresets gp = AtelierLauncher.moteur();
+        Moteur gp = AtelierLauncher.moteur();
         try {
             return gp != null && gp.getFurniDataTools() != null && gp.getFurniDataTools().isReady()
                     && !gp.getInventory().getInventoryItems().isEmpty();
@@ -69,10 +68,10 @@ public final class Vignettes {
     }
 
     private static Image charger(String famille) {
-        GPresets gp = AtelierLauncher.moteur();
+        Moteur gp = AtelierLauncher.moteur();
         if (gp == null) return null;
         try {
-            furnidata.FurniDataTools fd = gp.getFurniDataTools();
+            Furnidata fd = gp.getFurniDataTools();
             if (fd == null || !fd.isReady()) return null;
 
             // Un mobi de l'inventaire appartenant a cette famille : sa vignette
@@ -83,7 +82,7 @@ public final class Vignettes {
             for (gearth.extensions.parsers.HInventoryItem it
                     : gp.getInventory().getInventoryItems()) {
                 String cls = fd.getFloorItemName(it.getTypeId());
-                furnidata.details.FloorItemDetails d =
+                Furnidata.Mobi d =
                         (cls == null) ? null : fd.getFloorItemDetails(cls);
                 if (d == null) continue;
                 if (!famille.equals(Categories.famille(d.furniline))) continue;

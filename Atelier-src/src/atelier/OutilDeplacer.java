@@ -1,11 +1,8 @@
 package atelier;
 
-import extension.GPresets;
-import game.FloorState;
 import gearth.extensions.parsers.HWallItem;
 import gearth.protocol.HMessage;
 import gearth.protocol.HPacket;
-import utils.WallPosition;
 
 import javafx.application.Platform;
 import javafx.geometry.Insets;
@@ -215,11 +212,11 @@ public class OutilDeplacer {
     private void deplacer(int dx, int dy, boolean surLePan) {
         SelectionMur.Mur m = SelectionMur.courant();
         if (m == null) { echec("Aucun mur sélectionné."); return; }
-        GPresets gp = AtelierLauncher.moteur();
+        Moteur gp = AtelierLauncher.moteur();
         if (gp == null) { echec("L'Atelier n'est pas encore prêt."); return; }
 
-        WallPosition p;
-        try { p = new WallPosition(m.position); }
+        PositionMur p;
+        try { p = PositionMur.lire(m.position); }
         catch (Throwable t) { echec("Position illisible : " + m.position); return; }
 
         // Correspondance reprise telle quelle du deplaceur d'affiches classique :
@@ -232,10 +229,10 @@ public class OutilDeplacer {
         // gauche = x-, droite = x+. L'adaptation selon la face du mur ne vaut que
         // pour l'Aligner, qui pose des copies en ligne.
         String cible = surLePan
-                ? position(p.getX() + dx, p.getY() + dy,
-                           p.getOffsetX(), p.getOffsetY(), p.getDirection())
-                : position(p.getX(), p.getY(),
-                           p.getOffsetX() + dx, p.getOffsetY() + dy, p.getDirection());
+                ? position(p.x() + dx, p.y() + dy,
+                           p.decalageX(), p.decalageY(), p.cote())
+                : position(p.x(), p.y(),
+                           p.decalageX() + dx, p.decalageY() + dy, p.cote());
 
         envoyer(gp, m, cible);
     }
@@ -244,10 +241,10 @@ public class OutilDeplacer {
     private void appliquerCode() {
         SelectionMur.Mur m = SelectionMur.courant();
         if (m == null) { echec("Aucun mur sélectionné."); return; }
-        GPresets gp = AtelierLauncher.moteur();
+        Moteur gp = AtelierLauncher.moteur();
         if (gp == null) { echec("L'Atelier n'est pas encore prêt."); return; }
         String code = codeSel.getText() == null ? "" : codeSel.getText().trim();
-        try { new WallPosition(code); }
+        try { PositionMur.lire(code); }
         catch (Throwable t) {
             echec("Code invalide : « " + code + " » (attendu : :w=x,y l=oX,oY r)");
             return;
@@ -259,14 +256,14 @@ public class OutilDeplacer {
     private void dupliquer() {
         SelectionMur.Mur m = SelectionMur.courant();
         if (m == null) { echec("Aucun mur sélectionné."); return; }
-        GPresets gp = AtelierLauncher.moteur();
+        Moteur gp = AtelierLauncher.moteur();
         if (gp == null) { echec("L'Atelier n'est pas encore prêt."); return; }
         if (m.typeId < 0) {
             echec("Type du mur inconnu : refais un Option + clic sur le mur.");
             return;
         }
         String code = codeSel.getText() == null ? "" : codeSel.getText().trim();
-        try { new WallPosition(code); }
+        try { PositionMur.lire(code); }
         catch (Throwable t) { echec("Code invalide : « " + code + " »"); return; }
 
         PoseMur.Source src = sBc.isSelected() ? PoseMur.Source.BC
@@ -288,17 +285,17 @@ public class OutilDeplacer {
     private void pivoter() {
         SelectionMur.Mur m = SelectionMur.courant();
         if (m == null) { echec("Aucun mur sélectionné."); return; }
-        GPresets gp = AtelierLauncher.moteur();
+        Moteur gp = AtelierLauncher.moteur();
         if (gp == null) { echec("L'Atelier n'est pas encore prêt."); return; }
         try {
-            WallPosition p = new WallPosition(m.position);
-            char autre = (p.getDirection() == 'l') ? 'r' : 'l';
-            envoyer(gp, m, position(p.getX(), p.getY(),
-                    p.getOffsetX(), p.getOffsetY(), autre));
+            PositionMur p = PositionMur.lire(m.position);
+            char autre = (p.cote() == 'l') ? 'r' : 'l';
+            envoyer(gp, m, position(p.x(), p.y(),
+                    p.decalageX(), p.decalageY(), autre));
         } catch (Throwable t) { echec("Position illisible."); }
     }
 
-    private void envoyer(GPresets gp, SelectionMur.Mur m, String cible) {
+    private void envoyer(Moteur gp, SelectionMur.Mur m, String cible) {
         // un mobi d'un calque verrouille ne bouge pas
         String v = Groupes.refusVerrouMobis(List.of(), List.of(m.id));
         if (v != null) { echec(v); return; }

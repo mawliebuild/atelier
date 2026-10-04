@@ -1,6 +1,5 @@
 package atelier;
 
-import extension.GPresets;
 import gearth.extensions.parsers.HInventoryItem;
 import gearth.protocol.HMessage;
 import gearth.protocol.HPacket;
@@ -50,7 +49,7 @@ final class RemplirZone {
     private static synchronized void brancher() {
         if (branche) return;
         Zone.ecouter(RemplirZone::suivreZone);
-        GPresets gp = Salle.gp();
+        Moteur gp = Salle.gp();
         if (gp == null) return;
         try {
             gp.intercept(HMessage.Direction.TOSERVER, "PlaceObject", RemplirZone::surPose);
@@ -97,7 +96,7 @@ final class RemplirZone {
     }
 
     private static void remplir(long invId, int rot) {
-        GPresets gp = Salle.gp();
+        Moteur gp = Salle.gp();
         if (gp == null || !Zone.definie()) return;
         HInventoryItem modele = null;
         try {
@@ -106,7 +105,7 @@ final class RemplirZone {
         } catch (Throwable ignored) { }
         if (modele == null) { Journal.erreur("Mobi introuvable dans l'inventaire : remplissage impossible."); return; }
         String classe = Salle.classe(modele.getTypeId(), false);
-        furnidata.details.FloorItemDetails d = classe == null ? null : Salle.details(classe);
+        Furnidata.Mobi d = classe == null ? null : Salle.details(classe);
         if (d == null) { Journal.erreur("Taille du mobi inconnue (furnidata) : remplissage impossible."); return; }
         boolean tourne = rot == 2 || rot == 6;
         int a = Math.max(1, tourne ? d.yDim : d.xDim), b = Math.max(1, tourne ? d.xDim : d.yDim);

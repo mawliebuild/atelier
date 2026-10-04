@@ -1,7 +1,5 @@
 package atelier;
 
-import extension.GPresets;
-import game.FloorState;
 import gearth.extensions.parsers.HFloorItem;
 import gearth.extensions.parsers.HPoint;
 import gearth.protocol.HMessage;
@@ -562,7 +560,7 @@ public class OutilMiroir {
             enCours = true;
             Thread t = new Thread(() -> {
                 for (int i = 0; i < 900 && !branche; i++) {
-                    GPresets gp = Salle.gp();
+                    Moteur gp = Salle.gp();
                     if (gp != null) {
                         try {
                             gp.intercept(HMessage.Direction.TOSERVER, m -> {
@@ -584,7 +582,7 @@ public class OutilMiroir {
             if (confirmee) return;
             int taille = m.getPacket().getBytesLength();
             if (taille < 18 || taille > 40) return;
-            FloorState s = Salle.etat();
+            EtatSalle s = Salle.etat();
             if (s == null) return;
             HPacket p = new HPacket(m.getPacket());
             p.resetReadIndex();

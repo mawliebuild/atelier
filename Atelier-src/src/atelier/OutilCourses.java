@@ -1,6 +1,5 @@
 package atelier;
 
-import extension.GPresets;
 import gearth.extensions.parsers.HFloorItem;
 import gearth.extensions.parsers.HWallItem;
 
@@ -284,15 +283,10 @@ public class OutilCourses {
 
     private static Map<String, Besoin> besoinsAppart(String nom) throws Exception {
         File f = new File(OngletApparts.dossierApparts(), nom + ".json");
-        extension.tools.presetconfig.PresetConfig pc =
-                new extension.tools.presetconfig.PresetConfig(OngletApparts.lirePreset(f));
+        CopieAppart pc = CopieAppart.lire(OngletApparts.lirePreset(f));
         Map<String, Besoin> m = new LinkedHashMap<>();
-        if (pc.getFurniture() != null)
-            for (extension.tools.presetconfig.furni.PresetFurni p : pc.getFurniture())
-                ajouter(m, base(p.getClassName()), null, false);
-        if (pc.getWallFurniture() != null)
-            for (extension.tools.presetconfig.furni.PresetWallFurni p : pc.getWallFurniture())
-                ajouter(m, base(p.getClassName()), null, true);
+        for (CopieAppart.MobiSol p : pc.sols) ajouter(m, base(p.classe), null, false);
+        for (CopieAppart.MobiMur p : pc.murs) ajouter(m, base(p.classe), null, true);
         return m;
     }
 
@@ -331,7 +325,7 @@ public class OutilCourses {
     private static Integer typeId(String classe, boolean mural) {
         if (classe == null || !Salle.furnidataPrete()) return null;
         try {
-            furnidata.FurniDataTools fd = Salle.gp().getFurniDataTools();
+            Furnidata fd = Salle.gp().getFurniDataTools();
             Integer t = mural ? fd.getWallTypeId(classe) : fd.getFloorTypeId(classe);
             if (t == null && classe.contains("*")) {
                 String b = classe.substring(0, classe.indexOf('*'));
@@ -342,7 +336,7 @@ public class OutilCourses {
     }
 
     private static List<Ligne> comparer(Map<String, Besoin> besoins, boolean avecSalle, boolean horsZone) {
-        GPresets gp = Salle.gp();
+        Moteur gp = Salle.gp();
         boolean inv = inventaireCharge();
         Map<Integer, Integer> invSol = new HashMap<>(), invMur = new HashMap<>();
         if (gp != null && inv) {
@@ -403,7 +397,7 @@ public class OutilCourses {
         boolean charge;
         Set<String> cache;   // "F:classe" / "W:classe", null si pas de cache
 
-        static Catalogue lire(GPresets gp) {
+        static Catalogue lire(Moteur gp) {
             Catalogue c = new Catalogue();
             try { c.charge = gp != null && "COLLECTED".equals(String.valueOf(gp.getCatalog().getState())); }
             catch (Throwable ignored) { }
@@ -411,7 +405,7 @@ public class OutilCourses {
             return c;
         }
 
-        String auBc(GPresets gp, Integer tid, String classe, boolean mural) {
+        String auBc(Moteur gp, Integer tid, String classe, boolean mural) {
             if (charge && tid != null) {
                 try {
                     Object p = mural ? gp.getCatalog().getAnyWallProduct(tid) : gp.getCatalog().getFloorProduct(tid);
@@ -478,7 +472,7 @@ public class OutilCourses {
     }
 
     private void majVoyants() {
-        GPresets gp = Salle.gp();
+        Moteur gp = Salle.gp();
         if (gp == null) { vInv.regler("absent", "L'Atelier n'est pas encore prêt"); vBc.regler("absent", "L'Atelier n'est pas encore prêt"); return; }
         String ei = "?";
         int n = 0;
@@ -532,7 +526,7 @@ public class OutilCourses {
 
     /** Recalcule si l'inventaire ou la salle ont change depuis le dernier calcul. */
     private void suivreChangements() {
-        GPresets gp = Salle.gp();
+        Moteur gp = Salle.gp();
         if (gp == null) return;
         int inv = -1, salle = -1;
         try { inv = gp.getInventory().getInventoryItems().size(); } catch (Throwable ignored) { }

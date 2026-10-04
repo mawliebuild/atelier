@@ -1,6 +1,5 @@
 package atelier;
 
-import extension.GPresets;
 
 import java.text.NumberFormat;
 import java.time.Instant;
@@ -48,24 +47,24 @@ final class PrixTexte {
 
     // ---------------------------------------------------------------- furnidata
 
-    private static furnidata.FurniDataTools fd(GPresets gp) {
+    private static Furnidata fd(Moteur gp) {
         try {
-            furnidata.FurniDataTools fd = gp == null ? null : gp.getFurniDataTools();
+            Furnidata fd = gp == null ? null : gp.getFurniDataTools();
             return fd != null && fd.isReady() ? fd : null;
         } catch (Throwable t) { return null; }
     }
 
     /** Le nom de classe (« rare_dragonlamp*1 »), ou null. */
-    static String classe(GPresets gp, boolean mur, int typeId) {
-        furnidata.FurniDataTools fd = fd(gp);
+    static String classe(Moteur gp, boolean mur, int typeId) {
+        Furnidata fd = fd(gp);
         if (fd == null) return null;
         try { return mur ? fd.getWallItemName(typeId) : fd.getFloorItemName(typeId); }
         catch (Throwable t) { return null; }
     }
 
     /** Le nom affiche dans le jeu, sinon la classe, sinon « Type 123 ». */
-    static String nom(GPresets gp, boolean mur, int typeId, String classe) {
-        furnidata.FurniDataTools fd = fd(gp);
+    static String nom(Moteur gp, boolean mur, int typeId, String classe) {
+        Furnidata fd = fd(gp);
         if (fd != null && classe != null) {
             try {
                 String n = mur ? (fd.getWallItemDetails(classe) == null ? null : fd.getWallItemDetails(classe).name)
@@ -77,8 +76,8 @@ final class PrixTexte {
     }
 
     /** Revision de l'icone (images.habbo.com), 0 si inconnue. */
-    static int revision(GPresets gp, boolean mur, String classe) {
-        furnidata.FurniDataTools fd = fd(gp);
+    static int revision(Moteur gp, boolean mur, String classe) {
+        Furnidata fd = fd(gp);
         if (fd == null || classe == null) return 0;
         try {
             return mur ? (fd.getWallItemDetails(classe) == null ? 0 : fd.getWallItemDetails(classe).revision)

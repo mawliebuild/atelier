@@ -1,7 +1,5 @@
 package atelier;
 
-import extension.GPresets;
-import extension.tools.GPresetImporter;
 import gearth.extensions.parsers.HFloorItem;
 import gearth.extensions.parsers.HWallItem;
 
@@ -186,8 +184,8 @@ final class PoseHybride {
     // ============================================================ reprise
 
     /**
-     * Reprend ces pieces avec la dalle magique, en un seul import du moteur de
-     * pose : les anciens mobis (mauvaise hauteur, ou pas arrives) sont d'abord
+     * Reprend ces pieces avec la dalle magique, en une seule pose (PoseCopie) :
+     * les anciens mobis (mauvaise hauteur, ou pas arrives) sont d'abord
      * ramasses, puis tout est repose a sa case et sa hauteur exactes.
      * Hors fil JavaFX. Ne lance aucune exception.
      * @param progres (fait, total), « Reprise à la dalle : 3/12 »
@@ -208,15 +206,11 @@ final class PoseHybride {
 
     private static Bilan reprendre0(List<Piece> pieces, Generateur.Source source, Consumer<String> dire,
                                     BooleanSupplier stop, BiConsumer<Integer, Integer> progres, Bilan b) throws Exception {
-        GPresets gp = Salle.gp();
+        Moteur gp = Salle.gp();
         if (gp == null || !Salle.furnidataPrete()) { b.raison = "Atelier pas prêt"; return b; }
-        GPresetImporter imp = gp.getImporter();
-        if (imp == null) { b.raison = "moteur de pose introuvable"; return b; }
-        try {
-            if (imp.getState() != GPresetImporter.BuildingImportState.NONE) { b.raison = "le moteur de pose est déjà occupé"; return b; }
-        } catch (Throwable ignored) { }
+        if (PoseCopie.occupee()) { b.raison = "une autre pose est déjà en cours"; return b; }
         int salle = Groupes.salleCourante();
-        furnidata.FurniDataTools fd = gp.getFurniDataTools();
+        Furnidata fd = gp.getFurniDataTools();
 
         // 1. les anciens d'abord (sinon ils resteraient en double)
         List<Piece> aRamasser = new ArrayList<>();
@@ -257,26 +251,18 @@ final class PoseHybride {
         for (HWallItem w : Salle.murs()) avantM.add(w.getId());
         Journal.debug("reprise à la dalle : " + mobis.size() + " sol(s), " + murs.size() + " mural(aux), sol min " + solMin + ".");
 
-        // 3. l'import (dalle magique posee et ramassee par l'Atelier si besoin)
+        // 3. la pose avec la dalle (posee et ramassee par la pose si la salle n'en a pas)
         String[] dernier = {null};
         Consumer<String> note = m -> { dernier[0] = m; dire.accept(m); };
-        boolean lance = GroupeActions.poser(gp, imp, mobis, murs, source, note);
-        if (!lance) { b.raison = dernier[0] == null ? "la pose avec la dalle n'a pas démarré" : Ui.majuscule(dernier[0]); return b; }
-
         int total = prets.size();
-        long fin = System.currentTimeMillis() + 30 * 60_000L;
-        while (System.currentTimeMillis() < fin) {
-            Salle.sommeil(400);
-            if (Groupes.salleCourante() != salle) { b.sortie = true; GroupeActions.abandonner(imp, gp); break; }
-            if (stop.getAsBoolean() && !b.arrete) { b.arrete = true; GroupeActions.abandonner(imp, gp); }
-            GPresetImporter.BuildingImportState st;
-            try { st = imp.getState(); } catch (Throwable e) { st = GPresetImporter.BuildingImportState.NONE; }
+        PoseCopie.Resultat pc = GroupeActions.poser(mobis, murs, source, note, stop, () -> {
             int n = 0;
             for (int id : apparier(prets, avantS, avantM, fd)) if (id != -1) n++;
             progres.accept(Math.min(n, total), total);
-            if (st == GPresetImporter.BuildingImportState.NONE) break;
-        }
-        if (b.sortie) return b;
+        });
+        if (pc == null) { b.raison = dernier[0] == null ? "la pose avec la dalle n'a pas démarré" : Ui.majuscule(dernier[0]); return b; }
+        if (Groupes.salleCourante() != salle) { b.sortie = true; return b; }
+        if (pc.arrete || stop.getAsBoolean()) b.arrete = true;
         // les derniers en route
         PoseDirecte.suivre(() -> {
             int n = 0;
@@ -307,7 +293,7 @@ final class PoseHybride {
     }
 
     /** Les nouveaux mobis de la salle (depuis avant), rapproches des pieces. */
-    private static int[] apparier(List<Piece> prets, Set<Integer> avantS, Set<Integer> avantM, furnidata.FurniDataTools fd) {
+    private static int[] apparier(List<Piece> prets, Set<Integer> avantS, Set<Integer> avantM, Furnidata fd) {
         List<int[]> voulus = new ArrayList<>();
         List<String> positions = new ArrayList<>();
         for (Piece p : prets) {

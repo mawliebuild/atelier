@@ -42,7 +42,28 @@ def empreinte(f):
     return h.hexdigest()
 
 
+def _numero(chemin):
+    """Numero de version d'un dossier du Launcher (« .../air/15/... » -> 15), -1 sinon."""
+    import re
+    m = re.search(r"[\\/]air[\\/](\d+)[\\/]", chemin)
+    return int(m.group(1)) if m else -1
+
+
 def clients():
+    """
+    Le client que le Habbo Launcher utilise : la version la plus recente
+    seulement. Le Launcher garde les anciennes versions (13, 15...) sans s'en
+    servir : inutile de les modifier, et une tres ancienne version peut ne pas
+    s'adapter (message d'erreur inutile).
+    """
+    tous = tous_les_clients()
+    if not tous:
+        return tous
+    haut = max(_numero(f) for f, _ in tous)
+    return [(f, a) for f, a in tous if _numero(f) == haut]
+
+
+def tous_les_clients():
     """Les HabboAir.swf installes par le Habbo Launcher : [(chemin du swf, appli Mac ou None)]."""
     r = []
     if WIN:
@@ -178,7 +199,7 @@ def restaurer():
         dire("! Ferme Habbo d'abord.")
         return 2
     n = 0
-    for swf, app in clients():
+    for swf, app in tous_les_clients():
         h = empreinte(swf)
         o = etat["modifies"].get(h)
         if not o:

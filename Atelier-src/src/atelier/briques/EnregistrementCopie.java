@@ -56,17 +56,14 @@ final class EnregistrementCopie {
     /** Le reglage d'un wired de la salle (id reel, classe), ou null s'il n'est pas connu. */
     interface LecteurReglages { ReglageWired reglage(int id, String classe); }
 
-    /**
-     * Les reglages deja lus par WiredLecteur (son cache de la salle). Seul lien
-     * de cette brique avec les classes de G-Presets (Config.brut), a remplacer
-     * quand WiredLecteur rendra des ReglageWired.
-     */
+    /** Les reglages deja lus par WiredLecteur (son cache de la salle), en copie. */
     static LecteurReglages duWiredLecteur() {
         return (id, classe) -> {
             ReglageWired.Genre g = ReglageWired.Genre.deClasse(classe);
             WiredLecteur.Config c = g == null ? null : WiredLecteur.config(id);
             if (c == null || c.brut == null) return null;
-            ReglageWired r = ReglageWired.depuisJson(g, c.brut.toJsonObject());
+            ReglageWired r = c.brut.copie();
+            r.genre = g;
             r.typeId = c.typeId;
             return r;
         };

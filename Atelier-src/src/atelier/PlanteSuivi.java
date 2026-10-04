@@ -1,7 +1,5 @@
 package atelier;
 
-import extension.GPresets;
-import game.FloorState;
 import gearth.extensions.parsers.HEntity;
 import gearth.extensions.parsers.HEntityType;
 import gearth.extensions.parsers.HEntityUpdate;
@@ -174,7 +172,7 @@ public final class PlanteSuivi {
         enCours = true;
         Thread t = new Thread(() -> {
             for (int i = 0; i < 900 && !branche; i++) {
-                GPresets gp = Salle.gp();
+                Moteur gp = Salle.gp();
                 if (gp != null) {
                     try {
                         brancher(gp);
@@ -192,7 +190,7 @@ public final class PlanteSuivi {
         t.start();
     }
 
-    private static void ecoute(GPresets gp, String nom, java.util.function.Consumer<HPacket> f) {
+    private static void ecoute(Moteur gp, String nom, java.util.function.Consumer<HPacket> f) {
         ecoute(gp, nom, () -> true, f);
     }
 
@@ -208,7 +206,7 @@ public final class PlanteSuivi {
      * utile : test tres bon marche fait AVANT la copie du paquet (UserUpdate est
      * tres frequent). L'intercepteur copie seulement ; f tourne sur LECTURE.
      */
-    private static void ecoute(GPresets gp, String nom, java.util.function.BooleanSupplier utile,
+    private static void ecoute(Moteur gp, String nom, java.util.function.BooleanSupplier utile,
                                java.util.function.Consumer<HPacket> f) {
         try {
             gp.intercept(HMessage.Direction.TOCLIENT, nom, m -> {
@@ -226,7 +224,7 @@ public final class PlanteSuivi {
         }
     }
 
-    private static void brancher(GPresets gp) {
+    private static void brancher(Moteur gp) {
         ecoute(gp, "RoomReady", p -> {
             salleConnue = -1; listeRecue = false; vider();
             // en entrant dans un appart : soins restants relus (profil redemande)
@@ -276,7 +274,7 @@ public final class PlanteSuivi {
 
     /** Vide la liste si la salle a change depuis la derniere lecture. */
     private static void verifierSalle() {
-        FloorState s = Salle.etat();
+        EtatSalle s = Salle.etat();
         int id = -1;
         try { if (s != null) id = s.getRoomId(); } catch (Throwable ignored) { }
         if (id <= 0) return;                       // etat pas encore connu : on ne touche a rien
@@ -647,15 +645,15 @@ public final class PlanteSuivi {
 
     /**
      * Redemande le contenu de la salle sans la recharger : c'est ce que fait
-     * le moteur de l'Atelier (FloorState.requestRoom envoie GetHeightMap). Le serveur
+     * le moteur de l'Atelier (EtatSalle.requestRoom envoie GetHeightMap). Le serveur
      * renvoie alors aussi la liste Users.
      */
     public static boolean redemanderSalle() {
-        GPresets gp = Salle.gp();
+        Moteur gp = Salle.gp();
         if (gp == null) return false;
         try {
-            FloorState s = gp.getFloorState();
-            if (s != null) { s.requestRoom(gp); return true; }
+            EtatSalle s = gp.getFloorState();
+            if (s != null) { gp.demanderSalle(); return true; }
         } catch (Throwable ignored) { }
         Salle.envoyer(new HPacket("GetHeightMap", HMessage.Direction.TOSERVER));
         return true;

@@ -1,6 +1,5 @@
 package atelier;
 
-import extension.GPresets;
 import gearth.extensions.parsers.HInventoryItem;
 import gearth.extensions.parsers.HProductType;
 
@@ -171,7 +170,7 @@ final class PrixChargement {
         if (jeuEnCours) { if (fin != null) fin.accept(0); return; }
         if (!forcer && !PrixSite.fini()) return;
         if (!forcer && System.currentTimeMillis() - arretLe < 10 * 60_000L) return;   // tu as dit « Arrêter »
-        GPresets gp = AtelierLauncher.moteur();
+        Moteur gp = AtelierLauncher.moteur();
         List<HInventoryItem> inv = OngletInventaire.dernierInventaire();
         // Pas d'inventaire : pas connectee (ou pas encore) ; le jeu ne repondrait pas.
         if (gp == null || inv == null) { if (fin != null) fin.accept(0); return; }

@@ -1,7 +1,5 @@
 package atelier;
 
-import extension.GPresets;
-import game.FloorState;
 import gearth.extensions.parsers.HWallItem;
 import gearth.protocol.HMessage;
 import gearth.protocol.HPacket;
@@ -95,7 +93,7 @@ public final class SelectionMur {
      */
     public static synchronized void installer() {
         if (installe) return;
-        GPresets gp = AtelierLauncher.moteur();
+        Moteur gp = AtelierLauncher.moteur();
         if (gp == null) return;
         try {
             // Interception SANS nom de paquet. Un intercept par nom echoue en
@@ -118,13 +116,13 @@ public final class SelectionMur {
     }
 
     /** Resume regulier dans le terminal : dit si le flux atteint l'extension. */
-    private static void resumePeriodique(GPresets gp) {
+    private static void resumePeriodique(Moteur gp) {
         if (!Journal.DEBUG) return;   // seulement en mode diagnostic
         Thread t = new Thread(() -> {
             while (true) {
                 try { Thread.sleep(10000); } catch (InterruptedException e) { return; }
                 try {
-                    FloorState s = gp.getFloorState();
+                    EtatSalle s = gp.getFloorState();
                     int murs = -1;
                     boolean dans = false;
                     if (s != null) {
@@ -149,7 +147,7 @@ public final class SelectionMur {
      * Le paquet n'est JAMAIS bloque : le double-clic doit continuer de changer
      * l'etat du meuble dans le jeu.
      */
-    private static void examiner(GPresets gp, HMessage m) {
+    private static void examiner(Moteur gp, HMessage m) {
         // Ce code s'execute pour CHAQUE paquet envoye, pendant que le jeu attend :
         // tout ce qui suit doit rester bon marche. Taille d'abord, sans copie.
         int taille = m.getPacket().getBytesLength();
@@ -171,7 +169,7 @@ public final class SelectionMur {
         }
 
         if (taille > 40) return;
-        FloorState s = gp.getFloorState();
+        EtatSalle s = gp.getFloorState();
         if (s == null || !s.inRoom()) return;
 
         // On balaie TOUS les offsets, pas seulement les multiples de 4 : rien ne
@@ -223,10 +221,10 @@ public final class SelectionMur {
 
     private static volatile boolean compareAffichee = false;
 
-    private static void retenir(GPresets gp, int id, String loc) {
+    private static void retenir(Moteur gp, int id, String loc) {
         Mur m = new Mur(id, normaliser(loc));
         try {
-            FloorState s = gp.getFloorState();
+            EtatSalle s = gp.getFloorState();
             HWallItem it = (s == null) ? null : s.wallItemFromId(id);
             if (it != null) {
                 m.typeId = it.getTypeId();
@@ -238,13 +236,13 @@ public final class SelectionMur {
         prevenir();
     }
 
-    static String nom(GPresets gp, int typeId) {
+    static String nom(Moteur gp, int typeId) {
         try {
-            furnidata.FurniDataTools fd = gp.getFurniDataTools();
+            Furnidata fd = gp.getFurniDataTools();
             if (fd != null && fd.isReady()) {
                 String cls = fd.getWallItemName(typeId);
                 if (cls != null) {
-                    furnidata.details.WallItemDetails d = fd.getWallItemDetails(cls);
+                    Furnidata.Mobi d = fd.getWallItemDetails(cls);
                     if (d != null && d.name != null && !d.name.isEmpty()) return d.name;
                     return cls;
                 }

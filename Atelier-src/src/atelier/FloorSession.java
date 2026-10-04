@@ -1,6 +1,5 @@
 package atelier;
 
-import game.FloorState;
 import gearth.extensions.parsers.HFloorItem;
 
 import javafx.beans.property.*;
@@ -108,7 +107,7 @@ final class FloorSession {
         Lecture l = new Lecture();
         try {
             if (Salle.gp() == null) { l.erreur = "L'Atelier n'est pas encore prêt."; return l; }
-            FloorState s = Salle.etat();
+            EtatSalle s = Salle.etat();
             if (s == null) { l.erreur = "Pas dans une salle (ou plan pas encore reçu)."; return l; }
             try { l.salleId = s.getRoomId(); } catch (Throwable ignored) { }
             FloorModele m = null;
@@ -153,7 +152,7 @@ final class FloorSession {
                     o.nom = noms.computeIfAbsent(o.typeId, t -> Salle.nom(t, false));
                     o.classe = classes.computeIfAbsent(o.typeId, t -> Salle.classe(t, false));
                     try {
-                        furnidata.details.FloorItemDetails d = Salle.details(o.classe);
+                        Furnidata.Mobi d = Salle.details(o.classe);
                         if (d != null) o.revision = d.revision;
                     } catch (Throwable ignored) { }
                     ms.add(o);

@@ -1,10 +1,9 @@
 package atelier;
 
-import extension.GPresets;
 
 /**
  * Un message dans le chat du jeu (sans prefixe), comme si ton avatar chuchotait — chez toi
- * SEULEMENT : GPresets.sendVisualChatInfo envoie un Whisper au client, jamais
+ * SEULEMENT : Moteur.sendVisualChatInfo envoie un Whisper au client, jamais
  * au serveur. Personne d'autre ne le voit, il n'est dans aucun historique.
  *
  * Sert a dire, a la FIN d'une operation longue, si tout s'est bien passe :
@@ -96,7 +95,7 @@ public final class InfoJeu {
         m = pourLeJeu(m);
         dernierEnvoi = System.currentTimeMillis();
         dernierTexte = m;
-        GPresets gp = Salle.gp();
+        Moteur gp = Salle.gp();
         if (gp == null || !Salle.dansUneSalle()) return;
         try { gp.sendVisualChatInfo(m); }
         catch (Throwable t) { System.err.println("[Atelier] message du jeu pas envoyé : " + t); }

@@ -1,6 +1,5 @@
 package atelier;
 
-import extension.GPresets;
 import gearth.extensions.parsers.HFloorItem;
 import gearth.extensions.parsers.HPoint;
 import gearth.extensions.parsers.HWallItem;
@@ -219,7 +218,7 @@ final class GroupeFantomes {
      * @return nombre d'envois echoues
      */
     static int appliquer(Diff d, java.util.function.BooleanSupplier encore) {
-        GPresets gp = Salle.gp();
+        Moteur gp = Salle.gp();
         if (gp == null) return d.total();
         int ici = Groupes.salleCourante();
         if (ici == -1) return d.total();
@@ -285,7 +284,7 @@ final class GroupeFantomes {
     private static final Set<Integer> empreintes = ConcurrentHashMap.newKeySet();
     private static final ArrayDeque<Integer> ordreEmpreintes = new ArrayDeque<>();
 
-    private static boolean envoyer(GPresets gp, HPacket p) {
+    private static boolean envoyer(Moteur gp, HPacket p) {
         try {
             int e = Arrays.hashCode(p.toBytes());
             synchronized (ordreEmpreintes) {
@@ -306,7 +305,7 @@ final class GroupeFantomes {
     /** A appeler regulierement : ne branche qu'une fois, des que le moteur de l'Atelier est la. */
     static synchronized void brancher() {
         if (branche) return;
-        GPresets gp = Salle.gp();
+        Moteur gp = Salle.gp();
         if (gp == null) return;
         branche = true;
         HMessage.Direction C = HMessage.Direction.TOCLIENT, S = HMessage.Direction.TOSERVER;

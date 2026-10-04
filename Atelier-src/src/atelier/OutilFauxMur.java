@@ -1,10 +1,7 @@
 package atelier;
 
-import extension.GPresets;
-import game.FloorState;
 import gearth.protocol.HMessage;
 import gearth.protocol.HPacket;
-import utils.WallPosition;
 
 import javafx.application.Platform;
 import javafx.geometry.Insets;
@@ -112,7 +109,7 @@ public class OutilFauxMur {
 
     private synchronized void brancher() {
         if (installe) return;
-        GPresets gp = AtelierLauncher.moteur();
+        Moteur gp = AtelierLauncher.moteur();
         if (gp == null) return;
         try {
             // seulement le clic au sol (MoveAvatar) : pas de pose fantome sur
@@ -125,14 +122,14 @@ public class OutilFauxMur {
         } catch (Throwable ignored) { }
     }
 
-    private void poser(GPresets gp, HMessage m) {
+    private void poser(Moteur gp, HMessage m) {
         int taille = m.getPacket().getBytesLength();
         if (taille < 14 || taille > 20) return;      // un clic au sol : deux entiers
 
         SelectionMur.Mur ref = SelectionMur.courant();
         if (ref == null || ref.typeId < 0) return;
 
-        FloorState s = gp.getFloorState();
+        EtatSalle s = gp.getFloorState();
         if (s == null || !s.inRoom()) return;
 
         HPacket p = m.getPacket();                    // lecture a position fixe : pas de copie
@@ -142,16 +139,16 @@ public class OutilFauxMur {
         if (cx < 0 || cx > 200 || cy < 0 || cy > 200) return;
         if (Salle.hauteurSol(cx, cy) < 0) return;    // case non jouable
 
-        WallPosition w;
-        try { w = new WallPosition(ref.position); } catch (Throwable e) { return; }
+        PositionMur w;
+        try { w = PositionMur.lire(ref.position); } catch (Throwable e) { return; }
 
         // Face 'l' : le mur suit l'axe y, la case donne donc w=x,cy.
         // Face 'r' : il suit l'axe x, la case donne w=cx,y.
-        int wx = w.getX(), wy = w.getY();
-        if (w.getDirection() == 'l') wy = cy; else wx = cx;
+        int wx = w.x(), wy = w.y();
+        if (w.cote() == 'l') wy = cy; else wx = cx;
 
         String cible = String.format(java.util.Locale.ROOT, ":w=%d,%d l=%d,%d %c",
-                wx, wy, w.getOffsetX(), w.getOffsetY() + decalage, w.getDirection());
+                wx, wy, w.decalageX(), w.decalageY() + decalage, w.cote());
 
         // La pose part sur un autre fil : faite ici, elle retenait le clic du
         // jeu (et le deplacement de l'avatar) le temps de l'envoi. Un seul fil,

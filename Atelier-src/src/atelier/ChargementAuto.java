@@ -1,7 +1,5 @@
 package atelier;
 
-import extension.GPresets;
-import game.FloorState;
 import gearth.protocol.HMessage;
 import gearth.protocol.HPacket;
 
@@ -11,28 +9,27 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * Charge l'inventaire et le catalogue BC tout seul, une fois dans une salle.
  *
- * Aucune manipulation dans le jeu n'est necessaire : loadInventoryClick et
- * loadBCClick se contentent d'appeler requestInventory() et requestIndex(), qui
- * envoient les paquets RequestFurniInventory et GetCatalogIndex. Le serveur
- * repond de lui-meme — inutile d'ouvrir son sac ou le catalogue.
+ * Aucune manipulation dans le jeu n'est necessaire : Moteur.demanderInventaire
+ * et Moteur.demanderCatalogue envoient RequestFurniInventory et
+ * GetCatalogIndex. Le serveur repond de lui-meme — inutile d'ouvrir son sac ou
+ * le catalogue ; ces reponses ne vont pas au jeu, qui ne les a pas demandees.
  *
  * Toujours actif, sans reglage. Garde-fous : une seule tentative a la fois,
- * un delai avant de reessayer — le scrapage du catalogue parcourt toutes les
- * pages, on evite de le relancer en boucle — et pas de nouvelle demande
+ * un delai avant de reessayer — la lecture du catalogue parcourt toutes les
+ * pages, on evite de la relancer en boucle — et pas de nouvelle demande
  * d'inventaire juste apres celle d'un autre outil de l'Atelier (deux reponses
  * de 25 000 mobis a la suite, dont une pouvait arriver au jeu sans qu'il l'ait
  * demandee, et le figeait).
  *
- * Pendant la collecte des pages du catalogue BC (des centaines de pages, une
- * toutes les 180 ms), le moteur de l'Atelier bloque toute demande de page faite
- * par le jeu : le catalogue du jeu ne repondait plus pendant une ou deux
- * minutes. Ici :
+ * Pendant la lecture des pages du catalogue BC (des centaines de pages, une
+ * toutes les 200 ms environ), les pages demandees par le jeu ne sont jamais
+ * perdues :
  *   - une page BC demandee par le jeu est renvoyee au serveur tout de suite
- *     (sa reponse est une vraie page BC, sans danger pour la collecte) ;
+ *     (sa reponse est une vraie page BC, sans danger pour la lecture) ;
  *   - une page du catalogue normal est gardee et redemandee des la fin de la
- *     collecte (sa reponse fausserait les offres BC si elle arrivait pendant) ;
- *   - les pages collectees ne sont plus envoyees au jeu, qui ne les a pas
- *     demandees : le moteur les lit quand meme (un paquet bloque reste lu).
+ *     lecture ;
+ *   - les pages lues pour l'Atelier ne sont pas envoyees au jeu, qui ne les a
+ *     pas demandees : le moteur les lit quand meme (un paquet bloque reste lu).
  */
 public final class ChargementAuto {
 
@@ -65,11 +62,11 @@ public final class ChargementAuto {
     }
 
     private static void verifier() {
-        GPresets gp = AtelierLauncher.moteur();
+        Moteur gp = AtelierLauncher.moteur();
         if (gp == null) return;
         brancherCatalogue(gp);
 
-        FloorState s = gp.getFloorState();
+        EtatSalle s = gp.getFloorState();
         if (s == null || !s.inRoom()) return;     // rien a faire hors d'une salle
 
         long maintenant = System.currentTimeMillis();
@@ -81,7 +78,7 @@ public final class ChargementAuto {
             dernierEssaiInv = maintenant;
             try {
                 inventaireDemande();
-                gp.getInventory().requestInventory();
+                gp.demanderInventaire();
                 Journal.debug("inventaire demandé automatiquement.");
             } catch (Throwable t) {
                 System.err.println("[Atelier] demande d'inventaire impossible : " + t);
@@ -95,7 +92,7 @@ public final class ChargementAuto {
             dernierEssaiBc = maintenant;
             try {
                 indexDemande();
-                gp.getCatalog().requestIndex();
+                gp.demanderCatalogue();
                 Journal.debug("catalogue BC demandé automatiquement.");
             } catch (Throwable t) {
                 System.err.println("[Atelier] demande de catalogue impossible : " + t);
@@ -130,7 +127,7 @@ public final class ChargementAuto {
      * est bloque : le jeu n'a pas a reconstruire tout son catalogue pour rien.
      * Le moteur et le repertoire le lisent quand meme (un paquet bloque reste lu).
      */
-    private static void indexRecu(GPresets gp, HMessage m) {
+    private static void indexRecu(Moteur gp, HMessage m) {
         long t = System.currentTimeMillis();
         if (t - indexDuJeuLe < 15_000) return;                       // le jeu l'attend
         boolean atelier = t - indexAtelierLe < 15_000;
@@ -140,12 +137,12 @@ public final class ChargementAuto {
         if (atelier || moteur) m.setBlocked(true);
     }
 
-    private static boolean collecteBc(GPresets gp) {
+    private static boolean collecteBc(Moteur gp) {
         try { return "COLLECTING_PAGES".equals(String.valueOf(gp.getCatalog().getState())); }
         catch (Throwable t) { return false; }
     }
 
-    private static synchronized void brancherCatalogue(GPresets gp) {
+    private static synchronized void brancherCatalogue(Moteur gp) {
         if (catalogueBranche) return;
         try {
             // GetCatalogPage(int page, int offre, String catalogue). Hors collecte : rien.
@@ -175,7 +172,7 @@ public final class ChargementAuto {
      * l'envoi part sur un autre fil. L'ordre des ecoutes n'est pas garanti :
      * le paquet est toujours bloque ici, et c'est une copie qui part.
      */
-    private static void pageDemandee(GPresets gp, HMessage m) {
+    private static void pageDemandee(Moteur gp, HMessage m) {
         if (!collecteBc(gp)) return;
         HPacket p = m.getPacket();
         int n = p.getBytesLength();
@@ -197,7 +194,7 @@ public final class ChargementAuto {
     }
 
     /** Les pages collectees par le moteur ne vont plus au jeu (qui ne les a pas demandees). */
-    private static void pageRecue(GPresets gp, HMessage m) {
+    private static void pageRecue(Moteur gp, HMessage m) {
         if (!collecteBc(gp)) return;
         HPacket p = m.getPacket();
         if (p.getBytesLength() < 12) return;
@@ -209,7 +206,7 @@ public final class ChargementAuto {
     }
 
     /** Redemande la page normale gardee des que la collecte BC est finie (au plus 3 min apres). */
-    private static synchronized void surveillerFinDeCollecte(GPresets gp) {
+    private static synchronized void surveillerFinDeCollecte(Moteur gp) {
         if (surveillanceLancee) return;
         surveillanceLancee = true;
         Salle.tache("catalogue-attente", () -> {

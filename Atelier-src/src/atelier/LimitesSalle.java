@@ -38,7 +38,7 @@ final class LimitesSalle {
 
     private static synchronized void brancher() {
         if (branche) return;
-        extension.GPresets gp = Salle.gp();
+        Moteur gp = Salle.gp();
         if (gp == null) return;
         try {
             // Users porte toutes les entites (avatars, figures...) : il est lu sur

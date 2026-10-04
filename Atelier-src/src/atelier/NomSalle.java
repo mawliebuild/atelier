@@ -1,13 +1,12 @@
 package atelier;
 
-import extension.GPresets;
 import gearth.protocol.HMessage;
 import gearth.protocol.HPacket;
 
 /**
  * Retient le nom de la salle courante et son proprietaire.
  *
- * FloorState ne garde que l'identifiant et le modele. Le nom arrive dans
+ * EtatSalle ne garde que l'identifiant et le modele. Le nom arrive dans
  * GetGuestRoomResult, dont la charge utile commence par :
  *     boolean entree, int idSalle, String nom, int idProprietaire,
  *     String proprietaire, int acces, int presents, int maximum, String description...
@@ -18,7 +17,7 @@ import gearth.protocol.HPacket;
  * appele. C'est exactement ce qui se passait ici — « Salle actuelle » restait
  * sur un tiret.
  *
- * On valide l'identifiant lu contre celui de FloorState quand il est connu :
+ * On valide l'identifiant lu contre celui de EtatSalle quand il est connu :
  * sans ca, un paquet concernant une AUTRE salle (survol dans le navigateur, par
  * exemple) ecraserait le nom affiche.
  */
@@ -38,7 +37,7 @@ public final class NomSalle {
 
     public static synchronized void installer() {
         if (installe) return;
-        GPresets gp = AtelierLauncher.moteur();
+        Moteur gp = AtelierLauncher.moteur();
         if (gp == null) return;
         try {
             gp.intercept(HMessage.Direction.TOCLIENT, m -> {
@@ -86,7 +85,7 @@ public final class NomSalle {
      * proprietaire, un pseudo, puis un mode d'acces de 0 a 3 : aucun autre
      * paquet du jeu n'enchaine ces six champs.
      */
-    private static void lire(GPresets gp, HPacket paquet) {
+    private static void lire(Moteur gp, HPacket paquet) {
         HPacket p = new HPacket(paquet);
         p.resetReadIndex();
 
@@ -160,7 +159,7 @@ public final class NomSalle {
     }
 
     /** Le nom n'est valable que pour la salle ou l'on est encore. */
-    public static String nomValide(GPresets gp) {
+    public static String nomValide(Moteur gp) {
         try {
             if (gp != null && gp.getFloorState() != null) {
                 int courant = gp.getFloorState().getRoomId();

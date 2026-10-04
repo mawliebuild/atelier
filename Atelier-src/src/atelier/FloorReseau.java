@@ -1,6 +1,5 @@
 package atelier;
 
-import extension.GPresets;
 import gearth.protocol.HMessage;
 import gearth.protocol.HPacket;
 
@@ -20,9 +19,9 @@ import java.util.concurrent.CopyOnWriteArrayList;
  *
  * Structures :
  *   FloorHeightMap   boolean echelle, int hauteurMur, String plan('\r')
- *                    -> VERIFIE : c'est exactement ce que lit FloorState.parseFloorPlan (javap).
+ *                    -> VERIFIE : c'est exactement ce que lit EtatSalle.parseFloorPlan (javap).
  *   HeightMap        int largeur, int total, total x ushort (ligne par ligne, y puis x)
- *                    -> VERIFIE : FloorState.parseHeightmap ; hauteur = (v & 0x3FFF) / 256.
+ *                    -> VERIFIE : EtatSalle.parseHeightmap ; hauteur = (v & 0x3FFF) / 256.
  *                    Valeur d'une case absente : SUPPOSEE Short.MAX_VALUE (emulateurs).
  *   RoomEntryTile    int x, int y, int direction                       (SUPPOSE, emulateurs + client)
  *   RoomOccupiedTiles int n, puis n x (int x, int y)                    (SUPPOSE)
@@ -80,7 +79,7 @@ final class FloorReseau {
         enCours = true;
         Salle.tache("floor-ecoute", () -> {
             for (int i = 0; i < 900 && !branche; i++) {
-                GPresets gp = Salle.gp();
+                Moteur gp = Salle.gp();
                 if (gp != null) {
                     try {
                         brancher(gp);
@@ -94,7 +93,7 @@ final class FloorReseau {
         });
     }
 
-    private static void brancher(GPresets gp) {
+    private static void brancher(Moteur gp) {
         HMessage.Direction C = HMessage.Direction.TOCLIENT;
         gp.intercept(C, "RoomEntryTile", m -> {
             try {
@@ -171,7 +170,7 @@ final class FloorReseau {
     static void demanderOccupees() { envoyerServeur(new HPacket("GetOccupiedTiles", HMessage.Direction.TOSERVER)); }
 
     private static boolean envoyerServeur(HPacket p) {
-        GPresets gp = Salle.gp();
+        Moteur gp = Salle.gp();
         if (gp == null) return false;
         try { return gp.sendToServer(p); } catch (Throwable t) { return false; }
     }
@@ -195,7 +194,7 @@ final class FloorReseau {
      * reconstruire la piece ; recharger la salle remet le vrai plan.
      */
     static boolean apercuClient(FloorModele m, boolean avecHeightMap) {
-        GPresets gp = Salle.gp();
+        Moteur gp = Salle.gp();
         if (gp == null || m == null) return false;
         try {
             HPacket f = new HPacket("FloorHeightMap", HMessage.Direction.TOCLIENT);

@@ -131,7 +131,7 @@ public final class Capture {
     }
 
     /**
-     * Le toner de la salle (mobi roombg_color), lu dans FloorState de
+     * Le toner de la salle (mobi roombg_color), lu dans EtatSalle de
      * le moteur de l'Atelier — qui suit ObjectUpdate / ObjectDataUpdate. Le stuffdata est un
      * IntArrayStuffData : [etat, teinte, saturation, luminosite]. Prefere un
      * toner allume s'il y en a plusieurs. null si aucun ou illisible.
@@ -889,7 +889,7 @@ public final class Capture {
      * (pour les series) et on le renvoie. null + erreur si rien n'arrive.
      */
     public static Ou<File> captureParLeJeu(long attenteMs) {
-        extension.GPresets gp = Salle.gp();
+        Moteur gp = Salle.gp();
         if (gp == null) return new Ou<>(null, "L'Atelier n'est pas relié au jeu : capture impossible.");
         long t0 = System.currentTimeMillis();
         try { java.nio.file.Files.deleteIfExists(FICHIER_JEU.toPath()); } catch (Throwable ignored) { }

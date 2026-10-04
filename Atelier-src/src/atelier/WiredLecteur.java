@@ -1,16 +1,5 @@
 package atelier;
 
-import extension.GPresets;
-import extension.parsers.HWiredVariable;
-import extension.tools.presetconfig.wired.PresetWiredBase;
-import extension.tools.presetconfig.wired.PresetWiredEffect;
-import extension.tools.presetconfig.wired.incoming.RetrievedWired;
-import extension.tools.presetconfig.wired.incoming.RetrievedWiredAddon;
-import extension.tools.presetconfig.wired.incoming.RetrievedWiredCondition;
-import extension.tools.presetconfig.wired.incoming.RetrievedWiredEffect;
-import extension.tools.presetconfig.wired.incoming.RetrievedWiredSelector;
-import extension.tools.presetconfig.wired.incoming.RetrievedWiredTrigger;
-import extension.tools.presetconfig.wired.incoming.RetrievedWiredVariable;
 import gearth.extensions.parsers.HFloorItem;
 import gearth.protocol.HMessage;
 import gearth.protocol.HPacket;
@@ -72,35 +61,26 @@ public final class WiredLecteur {
         public final List<String> variables;
         /** delai d'un effet (en demi-secondes), -1 sinon */
         public final int delai;
-        /** Le reglage tel que le moteur de l'Atelier l'a decode (pour le recopier : WiredCollage). */
-        public final PresetWiredBase brut;
+        /** Le reglage tel que le serveur l'a decrit (pour le recopier : WiredCollage, EnregistrementCopie). */
+        public final ReglageWired brut;
 
-        Config(PresetWiredBase w, String genre) {
+        Config(ReglageWired w, String genre) {
             this.brut = w;
-            this.id = w.getWiredId();
+            this.id = w.wiredId;
             this.genre = genre;
-            int t = -1;
-            try { if (w instanceof RetrievedWired) t = ((RetrievedWired) w).getTypeId(); }
-            catch (Throwable ignored) { }
-            this.typeId = t;
-            items = copie(w.getItems());
-            items2 = copie(w.getSecondItems());
-            options = copie(w.getOptions());
-            sourcesMobis = copie(w.getPickedFurniSources());
-            sourcesAvatars = copie(w.getPickedUserSources());
-            String s = w.getStringConfig();
-            texte = s == null ? "" : s;
+            this.typeId = w.typeId;
+            items = copie(w.items);
+            items2 = copie(w.items2);
+            options = copie(w.options);
+            sourcesMobis = copie(w.sourcesMobis);
+            sourcesAvatars = copie(w.sourcesAvatars);
+            texte = w.texte == null ? "" : w.texte;
             List<String> v = new ArrayList<>();
-            try {
-                if (w.getVariableIds() != null)
-                    for (String x : w.getVariableIds())
-                        if (x != null && !x.isBlank() && !x.equals("0")) v.add(x);
-            } catch (Throwable ignored) { }
+            if (w.variables != null)
+                for (String x : w.variables)
+                    if (x != null && !x.isBlank() && !x.equals("0")) v.add(x);
             variables = List.copyOf(v);
-            int d = -1;
-            try { if (w instanceof PresetWiredEffect) d = ((PresetWiredEffect) w).getDelay(); }
-            catch (Throwable ignored) { }
-            delai = d;
+            delai = w.genre == ReglageWired.Genre.EFFET ? w.delai : -1;
         }
 
         private static <T> List<T> copie(List<T> l) {
@@ -246,7 +226,7 @@ public final class WiredLecteur {
     private static final Set<String> poses = ConcurrentHashMap.newKeySet();
 
     private static boolean brancher() {
-        GPresets gp = Salle.gp();
+        Moteur gp = Salle.gp();
         if (gp == null) return false;
         nomme(gp, "WiredFurniTrigger", "declencheur");
         nomme(gp, "WiredFurniCondition", "condition");
@@ -301,7 +281,7 @@ public final class WiredLecteur {
         return true;
     }
 
-    private static void nomme(GPresets gp, String nom, String genre) {
+    private static void nomme(Moteur gp, String nom, String genre) {
         if (poses.contains(nom)) return;
         try {
             gp.intercept(HMessage.Direction.TOCLIENT, nom, m -> {
@@ -348,29 +328,35 @@ public final class WiredLecteur {
 
     // --------------------------------------------------------------- reponses
 
-    private static PresetWiredBase decoder(HPacket brut, String genre) {
+    private static ReglageWired decoder(HPacket brut, String genre) {
+        ReglageWired.Genre g = genre(genre);
+        if (g == null) return null;
         HPacket p = new HPacket(brut);
         p.resetReadIndex();
-        try {
-            switch (genre) {
-                case "declencheur": return RetrievedWiredTrigger.fromPacket(p);
-                case "condition":   return RetrievedWiredCondition.fromPacket(p);
-                case "effet":       return RetrievedWiredEffect.fromPacket(p);
-                case "add-on":      return RetrievedWiredAddon.fromPacket(p);
-                case "selecteur":   return RetrievedWiredSelector.fromPacket(p);
-                case "variable":    return RetrievedWiredVariable.fromPacket(p);
-                default: return null;
-            }
-        } catch (Throwable t) { return null; }
+        try { return ReglageWired.lireEntrant(g, p); } catch (Throwable t) { return null; }
+    }
+
+    /** « declencheur », « condition »... -> le genre d'un reglage, ou null. */
+    static ReglageWired.Genre genre(String genre) {
+        if (genre == null) return null;
+        switch (genre) {
+            case "declencheur": return ReglageWired.Genre.DECLENCHEUR;
+            case "condition":   return ReglageWired.Genre.CONDITION;
+            case "effet":       return ReglageWired.Genre.EFFET;
+            case "add-on":      return ReglageWired.Genre.ADDON;
+            case "selecteur":   return ReglageWired.Genre.SELECTEUR;
+            case "variable":    return ReglageWired.Genre.VARIABLE;
+            default: return null;
+        }
     }
 
     /** Reponse reconnue par son nom de paquet. */
     private static void recevoir(HMessage m, String genre, boolean parNom) {
         if (demandes.isEmpty() && elleOuvre.isEmpty()) return;   // rien a faire
         if (m.getPacket().getBytesLength() > 20000) return;
-        PresetWiredBase w = decoder(m.getPacket(), genre);
+        ReglageWired w = decoder(m.getPacket(), genre);
         if (w == null) return;
-        int id = w.getWiredId();
+        int id = w.wiredId;
         Long t = elleOuvre.remove(id);
         boolean elle = t != null && System.currentTimeMillis() - t < 10000;
         if (elle) {
@@ -445,8 +431,8 @@ public final class WiredLecteur {
         Map<String, String> lues = new HashMap<>();
         for (int i = 0; i < k && i < 100000; i++) {
             p.readInteger();
-            HWiredVariable v = new HWiredVariable(p);
-            if (v.id != null) lues.put(v.id, v.name == null ? "" : v.name);
+            PoseOutils.Variable v = PoseOutils.lireVariable(p);
+            if (v.id() != null) lues.put(v.id(), v.nom() == null ? "" : v.nom());
         }
         OutilMiroir.Altitude.depuisListe(lues);
         if (!pourMoi) return;
@@ -542,6 +528,15 @@ public final class WiredLecteur {
         }
     }
 
+    /** Oublie les reglages deja lus (« Vider le cache wired ») : ils seront relus. */
+    static void viderCache() {
+        cache.clear();
+        illisibles.clear();
+        aRelire.clear();
+        lus = 0;
+        donneesChangees();
+    }
+
     /** Oublie tout ce qui concerne la salle precedente. */
     private static void oublierSalle() {
         cache.clear();
@@ -559,9 +554,9 @@ public final class WiredLecteur {
     }
 
     private static void tour(Regroupeur reg) {
-        GPresets gp = Salle.gp();
+        Moteur gp = Salle.gp();
         if (gp == null) { etat("En attente du moteur de l'Atelier…"); return; }
-        game.FloorState s = Salle.etat();
+        EtatSalle s = Salle.etat();
         if (s == null) {
             if (salleCourante != -1) { salleCourante = -1; oublierSalle(); donneesChangees(); }
             etat("Pas dans une salle.");
@@ -619,27 +614,18 @@ public final class WiredLecteur {
     }
 
     /**
-     * Le moteur de l'Atelier pose un appart (Update* et poses en rafale) ou exporte (il
-     * ouvre lui-meme les wired) : on ne lit pas en meme temps, ni pour le
-     * flood, ni pour ne pas lire un wired pas encore regle.
+     * Le moteur de l'Atelier pose une copie (Update* et poses en rafale) : on ne
+     * lit pas en meme temps, ni pour le flood, ni pour ne pas lire un wired pas
+     * encore regle. (La copie d'un appart lit elle-meme ses wired par
+     * lireMaintenant : rien a attendre.)
      */
-    private static String occupe(GPresets gp) {
-        try {
-            Object e = gp.getImporter() == null ? null : gp.getImporter().getState();
-            if (e != null && !"NONE".equals(String.valueOf(e)))
-                return "En attente : l'Atelier pose un appart.";
-        } catch (Throwable ignored) { }
-        try {
-            Object e = gp.getExporter() == null ? null : gp.getExporter().getState();
-            if (e != null && "FETCHING_UNKNOWN_CONFIGS".equals(String.valueOf(e)))
-                return "En attente : l'Atelier exporte.";
-        } catch (Throwable ignored) { }
-        return null;
+    private static String occupe(Moteur gp) {
+        return PoseCopie.occupee() ? "En attente : l'Atelier pose un appart." : null;
     }
 
-    private static Boolean droits(GPresets gp) {
+    private static Boolean droits(Moteur gp) {
         try {
-            game.RoomPermissions rp = gp.getPermissions();
+            Droits rp = gp.getPermissions();
             return rp == null ? null : rp.canModifyWired();
         } catch (Throwable t) { return null; }
     }
@@ -699,7 +685,7 @@ public final class WiredLecteur {
     // ---------------------------------------------------------------- lecture
 
     /** Lit les wired donnes, dans le fil de suivi. S'arrete au changement de salle. */
-    private static void lecture(GPresets gp, int salle, List<HFloorItem> aLire) {
+    private static void lecture(Moteur gp, int salle, List<HFloorItem> aLire) {
         enLecture = true;
         arret = false;
         try {
@@ -759,7 +745,7 @@ public final class WiredLecteur {
     }
 
     private static boolean memeSalle(int salle) {
-        game.FloorState s = Salle.etat();
+        EtatSalle s = Salle.etat();
         try { return s != null && s.getRoomId() == salle; } catch (Throwable t) { return false; }
     }
 
@@ -781,7 +767,7 @@ public final class WiredLecteur {
     }
 
     /** Envoie Open(id) et attend la reponse ; true si la configuration est arrivee. */
-    private static boolean demander(GPresets gp, int id, String classe, int salle) {
+    private static boolean demander(Moteur gp, int id, String classe, int salle) {
         long attente = PAUSE_MS - (System.currentTimeMillis() - dernierEnvoi);
         if (attente > 0) Salle.sommeil(attente);
         if (!attendrePause(salle)) return false;
@@ -827,8 +813,8 @@ public final class WiredLecteur {
         if (ids == null || ids.isEmpty()) return r;
         installer();
         for (int i = 0; i < 100 && !branche; i++) Salle.sommeil(100);
-        GPresets gp = Salle.gp();
-        game.FloorState s = Salle.etat();
+        Moteur gp = Salle.gp();
+        EtatSalle s = Salle.etat();
         if (gp == null || s == null || !branche) return r;
         int salle = s.getRoomId();
         if (enLecture) arret = true;          // la lecture automatique cede la place, elle reprendra

@@ -243,7 +243,7 @@ public final class Groupes {
     // ================================================================ salle
 
     static int salleCourante() {
-        try { game.FloorState s = Salle.etat(); return s == null ? -1 : s.getRoomId(); } catch (Throwable t) { return -1; }
+        try { EtatSalle s = Salle.etat(); return s == null ? -1 : s.getRoomId(); } catch (Throwable t) { return -1; }
     }
 
     /** La salle dont la liste parle (-1 hors salle). */
@@ -1246,18 +1246,12 @@ public final class Groupes {
     }
 
     /**
-     * Jeton du chargement de salle : le moteur de l'Atelier recree sa liste de mobis a
-     * chaque entree (meme dans le meme appart), son identite change donc.
-     * 0 si illisible.
+     * Jeton du chargement de salle : il change a chaque liste de mobis recue
+     * (chaque entree, meme dans le meme appart). 0 hors salle.
      */
     private static int jeton() {
-        try {
-            game.FloorState s = Salle.etat();
-            if (s == null) return 0;
-            java.lang.reflect.Field f = game.FloorState.class.getDeclaredField("furnimap");
-            f.setAccessible(true);
-            return System.identityHashCode(f.get(s));
-        } catch (Throwable t) { return 0; }
+        EtatSalle s = Salle.etat();
+        return s == null ? 0 : s.generation();
     }
 
     private static void surveiller() {

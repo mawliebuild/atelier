@@ -117,7 +117,7 @@ final class StyleSurlignage {
     private static void envoyerSiBesoin() {
         if (!Salle.installeeDepuis(3000)) return;
         if (!ClientModifie.saitStyle()) return;
-        extension.GPresets gp = Salle.gp();
+        Moteur gp = Salle.gp();
         if (gp == null) return;
         String m = message(mode, couleur, epaisseur, opacite);
         String cle = Salle.salleId() + "|" + m;

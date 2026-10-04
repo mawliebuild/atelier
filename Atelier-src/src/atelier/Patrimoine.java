@@ -1,7 +1,5 @@
 package atelier;
 
-import extension.GPresets;
-import game.FloorState;
 import gearth.extensions.parsers.HFloorItem;
 import gearth.extensions.parsers.HWallItem;
 import gearth.protocol.HMessage;
@@ -68,7 +66,7 @@ public final class Patrimoine {
     }
 
     private static void travailler() {
-        GPresets gp = null;
+        Moteur gp = null;
         while (gp == null) {
             gp = AtelierLauncher.moteur();
             if (gp == null) dormir(1000);
@@ -83,7 +81,7 @@ public final class Patrimoine {
                     try { gp.sendToServer(new HPacket("InfoRetrieve", HMessage.Direction.TOSERVER)); }
                     catch (Throwable ignored) { }
                 }
-                FloorState s = gp.getFloorState();
+                EtatSalle s = gp.getFloorState();
                 if (moi >= 0 && s != null && s.inRoom()) {
                     List<HFloorItem> sols = s.getItems();
                     List<HWallItem> murs = s.getWallItems();
@@ -100,7 +98,7 @@ public final class Patrimoine {
     }
 
     /** UserObject : int id, String pseudo, ... Reconnu par nom (envoye rarement). */
-    private static void ecouterIdentite(GPresets gp) {
+    private static void ecouterIdentite(Moteur gp) {
         try {
             gp.intercept(HMessage.Direction.TOCLIENT, "UserObject", m -> {
                 try {
@@ -119,7 +117,7 @@ public final class Patrimoine {
         }
     }
 
-    private static void compter(GPresets gp, int salle, List<HFloorItem> sols, List<HWallItem> murs) {
+    private static void compter(Moteur gp, int salle, List<HFloorItem> sols, List<HWallItem> murs) {
         Appart a = new Appart();
         a.id = salle;
         a.nom = NomSalle.nomValide(gp);
@@ -143,9 +141,9 @@ public final class Patrimoine {
         notifier();
     }
 
-    private static boolean bc(GPresets gp, int typeId, boolean mur) {
+    private static boolean bc(Moteur gp, int typeId, boolean mur) {
         try {
-            furnidata.FurniDataTools fd = gp.getFurniDataTools();
+            Furnidata fd = gp.getFurniDataTools();
             if (fd == null || !fd.isReady()) return false;
             String cls = mur ? fd.getWallItemName(typeId) : fd.getFloorItemName(typeId);
             if (cls == null) return false;

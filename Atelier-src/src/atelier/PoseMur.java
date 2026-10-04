@@ -1,7 +1,5 @@
 package atelier;
 
-import extension.GPresets;
-import game.BCCatalog;
 import gearth.extensions.parsers.HInventoryItem;
 import gearth.protocol.HMessage;
 import gearth.protocol.HPacket;
@@ -34,7 +32,7 @@ public final class PoseMur {
      *                     serie : la liste du moteur de l'Atelier se met a jour de facon
      *                     asynchrone, on tient donc le compte nous-memes.
      */
-    public static Resultat poser(GPresets gp, int typeId, String etat, String position,
+    public static Resultat poser(Moteur gp, int typeId, String etat, String position,
                                  Source source, Set<Integer> dejaUtilises) {
         if (source != Source.BC) {
             Integer idInv = prochainInventaire(gp, typeId, dejaUtilises);
@@ -49,7 +47,7 @@ public final class PoseMur {
                 return new Resultat(false, "absent de l'inventaire");
         }
 
-        BCCatalog.SingleFurniProduct p = produitBc(gp, typeId, etat);
+        CatalogueBc.Produit p = produitBc(gp, typeId, etat);
         if (p == null) return new Resultat(false, "absent du catalogue BC");
 
         if (!envoyer(gp, new HPacket("BuildersClubPlaceWallItem", HMessage.Direction.TOSERVER,
@@ -58,11 +56,11 @@ public final class PoseMur {
         return new Resultat(true, "depuis le BC");
     }
 
-    private static boolean envoyer(GPresets gp, HPacket p) {
+    private static boolean envoyer(Moteur gp, HPacket p) {
         try { return gp.sendToServer(p); } catch (Throwable t) { return false; }
     }
 
-    private static Integer prochainInventaire(GPresets gp, int typeId, Set<Integer> deja) {
+    private static Integer prochainInventaire(Moteur gp, int typeId, Set<Integer> deja) {
         try {
             List<HInventoryItem> inv = gp.getInventory().getWallItemsByType(typeId);
             if (inv != null) for (HInventoryItem it : inv)
@@ -72,11 +70,11 @@ public final class PoseMur {
     }
 
     /** Variante d'etat exacte d'abord : un repli aveugle poserait le mauvais etat. */
-    private static BCCatalog.SingleFurniProduct produitBc(GPresets gp, int typeId, String etat) {
+    private static CatalogueBc.Produit produitBc(Moteur gp, int typeId, String etat) {
         try {
-            BCCatalog cat = gp.getCatalog();
+            CatalogueBc cat = gp.getCatalog();
             if (cat == null) return null;
-            BCCatalog.SingleFurniProduct p = cat.getWallProduct(typeId, etat);
+            CatalogueBc.Produit p = cat.getWallProduct(typeId, etat);
             return p != null ? p : cat.getAnyWallProduct(typeId);
         } catch (Throwable t) { return null; }
     }

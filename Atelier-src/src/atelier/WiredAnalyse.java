@@ -440,7 +440,7 @@ public final class WiredAnalyse {
     public static String nomLisible(String cls) {
         if (cls == null) return "(inconnu)";
         try {
-            furnidata.details.FloorItemDetails d = Salle.details(cls);
+            Furnidata.Mobi d = Salle.details(cls);
             if (d != null && d.name != null && !d.name.isEmpty()) {
                 int i = d.name.indexOf(':');
                 return i > 0 && i < d.name.length() - 2 ? d.name.substring(i + 1).trim() : d.name;

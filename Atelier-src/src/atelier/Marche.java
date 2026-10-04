@@ -1,6 +1,5 @@
 package atelier;
 
-import extension.GPresets;
 import gearth.protocol.HMessage;
 import gearth.protocol.HPacket;
 
@@ -87,7 +86,7 @@ public final class Marche {
      * Demande le prix d'un mobi et attend la reponse (au plus 4 s).
      * @return le prix, ou null si le serveur n'a pas repondu.
      */
-    public static Prix demander(GPresets gp, boolean mur, int typeId) throws InterruptedException {
+    public static Prix demander(Moteur gp, boolean mur, int typeId) throws InterruptedException {
         installer(gp);
         chargerUneFois();
         attendreTour();
@@ -115,7 +114,7 @@ public final class Marche {
         return p;
     }
 
-    private static synchronized void installer(GPresets gp) {
+    private static synchronized void installer(Moteur gp) {
         if (installe) return;
         gp.intercept(HMessage.Direction.TOCLIENT, m -> {
             if (attente.isEmpty()) return;                 // rien demande : rien a lire

@@ -228,12 +228,12 @@ final class ApercuSurlignage {
 
     private static Image icone() {
         try {
-            extension.GPresets gp = AtelierLauncher.moteur();
+            Moteur gp = AtelierLauncher.moteur();
             if (gp == null || gp.getFurniDataTools() == null || !gp.getFurniDataTools().isReady()) return null;
             for (NomsMobis.Nom n : NomsMobis.chercher(NOM_EXEMPLE, 3)) {
                 if (!NomsMobis.normaliser(n.nom).equals(NomsMobis.normaliser(NOM_EXEMPLE))) continue;
                 for (String cls : n.classes) {
-                    furnidata.details.FloorItemDetails d = gp.getFurniDataTools().getFloorItemDetails(cls);
+                    Furnidata.Mobi d = gp.getFurniDataTools().getFloorItemDetails(cls);
                     if (d == null || d.revision <= 0) continue;
                     String c = cls.contains("*") ? cls.substring(0, cls.indexOf('*')) : cls;
                     Image img = new Image("https://images.habbo.com/dcr/hof_furni/" + d.revision + "/" + c + "_icon.png",

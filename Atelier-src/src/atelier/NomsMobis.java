@@ -10,7 +10,7 @@ import java.util.*;
  * La comparaison ignore la casse, les accents et les espaces en trop. Les
  * noms techniques (classname) sont cherches aussi : « wf_act » marche.
  *
- * FurniDataTools ne publie pas sa liste : on lit ses deux tables privees
+ * Furnidata ne publie pas sa liste : on lit ses deux tables privees
  * (nameToFloorItems, nameToWallItems) une fois, des qu'elle est prete.
  */
 public final class NomsMobis {
@@ -44,22 +44,14 @@ public final class NomsMobis {
             if (tous != null) return tous;
             Map<String, Nom> parNom = new HashMap<>();
             try {
-                furnidata.FurniDataTools fd = Salle.gp().getFurniDataTools();
-                for (String champ : new String[]{"nameToFloorItems", "nameToWallItems"}) {
-                    java.lang.reflect.Field f = furnidata.FurniDataTools.class.getDeclaredField(champ);
-                    f.setAccessible(true);
-                    Map<?, ?> m = (Map<?, ?>) f.get(fd);
-                    if (m == null) continue;
-                    for (Map.Entry<?, ?> e : new ArrayList<>(m.entrySet())) {
-                        String classe = String.valueOf(e.getKey());
-                        String nom = null;
-                        try {
-                            nom = champ.startsWith("nameToFloor") ? fd.getFloorItemDetails(classe).name
-                                                                  : fd.getWallItemDetails(classe).name;
-                        } catch (Throwable ignored) { }
-                        if (nom == null || nom.isBlank()) nom = classe;
-                        ajouter(parNom, nom.trim(), classe);
-                    }
+                Furnidata fd = Salle.gp().getFurniDataTools();
+                List<Furnidata.Mobi> tousMobis = new ArrayList<>(fd.tousSols());
+                tousMobis.addAll(fd.tousMurs());
+                for (Furnidata.Mobi d : tousMobis) {
+                    String classe = d.className;
+                    String nom = d.name;
+                    if (nom == null || nom.isBlank()) nom = classe;
+                    ajouter(parNom, nom.trim(), classe);
                 }
             } catch (Throwable t) {
                 System.err.println("[Atelier] noms des mobis illisibles : " + t);
@@ -76,13 +68,9 @@ public final class NomsMobis {
         List<String[]> r = new ArrayList<>();
         if (!Salle.furnidataPrete()) return r;
         try {
-            furnidata.FurniDataTools fd = Salle.gp().getFurniDataTools();
-            java.lang.reflect.Field f = furnidata.FurniDataTools.class.getDeclaredField("nameToWallItems");
-            f.setAccessible(true);
-            Map<?, ?> m = (Map<?, ?>) f.get(fd);
-            if (m != null) for (Object k : new ArrayList<>(m.keySet())) {
-                String classe = String.valueOf(k), nom = null;
-                try { nom = fd.getWallItemDetails(classe).name; } catch (Throwable ignored) { }
+            Furnidata fd = Salle.gp().getFurniDataTools();
+            for (Furnidata.Mobi d : fd.tousMurs()) {
+                String classe = d.className, nom = d.name;
                 r.add(new String[]{nom == null || nom.isBlank() ? classe : nom.trim(), classe});
             }
         } catch (Throwable t) { System.err.println("[Atelier] muraux illisibles : " + t); }

@@ -1,7 +1,5 @@
 package atelier;
 
-import extension.GPresets;
-import game.FloorState;
 import gearth.extensions.parsers.HFloorItem;
 import gearth.extensions.parsers.HInventoryItem;
 import gearth.extensions.parsers.HPoint;
@@ -255,7 +253,7 @@ public final class Historique {
 
     private static void photographier() {
         if (Salle.gp() == null) { signaler("En attente du moteur de l'Atelier…"); return; }
-        FloorState s = Salle.etat();
+        EtatSalle s = Salle.etat();
         long now = System.currentTimeMillis();
         if (s == null) {
             if (salle != -1) {
@@ -477,7 +475,7 @@ public final class Historique {
             }
         }
         if (!poser.isEmpty() && !partie.getAsBoolean()) {
-            GPresets gp = Salle.gp();
+            Moteur gp = Salle.gp();
             if (!ramasser.isEmpty()) Salle.sommeil(600);   // laisser l'inventaire se mettre a jour
             inventairePret(gp);
             Set<Integer> pris = new HashSet<>();
@@ -494,7 +492,7 @@ public final class Historique {
                 if (c.mural) Salle.envoyer(new HPacket("PlaceObject", HMessage.Direction.TOSERVER,
                         inv + " " + cible.pos));
                 // Format du moteur de pose (v1.3.8) pour un mobi de sol depuis l'inventaire
-                // (GPresetImporter : "-%d %d %d %d", HInventoryItem.getId()).
+                // (ancien moteur de pose : "-%d %d %d %d", HInventoryItem.getId()).
                 else Salle.envoyer(new HPacket("PlaceObject", HMessage.Direction.TOSERVER,
                         "-" + inv + " " + cible.x + " " + cible.y + " " + cible.rot));
                 Salle.sommeil(PAUSE_ENVOI);
@@ -538,23 +536,23 @@ public final class Historique {
     }
 
     /** Charge l'inventaire si le moteur de l'Atelier ne l'a pas encore (attend au plus ~3 s). */
-    private static void inventairePret(GPresets gp) {
+    private static void inventairePret(Moteur gp) {
         if (gp == null) return;
         try {
-            if (gp.getInventory().getState() == game.Inventory.InventoryState.LOADED) return;
-            if (gp.getInventory().getState() != game.Inventory.InventoryState.LOADING) {
+            if (gp.getInventory().getState() == Inventaire.Etat.LOADED) return;
+            if (gp.getInventory().getState() != Inventaire.Etat.LOADING) {
                 ChargementAuto.inventaireDemande();
-                gp.getInventory().requestInventory();
+                gp.demanderInventaire();
             }
             for (int i = 0; i < 30; i++) {
-                if (gp.getInventory().getState() == game.Inventory.InventoryState.LOADED) return;
+                if (gp.getInventory().getState() == Inventaire.Etat.LOADED) return;
                 Salle.sommeil(100);
             }
         } catch (Throwable ignored) { }
     }
 
     /** Meme objet d'abord (id), sinon un objet du meme type. */
-    private static Integer chercherInventaire(GPresets gp, Changement c, Place cible, Set<Integer> pris) {
+    private static Integer chercherInventaire(Moteur gp, Changement c, Place cible, Set<Integer> pris) {
         if (gp == null) return null;
         try {
             List<HInventoryItem> tous = new ArrayList<>(gp.getInventory().getInventoryItems());

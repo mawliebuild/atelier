@@ -1,6 +1,5 @@
 package atelier;
 
-import extension.GPresets;
 import gearth.extensions.parsers.HFloorItem;
 import gearth.protocol.HMessage;
 import gearth.protocol.HPacket;
@@ -85,7 +84,7 @@ final class GrilleReseau {
      */
     static boolean resoudre() {
         if (!Salle.furnidataPrete()) return false;
-        furnidata.FurniDataTools fd;
+        Furnidata fd;
         try { fd = Salle.gp().getFurniDataTools(); } catch (Throwable t) { return false; }
         for (Modele m : MODELES) {
             List<Integer> t = new ArrayList<>();
@@ -93,7 +92,7 @@ final class GrilleReseau {
                 try {
                     Integer id = fd.getFloorTypeId(c);
                     if (id == null) continue;
-                    furnidata.details.FloorItemDetails d = fd.getFloorItemDetails(c);
+                    Furnidata.Mobi d = fd.getFloorItemDetails(c);
                     if (d != null && (d.xDim > 1 || d.yDim > 1)) continue;
                     if (!t.contains(id)) t.add(id);
                 } catch (Throwable ignored) { }
@@ -140,13 +139,13 @@ final class GrilleReseau {
     }
 
     static int salleCourante() {
-        try { game.FloorState s = Salle.etat(); return s == null ? -1 : s.getRoomId(); } catch (Throwable t) { return -1; }
+        try { EtatSalle s = Salle.etat(); return s == null ? -1 : s.getRoomId(); } catch (Throwable t) { return -1; }
     }
 
     /** Un vrai mobi de la salle porte-t-il un identifiant de notre plage ? */
     static boolean collision() {
         // Pas Salle.sols() : elle retire justement les ids de notre plage.
-        game.FloorState s = Salle.etat();
+        EtatSalle s = Salle.etat();
         if (s == null) return false;
         List<HFloorItem> tous;
         try { tous = s.getItems(); } catch (Throwable t) { return false; }
@@ -206,7 +205,7 @@ final class GrilleReseau {
      * faits. Renvoie le nombre d'envois reussis ; s'arrete si arret[0].
      */
     static int appliquer(GrilleCalcul.Diff d, Modele mod, boolean[] arret, IntConsumer progres) {
-        GPresets gp = Salle.gp();
+        Moteur gp = Salle.gp();
         if (gp == null) return 0;
         int salleIci = salleCourante();
         if (salleIci == -1) return 0;
@@ -244,14 +243,14 @@ final class GrilleReseau {
         enCours = true;
         Salle.tache("grille-ecoute", () -> {
             for (int i = 0; i < 900 && !branche; i++) {
-                GPresets gp = Salle.gp();
+                Moteur gp = Salle.gp();
                 if (gp != null) { brancher(gp); branche = true; return; }
                 Salle.sommeil(1000);
             }
         });
     }
 
-    private static void brancher(GPresets gp) {
+    private static void brancher(Moteur gp) {
         HMessage.Direction C = HMessage.Direction.TOCLIENT, S = HMessage.Direction.TOSERVER;
         for (String nom : new String[]{"RoomReady", "Objects", "FloorHeightMap"}) {
             try { gp.intercept(C, nom, m -> { if (!affiches.isEmpty()) oublier("La salle a été rechargée : la grille a disparu."); }); }

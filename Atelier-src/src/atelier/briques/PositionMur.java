@@ -8,7 +8,7 @@ import java.util.regex.Pattern;
  * Position d'un mural, telle que le jeu l'ecrit : « :w=x,y l=ox,oy r|l »,
  * parfois suivie de « a=altitude » (altitude reglee par la variable -123).
  *
- * Remplace utils.WallPosition : meme expression reguliere, meme toString()
+ * Remplace WallPosition (ancien module) : meme expression reguliere, meme toString()
  * (sans l'altitude) et meme complet() (ex-toFullString, avec l'altitude).
  */
 record PositionMur(int x, int y, int decalageX, int decalageY, char cote, int altitude) {

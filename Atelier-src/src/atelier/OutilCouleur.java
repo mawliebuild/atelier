@@ -1,6 +1,5 @@
 package atelier;
 
-import extension.GPresets;
 import gearth.protocol.HMessage;
 import gearth.protocol.HPacket;
 
@@ -212,7 +211,7 @@ public class OutilCouleur {
 
     private synchronized void brancher() {
         if (installe) return;
-        GPresets gp = AtelierLauncher.moteur();
+        Moteur gp = AtelierLauncher.moteur();
         if (gp == null) return;
         try {
             gp.intercept(HMessage.Direction.TOSERVER, "SetRoomBackgroundColorData", m -> {
@@ -268,7 +267,7 @@ public class OutilCouleur {
      * @return true si le paquet est parti
      */
     private boolean envoyer(Color c, boolean parler) {
-        GPresets gp = AtelierLauncher.moteur();
+        Moteur gp = AtelierLauncher.moteur();
         if (gp == null) { dire("L'Atelier n'est pas encore prêt."); return false; }
         int id = cible();
         if (id < 0) { dire("Pose un mobi Couleur de décor dans l'appart."); return false; }

@@ -1,7 +1,5 @@
 package atelier;
 
-import extension.GPresets;
-import game.FloorState;
 
 import javafx.application.Platform;
 import javafx.geometry.Bounds;
@@ -284,12 +282,12 @@ public class BarreOutils implements Ancrage.Ancrable {
     }
 
     private void majResume() {
-        GPresets gp = AtelierLauncher.moteur();
+        Moteur gp = AtelierLauncher.moteur();
         String niveau, nom, sous;
         if (gp == null) {
             niveau = "attente"; nom = "Atelier"; sous = "Connexion à Habbo...";
         } else {
-            FloorState s = gp.getFloorState();
+            EtatSalle s = gp.getFloorState();
             if (s == null || !s.inRoom()) {
                 // Dans la barre, on est forcement connectee : point vert, « Connectée »
                 // seul, sans detail.

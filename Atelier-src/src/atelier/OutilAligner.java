@@ -1,7 +1,5 @@
 package atelier;
 
-import extension.GPresets;
-import utils.WallPosition;
 
 import javafx.application.Platform;
 import javafx.geometry.Insets;
@@ -270,21 +268,21 @@ public class OutilAligner {
                             java.util.function.Consumer<String> dire, String nomOutil) {
         SelectionMur.Mur ref = SelectionMur.courant();
         if (ref == null) { dire.accept("Pose impossible : clique d'abord un mur dans le jeu."); return; }
-        GPresets gp = AtelierLauncher.moteur();
+        Moteur gp = AtelierLauncher.moteur();
         if (gp == null) { dire.accept("Pose impossible : l'Atelier n'est pas encore prêt."); return; }
         if (ref.typeId < 0) { dire.accept("Pose impossible : type du mur inconnu, reclique le mur dans le jeu."); return; }
 
-        WallPosition p;
-        try { p = new WallPosition(ref.position); }
+        PositionMur p;
+        try { p = PositionMur.lire(ref.position); }
         catch (Throwable t) { dire.accept("Pose impossible : position du mur illisible (" + ref.position + ")."); return; }
 
         List<String> cibles = new ArrayList<>();
-        boolean faceGauche = (p.getDirection() == 'l');
+        boolean faceGauche = (p.cote() == 'l');
         for (int[] d : decalages) {
-            int wx = p.getX(), wy = p.getY();
+            int wx = p.x(), wy = p.y();
             if (faceGauche) wy -= d[0]; else wx += d[0];
             cibles.add(String.format(java.util.Locale.ROOT, ":w=%d,%d l=%d,%d %c",
-                    wx, wy, p.getOffsetX(), p.getOffsetY() + d[1], p.getDirection()));
+                    wx, wy, p.decalageX(), p.decalageY() + d[1], p.cote()));
         }
 
         // Pose en masse : apercu chiffre, puis un second clic pour confirmer.
@@ -347,7 +345,7 @@ public class OutilAligner {
      * Chaque copie est journalisee dans le terminal ; le bilan va dans le
      * volet et dans le jeu.
      */
-    private void poser(GPresets gp, SelectionMur.Mur ref, List<String> cibles, PoseMur.Source src,
+    private void poser(Moteur gp, SelectionMur.Mur ref, List<String> cibles, PoseMur.Source src,
                        java.util.function.Consumer<String> dire, String nomOutil) {
         java.util.Set<Integer> utilises = new java.util.HashSet<>();
         int pose = 0, echecs = 0, k = 0;

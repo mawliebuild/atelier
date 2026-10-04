@@ -13,7 +13,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * L'inventaire de mobis. Remplace game.Inventory, en ecoute seule : la demande
+ * L'inventaire de mobis. Remplace Inventory (ancien module), en ecoute seule : la demande
  * au serveur n'est pas faite ici (elle passera par ChargementAuto, qui saura
  * ne pas renvoyer la reponse au jeu), et aucun FurniList n'est bloque.
  *

@@ -1,6 +1,5 @@
 package atelier;
 
-import extension.GPresets;
 
 import javafx.application.Platform;
 import javafx.geometry.Insets;
@@ -79,8 +78,8 @@ public class OngletParametres {
                         + "transparente quand ta souris est sur le jeu, pour voir les mobis derrière.")));
 
         // --- Donnees
-        Button cacheBc = plein("Vider le cache BC", gp -> gp.clearBCClick(null), "Cache BC vidé.");
-        Button cacheWired = plein("Vider le cache wired", gp -> gp.clearWiredClick(null), "Cache wired vidé.");
+        Button cacheBc = plein("Vider le cache BC", gp -> { if (gp.getCatalog() != null) gp.getCatalog().viderCache(); }, "Cache BC vidé.");
+        Button cacheWired = plein("Vider le cache wired", gp -> WiredLecteur.viderCache(), "Cache wired vidé.");
         VBox partDonnees = new VBox(12, Ui.bloc("Caches", cacheBc, cacheWired,
                 Ui.aide("Vider un cache force l'Atelier à relire le catalogue BC ou les réglages wired.")));
 
@@ -188,13 +187,13 @@ public class OngletParametres {
 
     // --------------------------------------------------------------- outils
 
-    private interface Action { void faire(GPresets gp) throws Throwable; }
+    private interface Action { void faire(Moteur gp) throws Throwable; }
 
     private Button plein(String texte, Action a, String succes) {
         Button b = new Button(texte);
         b.setMaxWidth(Double.MAX_VALUE);
         b.setOnAction(e -> {
-            GPresets gp = AtelierLauncher.moteur();
+            Moteur gp = AtelierLauncher.moteur();
             if (gp == null) { Journal.erreur("L'Atelier n'est pas encore prêt."); return; }
             try { a.faire(gp); Journal.succes(succes); }
             catch (Throwable t) { t.printStackTrace(); Journal.erreur("Échec : " + t.getMessage()); }

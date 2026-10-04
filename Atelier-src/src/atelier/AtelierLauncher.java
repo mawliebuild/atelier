@@ -1,6 +1,5 @@
 package atelier;
 
-import extension.GPresets;
 import gearth.GEarth;
 import gearth.extensions.InternalExtensionFormLauncher;
 import gearth.protocol.HConnection;
@@ -22,7 +21,7 @@ import javafx.stage.Stage;
 import java.lang.reflect.Field;
 
 /**
- * L'Atelier : son proxy en francais, avec son module Presets embarque, presente comme
+ * L'Atelier : son proxy en francais, avec son moteur embarque (Moteur), presente comme
  * une barre d'outils et une fenetre posees sur le jeu.
  *
  * On herite de gearth.GEarth et on laisse son start() faire son travail
@@ -37,10 +36,10 @@ public class AtelierLauncher extends GEarth {
 
     public static final String NOM = "Atelier";
 
-    private static volatile GPresets moteur;
+    private static volatile Moteur moteur;
 
-    /** L'instance du module Presets vivant dans cette JVM, ou null si pas encore prete. */
-    public static GPresets moteur() { return moteur; }
+    /** Le moteur de l'Atelier vivant dans cette JVM, ou null s'il n'est pas encore pret. */
+    public static Moteur moteur() { return moteur; }
 
     @Override
     public void start(Stage stage) throws Exception {
@@ -113,7 +112,7 @@ public class AtelierLauncher extends GEarth {
 
         // L'onglet Build porte nos deux outils muraux. L'ancien module d'outils de
         // construction a ete ECARTE : son jar embarquait une classe
-        // furnidata.FurniDataTools homonyme de celle du module Presets, avec un constructeur different. Deux classes de
+        // de furnidata homonyme de celle de l'ancien module de pose, avec un constructeur different. Deux classes de
         // meme nom ne peuvent pas cohabiter dans un chargeur — d'ou le
         // NoSuchMethodError pendant connectionStart, et la deconnexion. Son
         // « Poster mover » est reecrit dans OutilDeplacer.
@@ -491,8 +490,9 @@ public class AtelierLauncher extends GEarth {
     // -------------------------------------------------------- embarquements
 
     /**
-     * Fait tourner le module Presets DANS la JVM de l'Atelier, via le mecanisme que
-     * le proxy utilise pour ses propres extensions internes (logger, store).
+     * Fait tourner le moteur de l'Atelier (Moteur) DANS la JVM de l'Atelier, via
+     * le mecanisme que le proxy utilise pour ses propres extensions internes
+     * (logger, store).
      *
      * ExtensionFormCreator.runExtensionForm est inutilisable : il appelle
      * Application.launch(), interdit une seconde fois dans la meme JVM.
@@ -501,42 +501,38 @@ public class AtelierLauncher extends GEarth {
     private void brancherApparts(Stage stage, Tab onglet) {
         ExtensionHandler handler = gestionnaireExtensions();
         if (handler == null) {
-            Journal.erreur("Module Presets introuvable : le gestionnaire de modules de l'Atelier manque.");
+            Journal.erreur("Moteur de l'Atelier introuvable : le gestionnaire de modules de l'Atelier manque.");
             majOnglet(onglet, "Apparts indisponibles",
                     "Le gestionnaire de modules de l'Atelier n'a pas été trouvé.");
             return;
         }
-        final AppartsCreator creator = new AppartsCreator();
+        final Moteur.Createur creator = new Moteur.Createur();
         handler.addExtensionProducer(observer -> {
             try {
-                GPresets gp = new InternalExtensionFormLauncher<AppartsCreator, GPresets>()
+                Moteur gp = new InternalExtensionFormLauncher<Moteur.Createur, Moteur>()
                         .launch(creator, observer);
                 if (gp == null) {
-                    Journal.erreur("Échec du chargement du module Presets : rien n'a été rendu.");
+                    Journal.erreur("Échec du chargement du moteur de l'Atelier : rien n'a été rendu.");
                     majOnglet(onglet, "Échec du chargement",
-                            "InternalExtensionFormLauncher n'a rien rendu.");
+                            "Le moteur de l'Atelier n'a pas démarré.");
                     return;
                 }
+                // les briques ecoutent des maintenant : la salle demandee a l'activation est vue
+                gp.brancher();
                 moteur = gp;
                 Journal.info("Atelier démarré.");
-                Journal.debug("Module Presets embarque."
-                        + " catalogue=" + (gp.getCatalog() != null)
-                        + " inventaire=" + (gp.getInventory() != null)
-                        + " furnidata=" + (gp.getFurniDataTools() != null)
-                        + " salle=" + (gp.getFloorState() != null));
 
                 Platform.runLater(() -> onglet.setContent(new OngletApparts().construire()));
                 ChargementAuto.demarrer();
-                try { Comparateur.demarrer(); } catch (Throwable t) { Journal.debug("Briques : vérification non lancée : " + t); }
             } catch (Throwable t) {
-                Journal.erreur("Chargement du module Presets impossible", t);
+                Journal.erreur("Chargement du moteur de l'Atelier impossible", t);
                 majOnglet(onglet, "Échec du chargement", String.valueOf(t));
             }
         });
     }
 
     /** hConnection est prive dans GEarthController ; on le lit par reflexion. */
-    private static HConnection connexionHabbo() {
+    static HConnection connexionHabbo() {
         try {
             GEarthController c = controleur();
             if (c == null) return null;
@@ -631,6 +627,7 @@ public class AtelierLauncher extends GEarth {
         // GEarth.main() appelle launch(args), qui deduit la classe de l'appelant
         // et lancerait GEarth au lieu de l'Atelier : on la designe explicitement.
         GEarth.args = args;
+        Moteur.fusionnerCache();      // avant le proxy : il relit sa langue et ses hotels au demarrage
         GardeConnexion.sansCacheDns();
         GardeConnexion.assainir();
         Application.launch(AtelierLauncher.class, args);

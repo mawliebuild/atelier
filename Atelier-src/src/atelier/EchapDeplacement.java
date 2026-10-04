@@ -57,7 +57,7 @@ final class EchapDeplacement {
     static void lacherMobi() {
         if (!Salle.dansUneSalle()) return;
         if (!ClientModifie.saitAnnuler()) return;
-        extension.GPresets gp = Salle.gp();
+        Moteur gp = Salle.gp();
         if (gp == null) return;
         gp.sendToClient(new gearth.protocol.HPacket("Whisper", gearth.protocol.HMessage.Direction.TOCLIENT,
                 -1, "atelier:annuler", 0, 0, 0, -1));

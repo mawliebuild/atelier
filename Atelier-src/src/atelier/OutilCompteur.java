@@ -161,18 +161,15 @@ public class OutilCompteur {
 
     private static void drapeaux(Comptage c, Object d) {
         boolean bc, rare;
-        if (d instanceof furnidata.details.FloorItemDetails) {
-            furnidata.details.FloorItemDetails f = (furnidata.details.FloorItemDetails) d;
-            bc = f.isBC; rare = f.isRare;
-        } else if (d instanceof furnidata.details.WallItemDetails) {
-            furnidata.details.WallItemDetails f = (furnidata.details.WallItemDetails) d;
+        if (d instanceof Furnidata.Mobi) {
+            Furnidata.Mobi f = (Furnidata.Mobi) d;
             bc = f.isBC; rare = f.isRare;
         } else { c.inconnus++; return; }
         if (bc) c.bc++; else c.horsBc++;
         if (rare) c.rares++;
     }
 
-    static furnidata.details.WallItemDetails detailsMur(String classe) {
+    static Furnidata.Mobi detailsMur(String classe) {
         if (classe == null || !Salle.furnidataPrete()) return null;
         try { return Salle.gp().getFurniDataTools().getWallItemDetails(classe); }
         catch (Throwable t) { return null; }

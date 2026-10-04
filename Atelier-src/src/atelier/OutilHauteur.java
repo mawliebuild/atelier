@@ -1,7 +1,5 @@
 package atelier;
 
-import extension.GPresets;
-import extension.tools.StackTileSetting;
 import gearth.extensions.parsers.HFloorItem;
 import gearth.protocol.HMessage;
 import gearth.protocol.HPacket;
@@ -106,9 +104,9 @@ public class OutilHauteur {
     private static final AtomicInteger reglage = new AtomicInteger();
 
     /** Tailles essayees, de la plus grande a la plus petite. */
-    private static final StackTileSetting[] ORDRE = {
-            StackTileSetting.XXXL, StackTileSetting.XXL, StackTileSetting.XL,
-            StackTileSetting.Large, StackTileSetting.Medium, StackTileSetting.Small };
+    private static final DalleMagique[] ORDRE = {
+            DalleMagique.HUIT, DalleMagique.SIX, DalleMagique.QUATRE,
+            DalleMagique.DEUX, DalleMagique.UN_DEUX, DalleMagique.UN };
 
     // ------------------------------------------------------------------ UI
 
@@ -193,7 +191,7 @@ public class OutilHauteur {
         commandeBranchee = true;
         Thread t = new Thread(() -> {
             for (int i = 0; i < 900; i++) {
-                GPresets gp = Salle.gp();
+                Moteur gp = Salle.gp();
                 if (gp != null) {
                     try {
                         gp.intercept(HMessage.Direction.TOSERVER, "Chat", OutilHauteur::surChat);
@@ -338,7 +336,7 @@ public class OutilHauteur {
 
     /**
      * Toutes les dalles magiques de la salle : celles de l'Atelier ET celles
-     * deja la. Reconnues par type (StackTileSetting) ou nom de classe tile_stackmagic*.
+     * deja la. Reconnues par type (DalleMagique) ou nom de classe tile_stackmagic*.
      */
     static List<Integer> toutesDalles() {
         if (!Salle.dansUneSalle()) return new ArrayList<>();
@@ -368,7 +366,7 @@ public class OutilHauteur {
 
     /** Hors fil JavaFX : couvre les cases libres de l'appart. */
     private static void couvrir() {
-        GPresets gp = Salle.gp();
+        Moteur gp = Salle.gp();
         if (gp == null || !Salle.dansUneSalle()) { echec("Pose impossible : entre d'abord dans un appart."); return; }
         if (zoneSeule && !Zone.definie()) { Platform.runLater(OutilHauteur::choisirZone); return; }
         final int salle = Salle.salleId();
@@ -400,7 +398,7 @@ public class OutilHauteur {
             Set<Long> prises = occupees();
             Set<Long> refusees = new HashSet<>();     // cases ou meme une 1×1 a ete refusee
             Set<Integer> invPris = new HashSet<>();
-            furnidata.FurniDataTools fd = gp.getFurniDataTools();
+            Furnidata fd = gp.getFurniDataTools();
             // Le BC peut refuser toutes les poses (pas de Builders Club, limite
             // atteinte...) : apres deux refus d'affilee sans aucune reussite, on arrete.
             int bcRefus = 0, bcReussies = 0;
@@ -410,8 +408,8 @@ public class OutilHauteur {
             // Formes possibles, de la plus grande a la plus petite (la 1×2 aussi couchee).
             List<Object[]> formes = new ArrayList<>();          // {t, type, lx, ly, rot, taille, rang}
             int rang = 0;
-            for (StackTileSetting t : ORDRE) {
-                Integer type = fd.getFloorTypeId(t.getClassName());
+            for (DalleMagique t : ORDRE) {
+                Integer type = fd.getFloorTypeId(t.classe());
                 if (type == null) continue;
                 int[] e = Generateur.Dalle.empriseDalle(t);
                 String taille = e[0] + "x" + e[1];
@@ -446,7 +444,7 @@ public class OutilHauteur {
                         }
                     }
                     if (meilleur[2] <= suivante) break;          // la taille suivante fait aussi bien
-                    StackTileSetting t = (StackTileSetting) forme[0];
+                    DalleMagique t = (DalleMagique) forme[0];
                     int type = (int) forme[1], lx = (int) forme[2], ly = (int) forme[3], rot = (int) forme[4];
                     String taille = (String) forme[5];
                     int[] c = meilleur;
@@ -569,7 +567,7 @@ public class OutilHauteur {
     }
 
     private static void appliquer0(double h, boolean dire) {
-        GPresets gp = Salle.gp();
+        Moteur gp = Salle.gp();
         List<Integer> nos = nosDalles();
         LinkedHashSet<Integer> ids = new LinkedHashSet<>(nos);
         ids.addAll(toutesDalles());
@@ -780,13 +778,13 @@ public class OutilHauteur {
     static List<Integer> couvrirCases(Set<Long> cases, java.util.function.Consumer<String> dire,
                                       java.util.function.BooleanSupplier stop) {
         List<Integer> poses = new ArrayList<>();
-        GPresets gp = Salle.gp();
+        Moteur gp = Salle.gp();
         if (gp == null || cases.isEmpty()) return poses;
         int[][] sol = plan();
         for (int x = 0; x < sol.length; x++)
             for (int y = 0; y < sol[x].length; y++)
                 if (!cases.contains(cle(x, y))) sol[x][y] = -1;
-        furnidata.FurniDataTools fd = gp.getFurniDataTools();
+        Furnidata fd = gp.getFurniDataTools();
         Set<Long> prises = new HashSet<>(), refusees = new HashSet<>(), exclus = new HashSet<>();
         Set<Integer> invPris = new HashSet<>();
         Set<Integer> types = Generateur.Dalle.typesDalles();
@@ -795,8 +793,8 @@ public class OutilHauteur {
         java.util.function.BooleanSupplier stop0 = stop;
         stop = () -> stop0.getAsBoolean() || Salle.salleId() != salle;   // autre salle : on s'arrete
         try {
-            for (StackTileSetting t : ORDRE) {
-                Integer type = fd.getFloorTypeId(t.getClassName());
+            for (DalleMagique t : ORDRE) {
+                Integer type = fd.getFloorTypeId(t.classe());
                 if (type == null) continue;
                 int[] e = Generateur.Dalle.empriseDalle(t);
                 int[][] sens = (e[0] == e[1]) ? new int[][]{{e[0], e[1], 0}} : new int[][]{{e[0], e[1], 0}, {e[1], e[0], 2}};

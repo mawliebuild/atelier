@@ -10,7 +10,6 @@ import com.sun.jna.ptr.IntByReference;
 import com.sun.jna.ptr.LongByReference;
 import com.sun.jna.ptr.PointerByReference;
 
-import extension.GPresets;
 import gearth.protocol.HMessage;
 
 import javafx.application.Platform;
@@ -437,7 +436,7 @@ public final class RaccourcisGlobaux {
     private static void ecouterChat() {
         Thread t = new Thread(() -> {
             for (int i = 0; i < 900; i++) {
-                GPresets gp = Salle.gp();
+                Moteur gp = Salle.gp();
                 if (gp != null) {
                     int ok = 0;
                     ok += brancher(gp, "StartTyping", true);
@@ -455,7 +454,7 @@ public final class RaccourcisGlobaux {
         t.start();
     }
 
-    private static int brancher(GPresets gp, String nom, boolean tape) {
+    private static int brancher(Moteur gp, String nom, boolean tape) {
         try {
             gp.intercept(HMessage.Direction.TOSERVER, nom, m -> saisie = tape);
             return 1;

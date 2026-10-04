@@ -1,6 +1,5 @@
 package atelier;
 
-import extension.GPresets;
 import gearth.extensions.parsers.HInventoryItem;
 import gearth.protocol.HMessage;
 import gearth.protocol.HPacket;
@@ -211,11 +210,11 @@ public class OngletInventaire {
                     attendu = derniereDemande;
                     Thread.sleep(400);
                 } while (derniereDemande != attendu);
-                GPresets gp = AtelierLauncher.moteur();
+                Moteur gp = AtelierLauncher.moteur();
                 if (gp != null) {
                     verifDemandeeLe = System.currentTimeMillis();
                     ChargementAuto.inventaireDemande();
-                    gp.getInventory().requestInventory();
+                    gp.demanderInventaire();
                 }
             } catch (Throwable ignored) {
             } finally { demandeEnCours = false; }
@@ -260,7 +259,7 @@ public class OngletInventaire {
             int vu = -1;
             while (true) {
                 try {
-                    GPresets gp = AtelierLauncher.moteur();
+                    Moteur gp = AtelierLauncher.moteur();
                     int n = -1;
                     if (gp != null) {
                         try { n = gp.getInventory().getInventoryItems().size(); }
@@ -288,7 +287,7 @@ public class OngletInventaire {
      */
     private void majAnnees() {
         Set<String> trouvees = new TreeSet<>(Comparator.reverseOrder());
-        GPresets gp = AtelierLauncher.moteur();
+        Moteur gp = AtelierLauncher.moteur();
         if (gp != null) {
             for (HInventoryItem it : inventaireConnu(gp)) {
                 Fiche f = Fiche.de(gp, it);
@@ -370,7 +369,7 @@ public class OngletInventaire {
     private void majApercu() { majApercu(-1); }
 
     private void majApercu(int connus) {
-        GPresets gp = AtelierLauncher.moteur();
+        Moteur gp = AtelierLauncher.moteur();
         if (gp == null) { apercu.setText("L'Atelier n'est pas encore prêt"); return; }
 
         boolean fd = false;
@@ -424,7 +423,7 @@ public class OngletInventaire {
 
     private synchronized void brancher() {
         if (installe) return;
-        GPresets gp = AtelierLauncher.moteur();
+        Moteur gp = AtelierLauncher.moteur();
         if (gp == null) return;
         try {
             // Reconnaissance par CONTENU, pas par nom : un intercept par nom
@@ -499,7 +498,7 @@ public class OngletInventaire {
      * Sans filtre, les fragments passent tels quels : on se contente de les
      * copier dans le cache.
      */
-    private void filtrer(GPresets gp, HMessage m) {
+    private void filtrer(Moteur gp, HMessage m) {
         HPacket brut = m.getPacket();
         // Appele pour CHAQUE paquet recu : rejet bon marche, sans copie.
         // Une fois l'en-tete de l'inventaire connu, un seul test suffit.
@@ -574,7 +573,7 @@ public class OngletInventaire {
      * mise en cache puis renvoi au jeu (fil d'envoi). Fil de lecture, sauf pour
      * la toute premiere serie (en-tete inconnu).
      */
-    private void recevoirFragment(GPresets gp, HPacket brut, int total, int numero,
+    private void recevoirFragment(Moteur gp, HPacket brut, int total, int numero,
                                   List<InventaireCache.Mobi> morceaux, HInventoryItem[] items,
                                   boolean filtreActif, boolean notre) {
         if (items == null) {
@@ -678,7 +677,7 @@ public class OngletInventaire {
             });
 
     /** Fiches, puis renvoi au jeu si besoin. Fil d'envoi (travail), jamais l'intercepteur. */
-    private void apresSerie(GPresets gp, Serie serie, Serie avant, boolean notre, boolean bloque) {
+    private void apresSerie(Moteur gp, Serie serie, Serie avant, boolean notre, boolean bloque) {
         // Fiche de chaque mobi, une fois pour toutes (le filtrage ne fait plus
         // que la relire).
         long t0 = System.currentTimeMillis();
@@ -736,7 +735,7 @@ public class OngletInventaire {
     }
 
     /** L'inventaire complet le plus recent : le cache s'il existe, sinon celui du moteur de l'Atelier. */
-    private List<HInventoryItem> inventaireConnu(GPresets gp) {
+    private List<HInventoryItem> inventaireConnu(Moteur gp) {
         Serie s = serie;
         if (s != null) return s.items;
         try { return new ArrayList<>(gp.getInventory().getInventoryItems()); }
@@ -745,7 +744,7 @@ public class OngletInventaire {
 
     /** Renvoie au jeu, depuis le cache, la liste correspondant au choix actuel. */
     private void envoyerDepuisCache() {
-        GPresets gp = AtelierLauncher.moteur();
+        Moteur gp = AtelierLauncher.moteur();
         Serie s = serie;
         if (gp == null) return;
         if (s == null) {
@@ -769,7 +768,7 @@ public class OngletInventaire {
      * @param parler dire la reussite (action de l'utilisatrice) ; un echec est toujours dit
      * @return vrai si le jeu a recu l'inventaire complet
      */
-    private boolean envoyerComplet(GPresets gp, Serie s, String raison, boolean parler) {
+    private boolean envoyerComplet(Moteur gp, Serie s, String raison, boolean parler) {
         long t0 = System.nanoTime();
         List<byte[]> fragments;
         String source;
@@ -792,7 +791,7 @@ public class OngletInventaire {
     private static final String ECHEC_COMPLET =
             "Échec : le jeu n'a pas reçu l'inventaire complet. Ferme et rouvre ton inventaire.";
 
-    private void envoyerFiltre(GPresets gp, Serie s) {
+    private void envoyerFiltre(Moteur gp, Serie s) {
         long t0 = System.nanoTime();
         Fiche.Filtre f = filtre();
         List<byte[]> fragments = s.filtrees.get(f);
@@ -862,7 +861,7 @@ public class OngletInventaire {
     private static long ms(long de, long a) { return (a - de) / 1_000_000; }
 
     /** Un seul envoi a la fois : deux listes entrelacees se melangeraient chez le client. */
-    private boolean envoyer(GPresets gp, List<byte[]> fragments) {
+    private boolean envoyer(Moteur gp, List<byte[]> fragments) {
         synchronized (envoi) {
             try {
                 for (byte[] b : fragments)
@@ -955,7 +954,7 @@ public class OngletInventaire {
      * pas le lire de facon sure, le cache est marque perime et sera redemande
      * au serveur au prochain changement de filtre.
      */
-    private void mobisAjoutes(GPresets gp, HPacket paquet) {
+    private void mobisAjoutes(Moteur gp, HPacket paquet) {
         List<InventaireCache.Mobi> nouveaux = InventaireCache.lireAjouts(paquet);
         synchronized (verrou) {
             Serie s = serie;
@@ -1048,7 +1047,7 @@ public class OngletInventaire {
     // ---------------------------------------------------------------- outils
 
     /** La furniline d'un mobi (sa collection), via la fiche en cache. */
-    private static String ligne(GPresets gp, HInventoryItem it) {
+    private static String ligne(Moteur gp, HInventoryItem it) {
         Fiche f = Fiche.de(gp, it);
         return (f == null) ? null : f.ligne;
     }

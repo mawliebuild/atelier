@@ -1,6 +1,5 @@
 package atelier;
 
-import extension.GPresets;
 import gearth.extensions.parsers.HFloorItem;
 import gearth.extensions.parsers.HWallItem;
 import gearth.protocol.HMessage;
@@ -78,9 +77,9 @@ final class PoseDirecte {
                           BooleanSupplier stop, java.util.function.BiConsumer<Integer, Integer> progres,
                           boolean avecAltitude) {
         Resultat r = new Resultat();
-        GPresets gp = Salle.gp();
+        Moteur gp = Salle.gp();
         if (gp == null) return r;
-        furnidata.FurniDataTools fd = gp.getFurniDataTools();
+        Furnidata fd = gp.getFurniDataTools();
         int total = sols.size() + murs.size(), fait = 0;
         Set<Integer> invPris = new HashSet<>();
         List<Sol> ordre = new ArrayList<>(sols);
@@ -185,7 +184,7 @@ final class PoseDirecte {
      * tour ; un mobi dont l'etat ne bouge pas quand on l'utilise est laisse.
      * @return nombre de mobis restes dans un autre etat
      */
-    private static int etats(GPresets gp, Map<Integer, String> voulus, BooleanSupplier stop) {
+    private static int etats(Moteur gp, Map<Integer, String> voulus, BooleanSupplier stop) {
         Map<Integer, String> reste = new LinkedHashMap<>();
         for (Map.Entry<Integer, String> e : voulus.entrySet())
             if (e.getValue() != null && e.getValue().matches("\\d{1,2}")) reste.put(e.getKey(), e.getValue());
@@ -293,7 +292,7 @@ final class PoseDirecte {
     static final long ECART_MS = Salle.ECART_MS;
 
     /** Envoie un paquet a son tour dans le rythme des rafales ; false si la connexion le refuse. */
-    private static boolean envoyer(GPresets gp, HPacket p) {
+    private static boolean envoyer(Moteur gp, HPacket p) {
         Salle.espacer();
         try { return gp.sendToServer(p); }
         catch (Throwable t) { return false; }
@@ -341,7 +340,7 @@ final class PoseDirecte {
 
     // ---------------------------------------------------------------- envoi
 
-    private static boolean envoyerSol(GPresets gp, int type, Sol s, Generateur.Source source, Set<Integer> invPris) {
+    private static boolean envoyerSol(Moteur gp, int type, Sol s, Generateur.Source source, Set<Integer> invPris) {
         boolean invOk = source != Generateur.Source.BC, bcOk = source != Generateur.Source.INVENTAIRE;
         boolean bcDabord = source == Generateur.Source.BC || source == Generateur.Source.BC_PUIS_INVENTAIRE;
         if (bcDabord && bcOk && solBC(gp, type, s)) return true;
@@ -349,10 +348,10 @@ final class PoseDirecte {
         return !bcDabord && bcOk && solBC(gp, type, s);
     }
 
-    private static boolean solInventaire(GPresets gp, int type, Sol s, Set<Integer> invPris) {
+    private static boolean solInventaire(Moteur gp, int type, Sol s, Set<Integer> invPris) {
         try {
-            game.Inventory inv = gp.getInventory();
-            if (inv == null || inv.getState() != game.Inventory.InventoryState.LOADED) return false;
+            Inventaire inv = gp.getInventory();
+            if (inv == null || inv.getState() != Inventaire.Etat.LOADED) return false;
             List<gearth.extensions.parsers.HInventoryItem> l = inv.getFloorItemsByType(type);
             if (l != null) for (gearth.extensions.parsers.HInventoryItem it : l) {
                 if (it == null || invPris.contains(it.getId())) continue;
@@ -365,28 +364,28 @@ final class PoseDirecte {
         return false;
     }
 
-    private static boolean solBC(GPresets gp, int type, Sol s) {
+    private static boolean solBC(Moteur gp, int type, Sol s) {
         int offre = -1;
         try {
-            game.BCCatalog cat = gp.getCatalog();
-            game.BCCatalog.SingleFurniProduct p = cat == null ? null : cat.getFloorProduct(type);
+            CatalogueBc cat = gp.getCatalog();
+            CatalogueBc.Produit p = cat == null ? null : cat.getFloorProduct(type);
             if (p != null) offre = p.getOfferId();
         } catch (Throwable ignored) { }
         if (offre <= 0) {
-            furnidata.details.FloorItemDetails d = Salle.details(s.classe);
+            Furnidata.Mobi d = Salle.details(s.classe);
             if (d != null) offre = d.bcOfferId;
         }
         if (offre <= 0) return false;
         return envoyer(gp, new HPacket("BuildersClubPlaceRoomItem", HMessage.Direction.TOSERVER, -1, offre, "", s.x, s.y, s.rot));
     }
 
-    private static boolean envoyerMur(GPresets gp, int type, Mur m, Generateur.Source source, Set<Integer> invPris) {
+    private static boolean envoyerMur(Moteur gp, int type, Mur m, Generateur.Source source, Set<Integer> invPris) {
         boolean invOk = source != Generateur.Source.BC, bcOk = source != Generateur.Source.INVENTAIRE;
         boolean bcDabord = source == Generateur.Source.BC || source == Generateur.Source.BC_PUIS_INVENTAIRE;
         if (bcDabord && bcOk && murBC(gp, type, m)) return true;
         if (invOk) try {
-            game.Inventory inv = gp.getInventory();
-            if (inv != null && inv.getState() == game.Inventory.InventoryState.LOADED) {
+            Inventaire inv = gp.getInventory();
+            if (inv != null && inv.getState() == Inventaire.Etat.LOADED) {
                 List<gearth.extensions.parsers.HInventoryItem> l = inv.getWallItemsByType(type);
                 if (l != null) for (gearth.extensions.parsers.HInventoryItem it : l) {
                     if (it == null || invPris.contains(it.getId())) continue;
@@ -400,11 +399,11 @@ final class PoseDirecte {
         return !bcDabord && bcOk && murBC(gp, type, m);
     }
 
-    private static boolean murBC(GPresets gp, int type, Mur m) {
+    private static boolean murBC(Moteur gp, int type, Mur m) {
         int offre = -1;
         try {
-            game.BCCatalog cat = gp.getCatalog();
-            game.BCCatalog.SingleFurniProduct p = cat == null ? null : cat.getAnyWallProduct(type);
+            CatalogueBc cat = gp.getCatalog();
+            CatalogueBc.Produit p = cat == null ? null : cat.getAnyWallProduct(type);
             if (p != null) offre = p.getOfferId();
         } catch (Throwable ignored) { }
         if (offre <= 0) return false;

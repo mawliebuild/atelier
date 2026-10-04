@@ -3,7 +3,7 @@ package atelier;
 /**
  * Les dalles magiques (empilement) et leur cote en cases.
  *
- * Remplace extension.tools.StackTileSetting : memes classes, memes
+ * Remplace StackTileSetting (ancien module) : memes classes, memes
  * dimensions (-1 = la dalle 1x2), memes regles de choix.
  *   Small  tile_stackmagic     1      XL    tile_stackmagic4x4  4
  *   Medium tile_stackmagic1   -1      XXL   tile_stackmagic6x6  6

@@ -1,6 +1,5 @@
 package atelier;
 
-import extension.GPresets;
 
 import javafx.animation.KeyFrame;
 import javafx.animation.Timeline;
@@ -90,7 +89,7 @@ public final class Prerequis extends VBox {
 
     /** {niveau, raison} : niveau « ok », « attente » ou « absent ». */
     static String[] etat(Condition c) {
-        GPresets gp = Salle.gp();
+        Moteur gp = Salle.gp();
         if (gp == null) return new String[]{"attente", "Connexion au jeu…"};
         try {
             switch (c) {
@@ -145,7 +144,7 @@ public final class Prerequis extends VBox {
     private static String[] ok(String s) { return new String[]{"ok", s}; }
 
     /** Le nom de l'appart ouvert, a defaut « Oui. ». */
-    private static String nomAppart(GPresets gp) {
+    private static String nomAppart(Moteur gp) {
         try { String n = NomSalle.nomValide(gp); if (n != null && !n.isBlank()) return n; } catch (Throwable ignored) { }
         return "Oui.";
     }

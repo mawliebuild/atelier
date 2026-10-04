@@ -1,6 +1,5 @@
 package atelier;
 
-import game.FloorState;
 import gearth.extensions.parsers.HFloorItem;
 
 import javafx.animation.KeyFrame;
@@ -68,7 +67,7 @@ public class Plan extends VBox {
     /** Lit la salle courante ; null hors salle. Jamais d'exception. */
     static Instantane lire() {
         try {
-            FloorState s = Salle.etat();
+            EtatSalle s = Salle.etat();
             if (s == null) return null;
             int w = s.getFloorplanWidth(), h = s.getFloorplanHeight();
             if (w <= 0 || h <= 0 || w > 512 || h > 512) return null;
@@ -86,7 +85,7 @@ public class Plan extends VBox {
                     int hs = -1;
                     try {
                         char c = s.floorHeight(x, y);
-                        if (c != 'x' && c != 'X' && c != 0) hs = extension.tools.PresetUtils.heightFromChar(c);
+                        if (c != 'x' && c != 'X' && c != 0) hs = PoseOutils.hauteurCaractere(c);
                     } catch (Throwable ignored) { }
                     i.sol[x][y] = hs;
                     i.sommet[x][y] = Double.NaN;

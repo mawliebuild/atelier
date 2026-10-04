@@ -15,7 +15,7 @@ import java.util.Map;
 
 /**
  * L'etat de la salle ouverte : mobis de sol et muraux, plan, hauteurs, porte,
- * murs. Remplace game.FloorState, en ecoute seule : rien n'est bloque, rien
+ * murs. Remplace FloorState (ancien module), en ecoute seule : rien n'est bloque, rien
  * n'est envoye (la demande de la salle, GetHeightMap, viendra plus tard).
  *
  * Paquets (TOCLIENT sauf Quit), memes lectures que FloorState :

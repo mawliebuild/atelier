@@ -1,10 +1,5 @@
 package atelier;
 
-import extension.GPresets;
-import extension.tools.GPresetImporter;
-import extension.tools.presetconfig.PresetConfig;
-import extension.tools.presetconfig.furni.PresetFurni;
-import extension.tools.presetconfig.wired.PresetWireds;
 import gearth.extensions.parsers.HFloorItem;
 import gearth.extensions.parsers.HPoint;
 import gearth.protocol.HMessage;
@@ -23,32 +18,28 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
 /**
- * Fabrique un appart temporaire et le fait poser par le moteur de pose.
+ * Fabrique une copie temporaire et la fait poser avec la dalle magique.
  *
  * Escalier, remplissage et copie miroir ne posent rien eux-memes : ils
  * decrivent les mobis voulus (classe, case relative, altitude au-dessus du
- * sol, rotation, etat), et le moteur de pose s'occupe du reste — dalle magique,
- * hauteurs, inventaire ou BC — exactement comme pour « Coller cet appart ».
+ * sol, rotation, etat), et la pose (PoseCopie, briques du moteur) s'occupe du
+ * reste — dalle magique, hauteurs, inventaire ou BC — exactement comme pour
+ * « Coller cet appart ».
  *
- * Ce qui a ete verifie dans le bytecode du moteur de pose (v1.3.8) :
- *  - PresetFurni(JSONObject) exige « name » : on le renseigne toujours ;
- *  - les cases sont posees a racine + (x,y) du preset, sans recentrage ;
- *  - z est absolu, decale de importZDelta = solLePlusBas(destination)
- *    - srcAnchorFloorHeight. Avec srcAnchorFloorHeight = 0, z devient donc
- *    une altitude AU-DESSUS DU SOL de la destination ;
- *  - selectionner un appart dans presetListView ne le charge PAS (il faut un
- *    double-clic) : on le donne directement a l'importeur ;
- *  - « :ip x,y » fixe la racine sans clic ; reste la case de la dalle magique,
- *    que l'on donne nous-memes a l'importeur (voir Dalle). Sans racine, on
- *    attend le clic du coin dans le jeu (bloque) avant de lancer « :ip x,y ».
- *  - Sans dalle magique de la bonne taille dans la salle, l'Atelier en pose une
+ * Regles gardees de l'ancien moteur de pose :
+ *  - les cases sont posees a racine + (x,y) de la copie, sans recentrage ;
+ *  - z est decale du sol le plus bas sous la copie dans la salle, moins la
+ *    hauteur d'ancrage ; avec une ancre 0, z est donc une altitude AU-DESSUS
+ *    DU SOL de la destination ;
+ *  - sans racine, on attend le clic du coin dans le jeu (bloque) ;
+ *  - sans dalle magique de la bonne taille dans la salle, la pose en met une
  *    (inventaire, sinon BC) a cote du trace et la ramasse a la fin (Dalle).
  */
 public final class Generateur {
 
     private Generateur() { }
 
-    /** D'ou le moteur de pose prend les meubles (ses quatre boutons radio). */
+    /** D'ou la pose prend les meubles (inventaire, BC, ou l'un puis l'autre). */
     public enum Source { INVENTAIRE, BC, BC_PUIS_INVENTAIRE, INVENTAIRE_PUIS_BC }
 
     /** Un mobi du preset : case relative (origine 0,0), altitude au-dessus du sol. */
@@ -106,7 +97,7 @@ public final class Generateur {
         Integer tid = null;
         try { tid = Salle.gp().getFurniDataTools().getFloorTypeId(classe); } catch (Throwable ignored) { }
         if (tid == null) return null;
-        furnidata.details.FloorItemDetails d = Salle.details(classe);
+        Furnidata.Mobi d = Salle.details(classe);
         int lx = d == null ? 1 : d.xDim, ly = d == null ? 1 : d.yDim;
         String nom = (d != null && d.name != null && !d.name.isBlank()) ? d.name : classe;
         boolean emp = true;
@@ -221,13 +212,14 @@ public final class Generateur {
     // ------------------------------------------------------------ pose
 
     /**
-     * Ecrit l'appart, le donne au moteur de pose et lance son import.
+     * Pose ces mobis avec la dalle magique (PoseCopie), synchrone : rend la
+     * main quand la pose est finie, bilan dit.
      *
-     * @param fichier  nom reserve, sans extension (ex. « _atelier_escalier »)
-     * @param racine   case de la salle ou mettre l'origine (0,0) du preset ;
+     * @param fichier  nom de l'outil (« _atelier_escalier »), pour le journal
+     * @param racine   case de la salle ou mettre l'origine (0,0) des mobis ;
      *                 null = l'utilisatrice clique elle-meme dans le jeu
      * @param dire     ligne d'etat (appelee hors fil FX)
-     * @return true si l'import a ete lance
+     * @return true si la pose a eu lieu
      */
     public static boolean poser(String fichier, List<Mobi> mobis, Source source,
                                 HPoint racine, Consumer<String> dire) {
@@ -241,63 +233,38 @@ public final class Generateur {
 
     private static boolean poser0(String fichier, List<Mobi> mobis, Source source,
                                   HPoint racine, Consumer<String> dire) throws Exception {
-        GPresets gp = Salle.gp();
+        Moteur gp = Salle.gp();
         if (gp == null) { dire.accept("L'Atelier n'est pas encore prêt."); return false; }
         if (!Salle.dansUneSalle()) { dire.accept("Tu n'es pas dans une salle."); return false; }
         if (!Salle.furnidataPrete()) { dire.accept("Furnidata pas encore chargée."); return false; }
         if (mobis == null || mobis.isEmpty()) { dire.accept("Rien à poser."); return false; }
+        if (PoseCopie.occupee()) {
+            dire.accept("L'Atelier est déjà en train de poser : attends la fin, ou tape :abort dans le jeu.");
+            return false;
+        }
 
-        GPresetImporter imp = gp.getImporter();
-        if (imp == null) { dire.accept("Moteur de pose introuvable."); return false; }
-        try {
-            if (imp.getState() != GPresetImporter.BuildingImportState.NONE) {
-                dire.accept("Le moteur de pose est déjà en train d'importer — termine ou tape :abort dans le jeu.");
-                return false;
-            }
-        } catch (Throwable ignored) { }
-
-        // 1. le preset : sans murs ni wired ; les classes doivent etre connues,
-        //    sinon le moteur de pose plante (getFloorTypeId(...).intValue()).
-        furnidata.FurniDataTools fd = gp.getFurniDataTools();
+        // 1. la copie : sans murs ni wired ; les classes doivent etre connues
+        Furnidata fd = gp.getFurniDataTools();
         int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE;
         for (Mobi m : mobis) { minX = Math.min(minX, m.x); minY = Math.min(minY, m.y); }
-        List<PresetFurni> furni = new ArrayList<>();
+        CopieAppart cfg = new CopieAppart();
+        cfg.ancre = 0.0;       // z = altitude au-dessus du sol
         int id = 1;
         for (Mobi m : mobis) {
             if (fd.getFloorTypeId(m.classe) == null) {
                 dire.accept("« " + m.classe + " » inconnu de la furnidata : pose annulée.");
                 return false;
             }
-            // origine ramenee a (0,0) : le moteur de pose pose a racine + (x,y)
-            PresetFurni p = new PresetFurni(id++, m.classe,
-                    new HPoint(m.x - minX, m.y - minY, Math.max(0, arrondi(m.z))), m.rot & 7, m.etat);
-            String nom = m.classe;
-            try {
-                furnidata.details.FloorItemDetails d = fd.getFloorItemDetails(m.classe);
-                if (d != null && d.name != null && !d.name.isBlank()) nom = d.name;
-            } catch (Throwable ignored) { }
-            p.setFurniName(nom);
-            furni.add(p);
+            // origine ramenee a (0,0) : la pose se fait a racine + (x,y)
+            CopieAppart.MobiSol p = new CopieAppart.MobiSol(id++, m.classe, m.x - minX, m.y - minY,
+                    Math.max(0, arrondi(m.z)), m.rot & 7, m.etat);
+            p.nom = nomSol(fd, m.classe);
+            cfg.sols.add(p);
         }
         if (racine != null && (minX != 0 || minY != 0))
             racine = new HPoint(racine.getX() + minX, racine.getY() + minY);
 
-        PresetWireds w = new PresetWireds(new ArrayList<>(), new ArrayList<>(), new ArrayList<>(),
-                new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), new HashMap<>());
-        PresetConfig cfg = new PresetConfig(furni, new ArrayList<>(), w, new ArrayList<>(), new ArrayList<>());
-        cfg.setSrcAnchorFloorHeight(0.0);       // z = altitude au-dessus du sol
-
-        // aller-retour JSON : ce que le moteur de pose relira est exactement ceci
-        String json = cfg.toJsonObject().toString(2);
-        PresetConfig relu = new PresetConfig(new org.json.JSONObject(json));
-
-        // 2. le fichier, dans le dossier des apparts
-        File dossier = OngletApparts.dossierApparts();
-        if (!dossier.exists()) dossier.mkdirs();
-        File f = new File(dossier, fichier + ".json");
-        Files.write(f.toPath(), json.getBytes(StandardCharsets.UTF_8));
-
-        // 3. la case du coin : sans racine, on attend le clic nous-memes (bloque,
+        // 2. la case du coin : sans racine, on attend le clic nous-memes (bloque,
         //    pour que l'avatar n'aille pas se poser sur le trace).
         if (racine == null) {
             dire.accept("Dans le jeu : clique la case où mettre le coin haut-gauche (x min, y min). "
@@ -306,146 +273,63 @@ public final class Generateur {
             if (racine == null) { dire.accept("Pas de clic dans le jeu en 2 minutes : pose annulée."); return false; }
         }
 
-        // 4. la dalle magique : posee par l'Atelier si la salle n'en a pas
+        // 3. la dalle magique : celle de la salle, sinon une case libre a cote du trace
         List<int[]> trace = Dalle.trace(mobis, minX, minY, racine);
         int[] depart = trace.isEmpty() ? new int[]{racine.getX(), racine.getY()}
                 : new int[]{racine.getX() + mobis.get(0).x - minX, racine.getY() + mobis.get(0).y - minY};
-        Dalle.Pret dalle = Dalle.preparer(gp, mobis, trace, depart, dire);
-        if (dalle == null) { Dalle.finIgnorer(); return false; }
+        Dalle.Pret dalle = Dalle.preparer(mobis, trace, depart, dire);
+        if (dalle == null) return false;
 
-        boolean ok = importer(gp, imp, relu, fichier, source, racine, dire,
-                mobis.size() + " mobi(s) envoyés au moteur de pose. ", dalle.ou);
-        if (ok) Dalle.apresImport(imp, dalle.poseeParAtelier, dire);
-        else if (dalle.poseeParAtelier > 0)
-            Dalle.ramasser(dalle.poseeParAtelier, dire, "La pose n'a pas démarré (voir le message de "
-                    + "l'Atelier dans le jeu) : j'ai ramassé la dalle magique.");
-        else Dalle.finIgnorer();
-        return ok;
+        Journal.debug("pose " + fichier + " : " + cfg.sols.size() + " mobis en " + racine.getX() + "," + racine.getY() + ".");
+        PoseCopie.Resultat r = poserCopie(cfg, source, racine, dire, dalle.ou, null, null);
+        if (r == null) return false;
+        String bilan = r.texte();
+        dire.accept(bilan);
+        InfoJeu.dire(bilan);
+        return r.lancee;
     }
 
-    /**
-     * Fait poser un appart par le moteur de pose, sans passer par sa liste.
-     *
-     * Selectionner une ligne de presetListView NE charge PAS l'appart : le moteur de pose
-     * ne le charge qu'au double-clic. Un « :ip » envoye juste apres posait donc
-     * l'appart charge AVANT. Ici le preset est donne directement a l'importeur,
-     * puis :ip est lance sur l'importeur lui-meme.
-     *
-     * @param racine null = l'utilisatrice clique dans le jeu ou poser
-     * @param entete debut du message final (« 12 mobi(s) envoyés... »)
-     */
-    public static boolean importer(GPresets gp, GPresetImporter imp, PresetConfig relu, String fichier,
-                                   Source source, HPoint racine, Consumer<String> dire, String entete)
-            throws Exception {
-        return importer(gp, imp, relu, fichier, source, racine, dire, entete, null);
-    }
-
-    /**
-     * @param dalleOu case ou le moteur de pose doit ranger sa dalle magique (« empty area »),
-     *                donnee a sa place ; null = l'utilisatrice la clique dans le jeu.
-     */
-    public static boolean importer(GPresets gp, GPresetImporter imp, PresetConfig relu, String fichier,
-                                   Source source, HPoint racine, Consumer<String> dire, String entete,
-                                   HPoint dalleOu)
-            throws Exception {
-        // 2 bis. les mobis introuvables (ni inventaire ni BC selon la source) sont
-        // retires : le moteur de pose refuserait toute la pose pour un seul manquant.
-        // On le dit, et on colle le reste.
-        relu = sansManquants(gp, relu, source, dire);
-        if (relu == null) return false;
-        final PresetConfig aPoser = relu;
-
-        // 3. sur le fil FX : liste rechargee, selection, source, preset charge
-        final String[] erreur = {null};
-        CountDownLatch fait = new CountDownLatch(1);
-        Platform.runLater(() -> {
-            try {
-                try { gp.reloadPresetsClick(null); } catch (Throwable ignored) { }
-                switch (source) {
-                    case BC:                 gp.onlyBcCbx.setSelected(true); break;
-                    case BC_PUIS_INVENTAIRE: gp.preferBcCbx.setSelected(true); break;
-                    case INVENTAIRE_PUIS_BC: gp.preferInvCbx.setSelected(true); break;
-                    default:                 gp.onlyInvCbx.setSelected(true);
-                }
-                charger(gp, imp, aPoser, fichier);
-            } catch (Throwable t) { erreur[0] = String.valueOf(t); }
-            finally { fait.countDown(); }
-        });
-        if (!fait.await(5, TimeUnit.SECONDS)) { dire.accept("Le moteur de pose ne répond pas (fil graphique occupé)."); return false; }
-        if (erreur[0] != null) { dire.accept("Préparation impossible : " + erreur[0]); return false; }
-
+    /** Nom affiche d'un mobi de sol, a defaut sa classe. */
+    static String nomSol(Furnidata fd, String classe) {
         try {
-            if (!imp.isReady()) {
-                dire.accept("Le moteur de pose n'est pas prêt à importer (inventaire ou catalogue BC pas chargé, "
-                        + "droits de la salle ?) — vérifie l'état dans Apparts.");
-                return false;
-            }
+            Furnidata.Mobi d = fd.getFloorItemDetails(classe);
+            if (d != null && d.name != null && !d.name.isBlank()) return d.name;
         } catch (Throwable ignored) { }
-
-        // la liste du moteur de pose se recharge en differe : on selectionne apres coup
-        // (cosmetique), sans retarder la pose
-        Salle.tache("selection-preset", () -> {
-            Salle.sommeil(400);
-            Platform.runLater(() -> {
-                try {
-                    if (gp.presetListView != null && gp.presetListView.getItems().contains(fichier))
-                        gp.presetListView.getSelectionModel().select(fichier);
-                } catch (Throwable ignored) { }
-            });
-        });
-
-        // 4. la commande d'import
-        String cmd = racine == null ? ":ip" : ":ip " + racine.getX() + "," + racine.getY();
-        lancer(gp, imp, cmd);
-        // le moteur de pose passe en attente de case : on suit son etat (au plus 300 ms)
-        PoseDirecte.suivre(() -> {
-            try { return imp.getState() == GPresetImporter.BuildingImportState.AWAITING_UNOCCUPIED_SPACE ? 0 : 1; }
-            catch (Throwable e) { return 0; }
-        }, 300, 300);
-        if (dalleOu != null && racine != null) {
-            if (Dalle.donnerCase(imp, dalleOu)) {
-                dire.accept(entete + "Dalle magique en (" + dalleOu.getX() + "," + dalleOu.getY()
-                        + ") : la pose se fait toute seule en (" + racine.getX() + "," + racine.getY()
-                        + "). (:abort dans le jeu pour arrêter)");
-                return true;
-            }
-            GPresetImporter.BuildingImportState st = null;
-            try { st = imp.getState(); } catch (Throwable ignored) { }
-            if (st == GPresetImporter.BuildingImportState.NONE) {
-                dire.accept("Le moteur de pose n'a pas lancé la pose : regarde son message dans le jeu "
-                        + "(mobis manquants dans la source choisie ?).");
-                return false;
-            }
-        }
-        dire.accept(entete
-                + (racine == null
-                    ? "Dans le jeu : clique d'abord une case LIBRE (dalle magique), puis la case où mettre le coin haut-gauche (x min, y min)."
-                    : "Dans le jeu : clique une case LIBRE pour la dalle magique — la pose se fait ensuite toute seule en ("
-                      + racine.getX() + "," + racine.getY() + ").")
-                + " (:abort pour annuler)");
-        return true;
+        return classe;
     }
 
     /**
-     * Donne le preset a l'importeur. selectPreset (prive) journalise et met
-     * l'interface a jour ; a defaut, setPresetConfig suffit a l'import.
+     * Pose une copie (coin = racine) avec la dalle magique, apres avoir retire
+     * ce qui manque dans la source choisie (le dit). Synchrone.
+     *
+     * @param caseDalle case ou poser la dalle s'il en faut une (Dalle.preparer) ; null = cherchee
+     * @return le resultat, ou null s'il ne reste rien a poser (dit)
      */
+    static PoseCopie.Resultat poserCopie(CopieAppart cfg, Source source, HPoint racine, Consumer<String> dire,
+                                         HPoint caseDalle, java.util.function.BooleanSupplier stop, Runnable suivi) {
+        CopieAppart aPoser = sansManquants(Salle.gp(), cfg, source, dire);
+        if (aPoser == null) return null;
+        PoseCopie.Resultat r = PoseCopie.poser(aPoser, racine, source, caseDalle, dire, stop, suivi);
+        if (!r.lancee) dire.accept(r.texte());
+        return r;
+    }
+
     /**
-     * Le preset sans les mobis qu'on n'a pas : pas assez dans l'inventaire et
+     * La copie sans les mobis qu'on n'a pas : pas assez dans l'inventaire et
      * absents du BC (selon la source). Les wired retires perdent leur reglage,
      * les selections vers un mobi retire sont enlevees. Si rien ne manque (ou
-     * si l'inventaire n'est pas lu), le preset est rendu tel quel. null : il ne
-     * reste rien a poser (message dit).
+     * si l'inventaire n'est pas lu), la copie est rendue telle quelle. null : il
+     * ne reste rien a poser (message dit).
      */
-    static PresetConfig sansManquants(GPresets gp, PresetConfig cfg, Source source, Consumer<String> dire) {
+    static CopieAppart sansManquants(Moteur gp, CopieAppart cfg, Source source, Consumer<String> dire) {
         try {
-            furnidata.FurniDataTools fd = gp.getFurniDataTools();
-            game.Inventory inv = gp.getInventory();
-            game.BCCatalog cat = gp.getCatalog();
-            boolean invPret = inv != null && inv.getState() == game.Inventory.InventoryState.LOADED;
+            Furnidata fd = gp.getFurniDataTools();
+            Inventaire inv = gp.getInventory();
+            CatalogueBc cat = gp.getCatalog();
+            boolean invPret = inv != null && inv.getState() == Inventaire.Etat.LOADED;
             boolean prendInv = source != Source.BC, prendBc = source != Source.INVENTAIRE;
-            if (prendInv && !invPret) return cfg;            // on ne sait pas : on laisse le moteur de pose juger
-            org.json.JSONObject o = cfg.toJsonObject();
+            if (prendInv && !invPret) return cfg;            // on ne sait pas : on laisse la pose juger
+            org.json.JSONObject o = cfg.json();
             Map<String, Integer> stock = new HashMap<>();
             Map<String, Integer> manque = new TreeMap<>();
             Set<Integer> retires = new HashSet<>();
@@ -514,6 +398,15 @@ public final class Generateur {
                 }
                 o.put("bindings", garde);
             }
+            org.json.JSONArray ads = o.optJSONArray("adsBackgrounds");
+            if (ads != null) {
+                org.json.JSONArray garde = new org.json.JSONArray();
+                for (int i = 0; i < ads.length(); i++) {
+                    org.json.JSONObject x = ads.optJSONObject(i);
+                    if (x == null || !retires.contains(x.optInt("furniId"))) garde.put(ads.get(i));
+                }
+                o.put("adsBackgrounds", garde);
+            }
             StringBuilder liste = new StringBuilder();
             int k = 0;
             for (Map.Entry<String, Integer> e : manque.entrySet()) {
@@ -523,90 +416,54 @@ public final class Generateur {
             }
             int resteFurni = o.optJSONArray("furni") == null ? 0 : o.getJSONArray("furni").length();
             int resteMurs = o.optJSONArray("wallFurni") == null ? 0 : o.getJSONArray("wallFurni").length();
-            String msg = retires.size() + " mobi(s) introuvable(s) (ni dans l'inventaire ni au BC) : " + liste
-                    + ". Je colle le reste sans eux.";
+            String msg = Ui.accorder(retires.size() + " mobi(s) introuvable(s) (ni dans l'inventaire ni au BC) : " + liste
+                    + ". Je colle le reste sans eux.");
             InfoJeu.consigne(msg);
             dire.accept(msg);
             if (resteFurni + resteMurs == 0) { dire.accept("Rien d'autre à poser."); return null; }
-            return new PresetConfig(o);
+            return CopieAppart.lire(o);
         } catch (Throwable t) {
-            System.err.println("[Atelier] tri des mobis manquants : " + t);
+            Journal.debug("tri des mobis manquants : " + t);
             return cfg;
         }
-    }
-
-    private static void charger(GPresets gp, GPresetImporter imp, PresetConfig cfg, String nom) {
-        try {
-            java.lang.reflect.Method m = GPresets.class.getDeclaredMethod("selectPreset", PresetConfig.class, String.class);
-            m.setAccessible(true);
-            m.invoke(gp, cfg, nom);
-            if (imp.getPresetConfig() == cfg) return;
-        } catch (Throwable ignored) { }
-        imp.setPresetConfig(cfg);
-    }
-
-    /**
-     * Lance « :ip ». D'abord en appelant directement le gestionnaire de chat de
-     * l'importeur (rien ne part vers le serveur) ; a defaut, comme
-     * OngletApparts : un paquet Chat que le moteur de pose intercepte et bloque.
-     */
-    private static void lancer(GPresets gp, GPresetImporter imp, String cmd) {
-        try {
-            java.lang.reflect.Method m = GPresetImporter.class.getDeclaredMethod("onChat", HMessage.class);
-            m.setAccessible(true);
-            HPacket p = new HPacket(4000, cmd, 0, -1);
-            m.invoke(imp, new HMessage(p, HMessage.Direction.TOSERVER, -1));
-            return;
-        } catch (Throwable t) {
-            Journal.debug("appel direct de :ip impossible (" + t + "), envoi par le chat.");
-        }
-        gp.sendToServer(new HPacket("Chat", HMessage.Direction.TOSERVER, cmd, 0, -1));
     }
 
     // ------------------------------------------------------------ dalle magique
 
     /**
-     * La dalle magique (tile_stackmagic*) qu'il faut au moteur de pose pour poser a
-     * hauteur exacte. S'il n'y en a pas de la bonne taille dans la salle,
-     * l'Atelier la pose lui-meme, a cote du trace, puis la ramasse a la fin.
+     * La dalle magique (tile_stackmagic*) qu'il faut pour poser a hauteur
+     * exacte : regles de taille, choix de sa case, clic dans le jeu.
      *
-     * Regles recopiees du bytecode du moteur de pose v1.3.8 (extension.tools.GPresetImporter) :
-     *  - requiredStackTileDimension : 1×1 -> 1, 1×2 / 2×1 -> -1 (tile_stackmagic1),
-     *    sinon le plus grand cote arrondi a 1, 2, 4, 6, 8 ;
-     *  - collectRequiredStackTileDimensions : mobis empilables seulement, hors
-     *    dalles ; ensemble vide -> {1} ;
-     *  - hasStackTileForDimension : voir couvre() ;
-     *  - selectMainStackTile : la dalle de plus petite dimension sert ;
-     *  - StackTileSetting : Small tile_stackmagic (1), Medium tile_stackmagic1 (-1),
-     *    Large tile_stackmagic2 (2), XL ..4x4 (4), XXL ..6x6 (6), XXXL ..8x8 (8).
+     * Regles (les memes que PoseDalle, recopiees du moteur de pose d'avant) :
+     *  - requise : 1×1 -> 1, 1×2 / 2×1 -> -1 (tile_stackmagic1), sinon le plus
+     *    grand cote arrondi a 1, 2, 4, 6, 8 ;
+     *  - exigences : mobis empilables seulement, hors dalles ; ensemble vide -> {1} ;
+     *  - couvre : voir couvre() ;
+     *  - DalleMagique : UN tile_stackmagic (1), UN_DEUX tile_stackmagic1 (-1),
+     *    DEUX tile_stackmagic2 (2), QUATRE ..4x4 (4), SIX ..6x6 (6), HUIT ..8x8 (8).
      *
-     * Paquets, memes sources :
-     *  - PlaceObject(String "-idInventaire x y rot") : depot d'un mobi de sol depuis
-     *    l'inventaire (GPresetImporter, format "-%d %d %d %d" avec HInventoryItem.getId) ;
-     *  - BuildersClubPlaceRoomItem(int -1, int offerId, String "", int x, int y, int rot) :
-     *    GPresetImporter.acquireStackTileFromBC (offre : BCCatalog.getFloorProduct,
-     *    a defaut FloorItemDetails.bcOfferId) ;
-     *  - PickupObject(int 2, int id) : Salle.ramasser.
+     * Paquets (envoyer, pour OutilHauteur) :
+     *  - PlaceObject(String "-idInventaire x y rot") : pose depuis l'inventaire ;
+     *  - BuildersClubPlaceRoomItem(int -1, int offre, String "", int x, int y, int rot) :
+     *    pose depuis le BC (offre : CatalogueBc.getFloorProduct, a defaut bcOfferId).
      *
-     * La case de la dalle (« Select where the stack tile should be placed ») est
-     * donnee a l'importeur en appelant son gestionnaire prive moveAvatar(HMessage)
-     * avec un faux clic (x, y) dans l'etat AWAITING_UNOCCUPIED_SPACE : c'est
-     * exactement ce que fait un clic dans le jeu.
+     * La pose elle-meme (dalle posee, deplacee sous chaque mobi, ramassee) est
+     * faite par PoseDalle ; ici on choisit seulement sa case quand la salle n'a
+     * pas de dalle qui convient (preparer), en demandant un clic au besoin.
      */
     static final class Dalle {
 
         private Dalle() { }
 
-        /** Ce que l'import utilisera : la case de la dalle, et l'id de la dalle posee par nous (ou -1). */
+        /** Ce que la pose utilisera : la case ou poser la dalle (null : une dalle de la salle sert). */
         static final class Pret {
             final HPoint ou;
-            final int poseeParAtelier;
-            Pret(HPoint ou, int id) { this.ou = ou; this.poseeParAtelier = id; }
+            Pret(HPoint ou) { this.ou = ou; }
         }
 
         // ---------------------------------------------- regles (logique pure)
 
-        /** Dimension de dalle qu'exige un mobi (GPresetImporter.requiredStackTileDimension). */
+        /** Dimension de dalle qu'exige un mobi (requiredStackTileDimension de l'ancien moteur). */
         static int requise(int xDim, int yDim) {
             int x = Math.max(1, xDim), y = Math.max(1, yDim);
             if ((x == 1 && y == 2) || (x == 2 && y == 1)) return -1;
@@ -641,15 +498,15 @@ public final class Generateur {
          * Le moteur de pose l'accepte aussi pour un 2×2, mais elle ne le couvre pas.
          * null si aucune.
          */
-        static extension.tools.StackTileSetting modele(Set<Integer> exigences) {
-            List<extension.tools.StackTileSetting> ordre = new ArrayList<>();
-            for (extension.tools.StackTileSetting t : extension.tools.StackTileSetting.values())
-                if (t.getDimension() > 0) ordre.add(t);
-            ordre.sort(Comparator.comparingInt(extension.tools.StackTileSetting::getDimension));
-            for (extension.tools.StackTileSetting t : extension.tools.StackTileSetting.values())
-                if (t.getDimension() < 0) ordre.add(exigences.contains(-1) ? 1 : ordre.size(), t);
-            for (extension.tools.StackTileSetting t : ordre)
-                if (toutCouvert(List.of(t.getDimension()), exigences)) return t;
+        static DalleMagique modele(Set<Integer> exigences) {
+            List<DalleMagique> ordre = new ArrayList<>();
+            for (DalleMagique t : DalleMagique.values())
+                if (t.dimension() > 0) ordre.add(t);
+            ordre.sort(Comparator.comparingInt(DalleMagique::dimension));
+            for (DalleMagique t : DalleMagique.values())
+                if (t.dimension() < 0) ordre.add(exigences.contains(-1) ? 1 : ordre.size(), t);
+            for (DalleMagique t : ordre)
+                if (toutCouvert(List.of(t.dimension()), exigences)) return t;
             return null;
         }
 
@@ -736,7 +593,7 @@ public final class Generateur {
             List<int[]> r = new ArrayList<>();
             Set<Long> vu = new HashSet<>();
             for (Mobi m : mobis) {
-                furnidata.details.FloorItemDetails d = Salle.details(m.classe);
+                Furnidata.Mobi d = Salle.details(m.classe);
                 int lx = d == null ? 1 : Math.max(1, d.xDim), ly = d == null ? 1 : Math.max(1, d.yDim);
                 int rot = m.rot & 7;
                 if (rot == 2 || rot == 6) { int t = lx; lx = ly; ly = t; }
@@ -751,32 +608,32 @@ public final class Generateur {
         /** Les exigences du preset (collectRequiredStackTileDimensions). */
         static Set<Integer> exigences(List<Mobi> mobis) {
             Set<Integer> r = new HashSet<>();
-            furnidata.FurniDataTools fd = Salle.gp().getFurniDataTools();
+            Furnidata fd = Salle.gp().getFurniDataTools();
             for (Mobi m : mobis) {
                 if (m.classe.startsWith("tile_stackmagic")) continue;
                 boolean emp = true;
                 try { emp = fd.isStackable(m.classe); } catch (Throwable ignored) { }
                 if (!emp) continue;
-                furnidata.details.FloorItemDetails d = Salle.details(m.classe);
+                Furnidata.Mobi d = Salle.details(m.classe);
                 r.add(d == null ? 1 : requise(d.xDim, d.yDim));
             }
             if (r.isEmpty()) r.add(1);
             return r;
         }
 
-        private static extension.tools.StackTileSetting reglage(HFloorItem it) {
+        private static DalleMagique reglage(HFloorItem it) {
             String c = Salle.classe(it.getTypeId(), false);
             if (c == null || !c.startsWith("tile_stackmagic")) return null;
-            try { return extension.tools.StackTileSetting.fromClassName(c); } catch (Throwable t) { return null; }
+            return DalleMagique.depuisClasse(c);
         }
 
         /** Les identifiants de type de toutes les dalles magiques. */
         static Set<Integer> typesDalles() {
             Set<Integer> r = new HashSet<>();
             try {
-                furnidata.FurniDataTools fd = Salle.gp().getFurniDataTools();
-                for (extension.tools.StackTileSetting t : extension.tools.StackTileSetting.values()) {
-                    Integer id = fd.getFloorTypeId(t.getClassName());
+                Furnidata fd = Salle.gp().getFurniDataTools();
+                for (DalleMagique t : DalleMagique.values()) {
+                    Integer id = fd.getFloorTypeId(t.classe());
                     if (id != null) r.add(id);
                 }
             } catch (Throwable ignored) { }
@@ -796,130 +653,80 @@ public final class Generateur {
             return r;
         }
 
-        static int[] empriseDalle(extension.tools.StackTileSetting t) {
-            furnidata.details.FloorItemDetails d = Salle.details(t.getClassName());
+        static int[] empriseDalle(DalleMagique t) {
+            Furnidata.Mobi d = Salle.details(t.classe());
             if (d != null) return new int[]{Math.max(1, d.xDim), Math.max(1, d.yDim)};
-            int n = Math.max(1, Math.abs(t.getDimension()));
-            return t.getDimension() == -1 ? new int[]{1, 2} : new int[]{n, n};
+            int n = Math.max(1, Math.abs(t.dimension()));
+            return t.dimension() == -1 ? new int[]{1, 2} : new int[]{n, n};
         }
 
         // ---------------------------------------------- preparation
 
         /**
-         * S'assure qu'une dalle utilisable est dans la salle et choisit sa case.
-         * null = impossible (la raison est dite).
+         * La case de la dalle magique pour cette pose : aucune s'il y a dans la
+         * salle des dalles qui couvrent tous les mobis (la pose s'en sert), sinon
+         * une case libre pres du depart, hors du trace (ou un clic dans le jeu
+         * s'il n'y en a pas). La dalle est posee, glissee sous chaque mobi et
+         * ramassee par la pose (PoseDalle). null = impossible (la raison est dite).
          */
-        static Pret preparer(GPresets gp, List<Mobi> mobis, List<int[]> trace, int[] depart,
-                             Consumer<String> dire) {
+        static Pret preparer(List<Mobi> mobis, List<int[]> trace, int[] depart, Consumer<String> dire) {
             Set<Integer> exig = exigences(mobis);
 
             // les dalles deja la
-            List<HFloorItem> dalles = new ArrayList<>();
             List<Integer> dims = new ArrayList<>();
+            HFloorItem premiere = null;
             for (HFloorItem it : new ArrayList<>(Salle.sols())) {
-                extension.tools.StackTileSetting t = reglage(it);
-                if (t != null) { dalles.add(it); dims.add(t.getDimension()); }
+                DalleMagique t = reglage(it);
+                if (t != null) { dims.add(t.dimension()); if (premiere == null) premiere = it; }
             }
-            // pendant l'import, les va-et-vient de la dalle ne sont pas des actions a annuler
-            for (int type : typesDalles()) Historique.ignorerType(type, 30 * 60_000L);
-
-            if (!dalles.isEmpty() && toutCouvert(dims, exig)) {
-                // celle que le moteur de pose prendra : la plus petite dimension
-                int k = 0;
-                for (int i = 1; i < dims.size(); i++) if (dims.get(i) < dims.get(k)) k = i;
-                HFloorItem principale = dalles.get(k);
-                int[] e = Salle.emprise(principale);
-                int px = principale.getTile().getX(), py = principale.getTile().getY();
-                Set<Long> autour = new HashSet<>();
-                for (int[] c : trace)
-                    for (int dx = -1; dx <= 1; dx++)
-                        for (int dy = -1; dy <= 1; dy++) autour.add(cle(c[0] + dx, c[1] + dy));
-                boolean gene = false;
-                for (int i = 0; i < e[0] && !gene; i++)
-                    for (int j = 0; j < e[1] && !gene; j++) gene = autour.contains(cle(px + i, py + j));
-                if (!gene) {
-                    dire.accept("Dalle magique trouvée en (" + px + "," + py + ") : elle reste là.");
-                    return new Pret(new HPoint(px, py), -1);
-                }
-                Set<Long> occ = occupees(principale.getId());
-                int[] c = choisirCase(depart[0], depart[1], e[0], e[1], trace,
-                        (x, y) -> Salle.hauteurSol(x, y) >= 0 && !occ.contains(cle(x, y)), null, 12);
-                if (c == null) {
-                    dire.accept("La dalle magique est sur le tracé et je ne trouve pas de case libre "
-                            + "à côté : libère un peu de place près du départ.");
-                    return null;
-                }
-                dire.accept("Dalle magique déplacée par le moteur de pose en (" + c[0] + "," + c[1] + ").");
-                return new Pret(new HPoint(c[0], c[1]), -1);
+            if (premiere != null && toutCouvert(dims, exig)) {
+                dire.accept("Dalle magique trouvée en (" + premiere.getTile().getX() + "," + premiere.getTile().getY()
+                        + ") : elle sert à la pose, puis retourne à sa place.");
+                return new Pret(null);
             }
 
-            // il faut la poser nous-memes
-            extension.tools.StackTileSetting t = modele(exig);
+            // il faut en poser une : sa case
+            DalleMagique t = modele(exig);
             if (t == null) { dire.accept("Aucune dalle magique ne convient à ce mobi."); return null; }
-            furnidata.FurniDataTools fd = gp.getFurniDataTools();
-            Integer type = fd.getFloorTypeId(t.getClassName());
-            if (type == null) { dire.accept("« " + t.getClassName() + " » inconnue de la furnidata."); return null; }
+            Integer type = Salle.gp() == null || Salle.gp().getFurniDataTools() == null ? null
+                    : Salle.gp().getFurniDataTools().getFloorTypeId(t.classe());
+            if (type == null) { dire.accept("« " + t.classe() + " » inconnue de la furnidata."); return null; }
             int[] e = empriseDalle(t);
             String taille = e[0] + "×" + e[1];
 
-            Set<Long> exclues = new HashSet<>();
-            Set<Integer> invPris = new HashSet<>();
             String raison = "pas de place libre de " + taille + " (cases sans mobi, de même hauteur de sol)";
+            Set<Long> occ = occupees(-1);
+            java.util.function.BiPredicate<Integer, Integer> libre =
+                    (x, y) -> Salle.hauteurSol(x, y) >= 0 && !occ.contains(cle(x, y));
+            // toute la salle, pas seulement les abords du depart
+            int[] c = choisirCase(depart[0], depart[1], e[0], e[1], trace, libre, null, 64);
+            // Rien trouve : c'est toi qui choisis la place, plutot que d'abandonner.
             int clics = 0;
-            for (int essai = 1; essai <= 3; essai++) {
-                Set<Long> occ = occupees(-1);
-                java.util.function.BiPredicate<Integer, Integer> libre =
-                        (x, y) -> Salle.hauteurSol(x, y) >= 0 && !occ.contains(cle(x, y));
-                // toute la salle, pas seulement les abords du depart
-                int[] c = choisirCase(depart[0], depart[1], e[0], e[1], trace, libre, exclues, 64);
-                // Rien trouve : c'est toi qui choisis la place, plutot que d'abandonner.
-                while (c == null && clics < 2) {
-                    clics++;
-                    String q = "Pas de place libre de " + taille + " trouvée pour la dalle magique : clique une case "
-                            + "libre (" + taille + " sans mobi autour).";
-                    dire.accept(q);
-                    InfoJeu.dire(q);
-                    HPoint ici = attendreClic(60_000);
-                    if (ici == null) { raison = "pas de clic en 1 minute"; break; }
-                    c = coinAutour(ici.getX(), ici.getY(), e[0], e[1], trace, libre);
-                    if (c == null) {
-                        raison = "pas assez de place autour de (" + ici.getX() + "," + ici.getY() + ") : il faut "
-                                + taille + " cases libres, sans mobi, de même hauteur de sol";
-                        if (clics < 2) dire.accept(Character.toUpperCase(raison.charAt(0)) + raison.substring(1) + ".");
-                    }
+            while (c == null && clics < 2) {
+                clics++;
+                String q = "Pas de place libre de " + taille + " trouvée pour la dalle magique : clique une case "
+                        + "libre (" + taille + " sans mobi autour).";
+                dire.accept(q);
+                InfoJeu.dire(q);
+                HPoint ici = attendreClic(60_000);
+                if (ici == null) { raison = "pas de clic en 1 minute"; break; }
+                c = coinAutour(ici.getX(), ici.getY(), e[0], e[1], trace, libre);
+                if (c == null) {
+                    raison = "pas assez de place autour de (" + ici.getX() + "," + ici.getY() + ") : il faut "
+                            + taille + " cases libres, sans mobi, de même hauteur de sol";
+                    if (clics < 2) dire.accept(Character.toUpperCase(raison.charAt(0)) + raison.substring(1) + ".");
                 }
-                if (c == null) break;
-                exclues.add(cle(c[0], c[1]));
-
-                Set<Integer> avant = new HashSet<>();
-                for (HFloorItem it : new ArrayList<>(Salle.sols())) avant.add(it.getId());
-
-                String d = envoyer(gp, type, t, c[0], c[1], 0, invPris);
-                if (d == null) {
-                    dire.accept("Dalle magique " + taille + " : ni dans ton inventaire, ni au catalogue BC "
-                            + "(catalogue BC pas chargé ?). Pose annulée.");
-                    return null;
-                }
-                dire.accept("Je pose une dalle magique " + taille + " en (" + c[0] + "," + c[1] + ") " + d + "...");
-                for (int i = 0; i < 40; i++) {           // 6 s au plus
-                    Salle.sommeil(150);
-                    for (HFloorItem it : new ArrayList<>(Salle.sols())) {
-                        if (avant.contains(it.getId()) || it.getTypeId() != type) continue;
-                        if (it.getTile().getX() != c[0] || it.getTile().getY() != c[1]) continue;
-                        dire.accept("Dalle magique " + taille + " posée en (" + c[0] + "," + c[1] + ") " + d + ".");
-                        Salle.sommeil(300);
-                        return new Pret(new HPoint(c[0], c[1]), it.getId());
-                    }
-                }
-                raison = "elle n'est pas apparue (case refusée par le jeu ? avatar dessus ?)";
-                Salle.sommeil(200);
             }
-            dire.accept("Impossible de poser la dalle magique : " + raison + ". Pose annulée.");
-            return null;
+            if (c == null) {
+                dire.accept("Impossible de poser la dalle magique : " + raison + ". Pose annulée.");
+                return null;
+            }
+            dire.accept("Dalle magique " + taille + " : posée en (" + c[0] + "," + c[1] + ") pendant la pose, puis ramassée.");
+            return new Pret(new HPoint(c[0], c[1]));
         }
 
         /** Envoie la pose ; renvoie « depuis l'inventaire » / « depuis le BC », ou null. */
-        static String envoyer(GPresets gp, int type, extension.tools.StackTileSetting t,
+        static String envoyer(Moteur gp, int type, DalleMagique t,
                               int x, int y, int rot, Set<Integer> invPris) {
             return envoyer(gp, type, t, x, y, rot, invPris, true);
         }
@@ -928,18 +735,18 @@ public final class Generateur {
         static final String INVENTAIRE = "depuis ton inventaire", BC = "depuis le catalogue BC";
 
         /** @param bcPermis false = inventaire seulement (le BC a deja refuse). */
-        static String envoyer(GPresets gp, int type, extension.tools.StackTileSetting t,
+        static String envoyer(Moteur gp, int type, DalleMagique t,
                               int x, int y, int rot, Set<Integer> invPris, boolean bcPermis) {
             return envoyer(gp, type, t, x, y, rot, invPris, bcPermis, true);
         }
 
         /** @param invPermis false = BC seulement : l'inventaire n'est pas touche. */
-        static String envoyer(GPresets gp, int type, extension.tools.StackTileSetting t,
+        static String envoyer(Moteur gp, int type, DalleMagique t,
                               int x, int y, int rot, Set<Integer> invPris, boolean bcPermis,
                               boolean invPermis) {
             if (invPermis) try {
-                game.Inventory inv = gp.getInventory();
-                if (inv != null && inv.getState() == game.Inventory.InventoryState.LOADED) {
+                Inventaire inv = gp.getInventory();
+                if (inv != null && inv.getState() == Inventaire.Etat.LOADED) {
                     List<gearth.extensions.parsers.HInventoryItem> l = inv.getFloorItemsByType(type);
                     if (l != null) for (gearth.extensions.parsers.HInventoryItem it : l) {
                         if (it == null || invPris.contains(it.getId())) continue;
@@ -953,78 +760,18 @@ public final class Generateur {
             if (!bcPermis) return null;
             int offre = -1;
             try {
-                game.BCCatalog cat = gp.getCatalog();
-                game.BCCatalog.SingleFurniProduct p = cat == null ? null : cat.getFloorProduct(type);
+                CatalogueBc cat = gp.getCatalog();
+                CatalogueBc.Produit p = cat == null ? null : cat.getFloorProduct(type);
                 if (p != null) offre = p.getOfferId();
             } catch (Throwable ignored) { }
             if (offre <= 0) {
-                furnidata.details.FloorItemDetails d = Salle.details(t.getClassName());
+                Furnidata.Mobi d = Salle.details(t.classe());
                 if (d != null) offre = d.bcOfferId;
             }
             if (offre <= 0) return null;
             gp.sendToServer(new HPacket("BuildersClubPlaceRoomItem", HMessage.Direction.TOSERVER,
                     -1, offre, "", x, y, rot));
             return BC;
-        }
-
-        // ---------------------------------------------- pendant / apres l'import
-
-        /** Donne la case de la dalle a l'importeur, comme un clic. true si accepte. */
-        static boolean donnerCase(GPresetImporter imp, HPoint ou) {
-            try {
-                if (imp.getState() != GPresetImporter.BuildingImportState.AWAITING_UNOCCUPIED_SPACE) return false;
-                java.lang.reflect.Method m = GPresetImporter.class.getDeclaredMethod("moveAvatar", HMessage.class);
-                m.setAccessible(true);
-                HPacket p = new HPacket(4001, ou.getX(), ou.getY());
-                m.invoke(imp, new HMessage(p, HMessage.Direction.TOSERVER, -1));
-                return imp.getState() != GPresetImporter.BuildingImportState.AWAITING_UNOCCUPIED_SPACE;
-            } catch (Throwable t) {
-                Journal.debug("case de la dalle non transmise (" + t + ")");
-                return false;
-            }
-        }
-
-        /**
-         * Quand le moteur de pose a fini (ou :abort) : ramasse la dalle que l'Atelier a
-         * posee (id > 0) et rend la dalle a l'historique.
-         */
-        static void apresImport(GPresetImporter imp, int id, Consumer<String> dire) {
-            Salle.tache("dalle-ramasser", () -> {
-                long fin = System.currentTimeMillis() + 30 * 60_000L;
-                while (System.currentTimeMillis() < fin) {
-                    Salle.sommeil(200);
-                    GPresetImporter.BuildingImportState s;
-                    try { s = imp.getState(); } catch (Throwable t) { s = GPresetImporter.BuildingImportState.NONE; }
-                    if (s == GPresetImporter.BuildingImportState.NONE) break;
-                    if (!Salle.dansUneSalle()) {
-                        finIgnorer();
-                        if (id > 0) {
-                            String m = "Tu as quitté la salle : la dalle magique n'a pas pu être ramassée, ramasse-la à la main.";
-                            dire.accept(m);
-                            InfoJeu.dire(m);
-                        }
-                        return;
-                    }
-                }
-                Salle.sommeil(1500);
-                if (id > 0) ramasser(id, dire, "Terminé. J'ai ramassé la dalle magique que j'avais posée.");
-                else { finIgnorer(); InfoJeu.dire("Pose terminée."); }
-            });
-        }
-
-        static void ramasser(int id, Consumer<String> dire, String message) {
-            if (Salle.sol(id) == null) { finIgnorer(); return; }
-            Salle.ramasser(id, false);
-            for (int i = 0; i < 20 && Salle.sol(id) != null; i++) Salle.sommeil(150);
-            finIgnorer();
-            String fin = Salle.sol(id) == null ? message
-                    : "La dalle magique (id " + id + ") n'a pas pu être ramassée : ramasse-la à la main.";
-            dire.accept(fin);
-            InfoJeu.dire(fin);    // meme texte : InfoJeu le dedoublonne si la ligne d'etat l'a deja dit
-        }
-
-        static void finIgnorer() {
-            for (int type : typesDalles()) Historique.ignorerType(type, 2500);
         }
 
         // ---------------------------------------------- clic de la racine
@@ -1058,7 +805,7 @@ public final class Generateur {
 
         private static synchronized void brancher() {
             if (ecoute) return;
-            GPresets gp = Salle.gp();
+            Moteur gp = Salle.gp();
             if (gp == null) return;
             // Apprend l'en-tete de MoveAvatar (pose AVANT l'ecoute par contenu, pour
             // passer avant elle) : un LookTo (meme forme x, y) n'est alors plus pris

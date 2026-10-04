@@ -1,6 +1,5 @@
 package atelier;
 
-import extension.GPresets;
 import gearth.extensions.parsers.catalog.HCatalogIndex;
 import gearth.extensions.parsers.catalog.HCatalogPageIndex;
 import gearth.protocol.HMessage;
@@ -9,7 +8,6 @@ import gearth.protocol.HPacket;
 import org.json.JSONObject;
 
 import java.io.File;
-import java.lang.reflect.Field;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
@@ -82,7 +80,7 @@ public final class Repertoire {
 
     private static void travailler() {
         try {
-            GPresets gp = attendre();
+            Moteur gp = attendre();
             if (gp == null) return;
             boolean premiereFois = !FICHIER.exists();
             charger();
@@ -121,9 +119,9 @@ public final class Repertoire {
         }
     }
 
-    private static GPresets attendre() throws InterruptedException {
+    private static Moteur attendre() throws InterruptedException {
         for (int i = 0; i < 600; i++) {
-            GPresets gp = AtelierLauncher.moteur();
+            Moteur gp = AtelierLauncher.moteur();
             try {
                 if (gp != null && gp.getFurniDataTools() != null && gp.getFurniDataTools().isReady())
                     return gp;
@@ -139,24 +137,15 @@ public final class Repertoire {
 
     // ------------------------------------------------------------- furnidata
 
-    /** Toute la furnidata ; ses tables sont privees, on les lit par reflexion. */
-    @SuppressWarnings("unchecked")
-    private static Map<String, Object[]> toutLaFurnidata(GPresets gp) {
+    /** Toute la furnidata : chaque mobi de sol et chaque mural, par classe. */
+    private static Map<String, Object[]> toutLaFurnidata(Moteur gp) {
         Map<String, Object[]> r = new HashMap<>();
         try {
-            furnidata.FurniDataTools fd = gp.getFurniDataTools();
-            Field fs = furnidata.FurniDataTools.class.getDeclaredField("nameToFloorItems");
-            Field fm = furnidata.FurniDataTools.class.getDeclaredField("nameToWallItems");
-            fs.setAccessible(true);
-            fm.setAccessible(true);
-            Map<String, furnidata.details.FloorItemDetails> sols =
-                    (Map<String, furnidata.details.FloorItemDetails>) fs.get(fd);
-            Map<String, furnidata.details.WallItemDetails> murs =
-                    (Map<String, furnidata.details.WallItemDetails>) fm.get(fd);
-            if (sols != null) for (Map.Entry<String, furnidata.details.FloorItemDetails> e : sols.entrySet())
-                r.put(cle(e.getKey(), false), new Object[]{e.getKey(), false, e.getValue()});
-            if (murs != null) for (Map.Entry<String, furnidata.details.WallItemDetails> e : murs.entrySet())
-                r.put(cle(e.getKey(), true), new Object[]{e.getKey(), true, e.getValue()});
+            Furnidata fd = gp.getFurniDataTools();
+            for (Furnidata.Mobi m : fd.tousSols())
+                r.put(cle(m.className, false), new Object[]{m.className, false, m});
+            for (Furnidata.Mobi m : fd.tousMurs())
+                r.put(cle(m.className, true), new Object[]{m.className, true, m});
         } catch (Throwable t) {
             System.err.println("[Atelier] répertoire : lecture de la furnidata impossible : " + t);
         }
@@ -165,19 +154,16 @@ public final class Repertoire {
 
     // ------------------------------------------------------------- catalogue
 
-    private static void ecouterCatalogue(GPresets gp, Map<String, Object[]> furni) {
+    private static void ecouterCatalogue(Moteur gp, Map<String, Object[]> furni) {
         // Numero d'offre -> mobis. Un meme numero peut servir a plusieurs variantes.
         Map<Integer, List<String>> parOffre = new HashMap<>();
         Map<Integer, List<String>> parOffreBc = new HashMap<>();
         for (Map.Entry<String, Object[]> e : furni.entrySet()) {
             Object d = e.getValue()[2];
-            if (d instanceof furnidata.details.FloorItemDetails) {
-                furnidata.details.FloorItemDetails f = (furnidata.details.FloorItemDetails) d;
+            if (d instanceof Furnidata.Mobi) {
+                Furnidata.Mobi f = (Furnidata.Mobi) d;
                 if (f.offerId > 0) parOffre.computeIfAbsent(f.offerId, k -> new ArrayList<>()).add(e.getKey());
-                if (f.bcOfferId > 0) parOffreBc.computeIfAbsent(f.bcOfferId, k -> new ArrayList<>()).add(e.getKey());
-            } else if (d instanceof furnidata.details.WallItemDetails) {
-                furnidata.details.WallItemDetails w = (furnidata.details.WallItemDetails) d;
-                if (w.offerId > 0) parOffre.computeIfAbsent(w.offerId, k -> new ArrayList<>()).add(e.getKey());
+                if (!f.mural && f.bcOfferId > 0) parOffreBc.computeIfAbsent(f.bcOfferId, k -> new ArrayList<>()).add(e.getKey());
             }
         }
         try {
@@ -223,7 +209,7 @@ public final class Repertoire {
     }
 
     /** Le catalogue normal ; celui du BC est deja demande par le moteur de l'Atelier. */
-    private static void demanderCatalogue(GPresets gp) {
+    private static void demanderCatalogue(Moteur gp) {
         try {
             ChargementAuto.indexDemande();       // la reponse n'ira pas au jeu, qui ne l'a pas demandee
             gp.sendToServer(new HPacket("GetCatalogIndex", HMessage.Direction.TOSERVER, "NORMAL"));
@@ -285,9 +271,7 @@ public final class Repertoire {
             Entree en = mobis.get(e.getKey());
             if (en == null || "catalogue".equals(en.source)) continue;
             Object d = e.getValue()[2];
-            String ligne = (d instanceof furnidata.details.FloorItemDetails)
-                    ? ((furnidata.details.FloorItemDetails) d).furniline
-                    : ((furnidata.details.WallItemDetails) d).furniline;
+            String ligne = (d instanceof Furnidata.Mobi) ? ((Furnidata.Mobi) d).furniline : null;
             // L'annee dans le nom de classe vaut aussi (xmas_c24_tree -> c24 n'est
             // PAS une annee fiable : on ne lit que les annees ecrites en entier).
             String a = derniereAnnee(ligne);
@@ -392,8 +376,7 @@ public final class Repertoire {
     }
 
     private static int idDe(Object details) {
-        if (details instanceof furnidata.details.FloorItemDetails) return ((furnidata.details.FloorItemDetails) details).id;
-        if (details instanceof furnidata.details.WallItemDetails) return ((furnidata.details.WallItemDetails) details).id;
+        if (details instanceof Furnidata.Mobi) return ((Furnidata.Mobi) details).id;
         return -1;
     }
 

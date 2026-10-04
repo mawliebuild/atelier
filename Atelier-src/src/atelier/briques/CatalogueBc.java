@@ -24,7 +24,7 @@ import java.util.stream.Collectors;
 
 /**
  * Les produits du catalogue Builders Club : pour chaque type de mobi, l'offre
- * et la page qui permettent de le poser. Remplace game.BCCatalog, en ecoute
+ * et la page qui permettent de le poser. Remplace BCCatalog (ancien module), en ecoute
  * seule : rien n'est demande, rien n'est bloque (les pages demandees par le
  * jeu lui parviennent toujours ; la collecte active passera plus tard par
  * ChargementAuto).
@@ -59,7 +59,7 @@ final class CatalogueBc {
     static final String BC = "BUILDERS_CLUB";
     static final long FIN_MS = 5_000;
 
-    /** Ecrire le cache en fin de collecte (faux tant que l'ancien moteur l'ecrit). */
+    /** Ecrire le cache en fin de collecte (le moteur le met a vrai). */
     static volatile boolean ecritureCache = false;
 
     private final Supplier<Furnidata> furnidata;
@@ -70,6 +70,7 @@ final class CatalogueBc {
     private final Map<Integer, Produit> sols = new ConcurrentHashMap<>();
     private final Map<Integer, Map<String, Produit>> murs = new ConcurrentHashMap<>();
     private Set<Integer> pagesAttendues = Set.of();
+    private List<Integer> ordreIndex = List.of();
     private final Set<Integer> pagesRecues = new HashSet<>();
     private volatile String empreinte;
     private volatile boolean cacheARelire, cacheExiste;
@@ -117,6 +118,7 @@ final class CatalogueBc {
             effacer();
             empreinte = emp;
             pagesAttendues = new HashSet<>(pages);
+            ordreIndex = List.copyOf(pages);
             pagesRecues.clear();
             dernierePageLe = System.currentTimeMillis();
             etat = Etat.COLLECTING_PAGES;
@@ -311,6 +313,21 @@ final class CatalogueBc {
 
     String empreinteIndex() { return empreinte; }
 
+    /**
+     * Les pages de l'index encore a lire, dans l'ordre de l'index ; vide hors
+     * collecte, ou quand le cache sur disque va donner les produits (il est
+     * relu des que la furnidata est prete). Pour le moteur, qui les demande.
+     */
+    List<Integer> pagesAFaire() {
+        relireCacheSiPossible();
+        synchronized (verrou) {
+            if (etat != Etat.COLLECTING_PAGES || (cacheARelire && cacheExiste)) return List.of();
+            List<Integer> l = new ArrayList<>();
+            for (int p : ordreIndex) if (!pagesRecues.contains(p)) l.add(p);
+            return l;
+        }
+    }
+
     /** Oublie tout (ex-clear). */
     void vider() {
         synchronized (verrou) {
@@ -318,6 +335,7 @@ final class CatalogueBc {
             etat = Etat.NONE;
             empreinte = null;
             pagesAttendues = Set.of();
+            ordreIndex = List.of();
             pagesRecues.clear();
             cacheARelire = false;
         }

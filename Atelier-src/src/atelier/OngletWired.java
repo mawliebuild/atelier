@@ -1,7 +1,5 @@
 package atelier;
 
-import extension.GPresets;
-import game.FloorState;
 import gearth.extensions.parsers.HFloorItem;
 import gearth.extensions.parsers.HPoint;
 import gearth.protocol.HMessage;
@@ -202,8 +200,8 @@ public class OngletWired {
             while (true) {
                 try {
                     HPoint c = caseChoisie;
-                    GPresets gp = AtelierLauncher.moteur();
-                    FloorState s = gp == null ? null : gp.getFloorState();
+                    Moteur gp = AtelierLauncher.moteur();
+                    EtatSalle s = gp == null ? null : gp.getFloorState();
                     if (c != null && s != null && s.inRoom()) {
                         StringBuilder b = new StringBuilder();
                         List<HFloorItem> l = s.getFurniOnTile(c.getX(), c.getY());
@@ -258,7 +256,7 @@ public class OngletWired {
 
     private synchronized void brancher() {
         if (ecouteInstallee) return;
-        GPresets gp = AtelierLauncher.moteur();
+        Moteur gp = AtelierLauncher.moteur();
         if (gp == null) return;
         try {
             gp.intercept(HMessage.Direction.TOSERVER, m -> {
@@ -272,13 +270,13 @@ public class OngletWired {
 
     private volatile String erreurEcoute = null;
 
-    private void examiner(GPresets gp, HMessage m) {
+    private void examiner(Moteur gp, HMessage m) {
         // Appele pour chaque paquet envoye : tests bon marche d'abord, copie ensuite.
         int taille = m.getPacket().getBytesLength();
         if (taille > 40 || taille < 10) return;
         if (!WiredLecteur.actif() || enRangement) return;     // fenetre Wired fermee : rien
 
-        FloorState s = gp.getFloorState();
+        EtatSalle s = gp.getFloorState();
         if (s == null || !s.inRoom()) return;
 
         HPacket p = m.getPacket();                  // lectures a position fixe : pas de copie
@@ -324,7 +322,7 @@ public class OngletWired {
     }
 
     /** Un wired touche dans le jeu : sa case est lue hors du fil des paquets. */
-    private void choisir(GPresets gp, HPoint c) {
+    private void choisir(Moteur gp, HPoint c) {
         if (c == null) return;
         caseValeur = new HPoint(c.getX(), c.getY());
         Salle.tache("wired-case", () -> lireCase(gp, c));
@@ -343,7 +341,7 @@ public class OngletWired {
             return;
         }
         caseValeur = c;
-        GPresets gp = AtelierLauncher.moteur();
+        Moteur gp = AtelierLauncher.moteur();
         if (gp != null) lireCase(gp, c);
         // apres la mise a jour du tableau par lireCase (meme file JavaFX)
         Platform.runLater(() -> {
@@ -384,12 +382,12 @@ public class OngletWired {
     }
 
     /** Lit toute la pile d'une case et la classe. */
-    private void lireCase(GPresets gp, HPoint c) {
+    private void lireCase(Moteur gp, HPoint c) {
         if (c == null) return;
         caseChoisie = c;
         List<LigneWired> lue = new ArrayList<>();
 
-        FloorState s = gp.getFloorState();
+        EtatSalle s = gp.getFloorState();
         List<HFloorItem> dessus;
         try { dessus = s.getFurniOnTile(c.getX(), c.getY()); }
         catch (Throwable t) { dire("Lecture de la case impossible : " + t); return; }
@@ -538,7 +536,7 @@ public class OngletWired {
      * au-dessus de la pile, puis redescendent du bas vers le haut.
      */
     private void remettreEnOrdre() {
-        GPresets gp = AtelierLauncher.moteur();
+        Moteur gp = AtelierLauncher.moteur();
         HPoint c = caseChoisie;
         if (gp == null || c == null) { dire("Aucune case choisie."); return; }
 
@@ -622,7 +620,7 @@ public class OngletWired {
     }
 
     /** Les wired de la case, lus maintenant dans la salle. */
-    private static List<Place> lirePile(GPresets gp, HPoint c) {
+    private static List<Place> lirePile(Moteur gp, HPoint c) {
         List<Place> r = new ArrayList<>();
         List<HFloorItem> l;
         try { l = gp.getFloorState().getFurniOnTile(c.getX(), c.getY()); }
@@ -643,7 +641,7 @@ public class OngletWired {
      * retenue, relecture de la liste du jeu, recherche), et en dernier recours
      * par l'essai local sur ce wired.
      */
-    private boolean assurerAltitude(GPresets gp, Place p) {
+    private boolean assurerAltitude(Moteur gp, Place p) {
         if (OutilMiroir.Altitude.confirmee()) return true;
         dire("Vérification de @altitude...");
         Journal.debug("rangement : @altitude " + OutilMiroir.Altitude.variable()
@@ -664,7 +662,7 @@ public class OngletWired {
     }
 
     /** Attend qu'un wired soit a l'altitude voulue (suivi des arrivees, comme PoseDirecte). */
-    private static boolean attendreArrivee(GPresets gp, int id, double voulu) {
+    private static boolean attendreArrivee(Moteur gp, int id, double voulu) {
         long fin = System.currentTimeMillis() + ARRIVEE_MS;
         while (true) {
             if (Rangement.enPlace(altitudeDe(gp, id), voulu)) return true;
@@ -677,7 +675,7 @@ public class OngletWired {
      * Du bas vers le haut, un wired a la fois, chacun attendu a sa hauteur.
      * Rend true si un wired deja place a bouge avec un autre (empilement).
      */
-    private boolean passeDirecte(GPresets gp, List<Place> ordre) {
+    private boolean passeDirecte(Moteur gp, List<Place> ordre) {
         boolean emporte = false;
         for (int k = 0; k < ordre.size(); k++) {
             Place p = ordre.get(k);
@@ -708,7 +706,7 @@ public class OngletWired {
      * le haut. Un wired qui descend n'a alors au-dessus de lui que des wired
      * pas encore places : ceux deja places, plus bas, ne bougent pas.
      */
-    private void passeParRelais(GPresets gp, List<Place> ordre) {
+    private void passeParRelais(Moteur gp, List<Place> ordre) {
         double[] relais = Rangement.relais(ordre, id -> altitudeDe(gp, id));
         for (int k = ordre.size() - 1; k >= 0; k--) {
             Place p = ordre.get(k);
@@ -738,7 +736,7 @@ public class OngletWired {
      * l'altitude de ce wired devient bien valeur / 100 juste apres : une autre
      * variable reglee dans l'editeur n'est pas prise pour @altitude.
      */
-    private void apprendreAltitude(GPresets gp, HPacket paquet, int taille, FloorState s) {
+    private void apprendreAltitude(Moteur gp, HPacket paquet, int taille, EtatSalle s) {
         if (idVariable != null || taille < 18 || taille > 40) return;
         try {
             HPacket p = new HPacket(paquet);
@@ -789,7 +787,7 @@ public class OngletWired {
      * l'y amene est le bon — c'est une mesure, pas une supposition, et l'essai
      * reussi est deja la correction.
      */
-    private boolean trouverAltitude(GPresets gp, int cible, double voulu) {
+    private boolean trouverAltitude(Moteur gp, int cible, double voulu) {
         double avant = altitudeDe(gp, cible);
         if (avant < 0) return false;
         int salle = Groupes.salleCourante();
@@ -828,7 +826,7 @@ public class OngletWired {
     }
 
     /** Altitude actuelle d'un mobi, ou -1 si inconnue. */
-    private static double altitudeDe(GPresets gp, int id) {
+    private static double altitudeDe(Moteur gp, int id) {
         try {
             HFloorItem it = gp.getFloorState().furniFromId(id);
             if (it != null) return it.getTile().getZ();
@@ -838,7 +836,7 @@ public class OngletWired {
     private volatile int facteurAlt = 100;
 
     /** Hauteur occupee par un mobi, lue sur lui-meme. */
-    private static double hauteurDe(GPresets gp, int id) {
+    private static double hauteurDe(Moteur gp, int id) {
         try {
             HFloorItem it = gp.getFloorState().furniFromId(id);
             if (it != null) {
@@ -855,7 +853,7 @@ public class OngletWired {
     }
 
     /** SetCustomStackingHeight(mobi, hauteur en centiemes). */
-    private static void regler(GPresets gp, int mobi, double hauteur) {
+    private static void regler(Moteur gp, int mobi, double hauteur) {
         int h = (int) Math.round(Math.max(0, hauteur) * 100);
         gp.sendToServer(new HPacket("SetCustomStackingHeight",
                 HMessage.Direction.TOSERVER, mobi, h));
@@ -863,20 +861,20 @@ public class OngletWired {
 
     // ---------------------------------------------------------------- outils
 
-    private static String classe(GPresets gp, int typeId) {
+    private static String classe(Moteur gp, int typeId) {
         try {
-            furnidata.FurniDataTools fd = gp.getFurniDataTools();
+            Furnidata fd = gp.getFurniDataTools();
             if (fd != null && fd.isReady()) return fd.getFloorItemName(typeId);
         } catch (Throwable ignored) { }
         return null;
     }
 
-    private static String nomLisible(GPresets gp, String cls) {
+    private static String nomLisible(Moteur gp, String cls) {
         if (cls == null) return "(inconnu)";
         try {
-            furnidata.FurniDataTools fd = gp.getFurniDataTools();
+            Furnidata fd = gp.getFurniDataTools();
             if (fd != null && fd.isReady()) {
-                furnidata.details.FloorItemDetails d = fd.getFloorItemDetails(cls);
+                Furnidata.Mobi d = fd.getFloorItemDetails(cls);
                 if (d != null && d.name != null && !d.name.isEmpty()) {
                     // Les noms wired commencent tous par « Effet WIRED : » etc. :
                     // on garde la partie utile.

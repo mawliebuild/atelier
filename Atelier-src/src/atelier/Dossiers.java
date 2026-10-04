@@ -148,6 +148,23 @@ final class Dossiers {
     /** Le dossier interne de l'Atelier (calques, prix...). */
     static File donneesAtelier() { return donnees("Atelier"); }
 
+    /**
+     * Le dossier de l'ancien module de pose (copies d'apparts, ancien cache du
+     * proxy), calcule exactement comme lui : depuis user.home (sous sudo, celui
+     * de root), « G-Presets » dans Application Support ou %APPDATA%. Les copies
+     * existantes y restent ; null sur un autre systeme.
+     */
+    static File ancienModule() {
+        String home = System.getProperty("user.home");
+        if (WINDOWS) {
+            String ad = System.getenv("APPDATA");
+            if (vide(ad)) ad = joindre(OS, home, "AppData", "Roaming");
+            return new File(joindre(OS, ad, "G-Presets"));
+        }
+        if (MAC) return new File(joindre(OS, home, "Library", "Application Support", "G-Presets"));
+        return null;
+    }
+
     private static volatile String imagesMemo = null;
 
     /** Le dossier Images de l'utilisatrice reelle. */

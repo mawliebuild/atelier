@@ -352,7 +352,7 @@ final class ModeCases {
     }
 
     private static void envoyerMode(boolean oui) {
-        extension.GPresets gp = Salle.gp();
+        Moteur gp = Salle.gp();
         if (gp == null) return;
         String m = messageMode(oui, hauteurFantome, pinceau, rectangle);
         Journal.debug("mode floor : " + m);
@@ -476,7 +476,7 @@ final class ModeCases {
                     Journal.erreur("Le jeu a refusé le floor (" + FloorReseau.erreur + ").");
                     return false;
                 }
-                game.FloorState e = Salle.etat();
+                EtatSalle e = Salle.etat();
                 String p = e == null ? null : e.getRawFloorplan();
                 FloorModele r = p == null ? null : FloorModele.depuisTexte(p);
                 if (FloorReseau.planRecu > t0 && r != null && r.texte().equals(m.texte())) {

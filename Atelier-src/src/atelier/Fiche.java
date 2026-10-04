@@ -1,6 +1,5 @@
 package atelier;
 
-import extension.GPresets;
 import gearth.extensions.parsers.HInventoryItem;
 import gearth.extensions.parsers.HProductType;
 
@@ -74,7 +73,7 @@ public final class Fiche {
     private static final Map<String, Fiche> cache = new ConcurrentHashMap<>();
 
     /** null si la furnidata n'est pas encore chargee (on ne retient pas cet echec). */
-    public static Fiche de(GPresets gp, HInventoryItem it) {
+    public static Fiche de(Moteur gp, HInventoryItem it) {
         boolean mur = it.getType() == HProductType.WallItem;
         String cle = (mur ? "m" : "s") + it.getTypeId();
         Fiche f = cache.get(cle);
@@ -84,18 +83,18 @@ public final class Fiche {
         return f;
     }
 
-    private static Fiche lire(GPresets gp, int typeId, boolean mur) {
+    private static Fiche lire(Moteur gp, int typeId, boolean mur) {
         try {
-            furnidata.FurniDataTools fd = gp.getFurniDataTools();
+            Furnidata fd = gp.getFurniDataTools();
             if (fd == null || !fd.isReady()) return null;
             if (mur) {
                 String cls = fd.getWallItemName(typeId);
-                furnidata.details.WallItemDetails d = (cls == null) ? null : fd.getWallItemDetails(cls);
+                Furnidata.Mobi d = (cls == null) ? null : fd.getWallItemDetails(cls);
                 if (d == null) return new Fiche(cls, true, null, "Muraux", false, false);
                 return new Fiche(cls, true, d.furniline, "Muraux", d.isBC, d.isRare);
             }
             String cls = fd.getFloorItemName(typeId);
-            furnidata.details.FloorItemDetails d = (cls == null) ? null : fd.getFloorItemDetails(cls);
+            Furnidata.Mobi d = (cls == null) ? null : fd.getFloorItemDetails(cls);
             if (d == null) return new Fiche(cls, false, null, "Autres", false, false);
             return new Fiche(cls, false, d.furniline, typeSol(cls, d.category, d.canSitOn, d.canLayOn, d.canStandOn),
                     d.isBC, d.isRare);

@@ -107,7 +107,7 @@ final class GrilleVue {
         auSol = oui;
         if (oui) garde();
         if (!ClientModifie.saitZone()) return;
-        extension.GPresets gp = Salle.gp();
+        Moteur gp = Salle.gp();
         if (gp == null || !Salle.dansUneSalle()) return;
         gp.sendToClient(new gearth.protocol.HPacket("Whisper", gearth.protocol.HMessage.Direction.TOCLIENT,
                 -1, "atelier:zone=" + (oui ? "1" : "0"), 0, 0, 0, -1));
@@ -122,7 +122,7 @@ final class GrilleVue {
     }
 
     private static void envoyer(String plan) {
-        extension.GPresets gp = Salle.gp();
+        Moteur gp = Salle.gp();
         if (gp == null) return;
         gp.sendToClient(new gearth.protocol.HPacket("Whisper", gearth.protocol.HMessage.Direction.TOCLIENT,
                 -1, "atelier:grille=" + plan, 0, 0, 0, -1));
@@ -132,7 +132,7 @@ final class GrilleVue {
     /** Le plan brut de la salle, lignes jointes par « / » ; null hors salle. */
     private static String plan() {
         try {
-            game.FloorState s = Salle.etat();
+            EtatSalle s = Salle.etat();
             if (s == null) return null;
             String brut = s.getRawFloorplan();
             if (brut == null || brut.isBlank()) return null;

@@ -1,11 +1,5 @@
 package atelier;
 
-import extension.GPresets;
-import extension.tools.GPresetImporter;
-import extension.tools.presetconfig.PresetConfig;
-import extension.tools.presetconfig.furni.PresetFurni;
-import extension.tools.presetconfig.furni.PresetWallFurni;
-import extension.tools.presetconfig.wired.PresetWireds;
 import gearth.extensions.parsers.HFloorItem;
 import gearth.extensions.parsers.HPoint;
 import gearth.extensions.parsers.HWallItem;
@@ -839,7 +833,7 @@ final class GroupeActions {
                                       java.util.function.Function<List<GroupeCalcul.Element>, List<GroupeCalcul.Cible>> calcul,
                                       Generateur.Source source) {
         int salle = Groupes.salleCourante();
-        GPresets gp = Salle.gp();
+        Moteur gp = Salle.gp();
         if (gp == null) return Groupes.Resultat.refus("L'Atelier n'est pas encore prêt.");
         if (!Salle.furnidataPrete()) return Groupes.Resultat.refus("Furnidata pas encore chargée.");
         List<GroupeCalcul.Element> els = elements(ids.get(0), ids.get(1));
@@ -1011,7 +1005,7 @@ final class GroupeActions {
 
     /** Copie des muraux donnes a leur place (moteur de pose). Ids des nouveaux muraux. */
     private static List<Integer> poserMursSurPlace(Groupes.Tache t, Set<Integer> murs, Generateur.Source source) {
-        GPresets gp = Salle.gp();
+        Moteur gp = Salle.gp();
         if (gp == null) return List.of();
         List<MurPose> l = new ArrayList<>();
         Map<Integer, Integer> attendus = new HashMap<>();
@@ -1024,17 +1018,8 @@ final class GroupeActions {
         }
         if (l.isEmpty()) return List.of();
         Set<Integer> avant = Groupes.idsMurs();
-        GPresetImporter imp = gp.getImporter();
-        try { if (imp == null || !poser(gp, imp, List.of(), l, source, t::dire)) return List.of(); }
+        try { if (poser(List.of(), l, source, t::dire, t::arretee, null) == null) return List.of(); }
         catch (Throwable e) { t.dire("Muraux : " + e); return List.of(); }
-        long fin = System.currentTimeMillis() + 10 * 60_000L;
-        while (System.currentTimeMillis() < fin) {
-            Salle.sommeil(200);
-            GPresetImporter.BuildingImportState st;
-            try { st = imp.getState(); } catch (Throwable e) { st = GPresetImporter.BuildingImportState.NONE; }
-            if (st == GPresetImporter.BuildingImportState.NONE) break;
-            if (t.arretee()) { abandonner(imp, gp); break; }   // Arreter : on rend la main (verrou)
-        }
         // suivi : seulement le temps que les derniers muraux apparaissent
         int voulus = 0;
         for (int k : attendus.values()) voulus += k;
@@ -1125,7 +1110,7 @@ final class GroupeActions {
                                            java.util.function.Function<List<GroupeCalcul.Element>, List<GroupeCalcul.Cible>> calcul,
                                            Generateur.Source source) {
         int salle = Groupes.salleCourante();
-        GPresets gp = Salle.gp();
+        Moteur gp = Salle.gp();
         if (gp == null) return Groupes.Resultat.refus("L'Atelier n'est pas encore prêt.");
         if (!Salle.furnidataPrete()) return Groupes.Resultat.refus("Furnidata pas encore chargée.");
         List<GroupeCalcul.Element> els = elements(ids.get(0), ids.get(1));
@@ -1171,32 +1156,24 @@ final class GroupeActions {
         // 2. la salle avant
         Set<Integer> avantS = Groupes.idsSols(), avantM = Groupes.idsMurs();
 
-        // 3. la pose (appart temporaire + dalle magique)
-        GPresetImporter imp = gp.getImporter();
-        if (imp == null) return Groupes.Resultat.refus("Moteur de pose introuvable.");
-        boolean arrete = false, sortie = false;
+        // 3. la pose (copie + dalle magique), en comptant les nouveaux mobis
+        boolean arrete, sortie;
         historiqueGrouper(true);
         try {
-            boolean lance;
-            try { lance = poser(gp, imp, mobis, murs, source, t::dire); }
-            catch (Throwable e) { return Groupes.Resultat.refus("Pose impossible : " + e); }
-            if (!lance) return new Groupes.Resultat(false, false, voulus, 0, voulus, "La pose n'a pas démarré. " + ignores, null);
-
-            // 4. attendre la fin du moteur de pose, en comptant les nouveaux mobis
-            long fin = System.currentTimeMillis() + 30 * 60_000L;
-            while (System.currentTimeMillis() < fin) {
-                Salle.sommeil(500);
-                if (!memeSalle(salle)) { sortie = true; break; }
-                if (t.arretee() && !arrete) { arrete = true; abandonner(imp, gp); }
-                GPresetImporter.BuildingImportState st;
-                try { st = imp.getState(); } catch (Throwable e) { st = GPresetImporter.BuildingImportState.NONE; }
-                int n = nouveaux(avantS, attendusSols, false).size() + nouveaux(avantM, attendusMurs, true).size();
-                t.progres(Math.min(n, voulus), voulus, "Pose de la copie : " + n + "/" + voulus
-                        + (st == GPresetImporter.BuildingImportState.AWAITING_UNOCCUPIED_SPACE
-                           ? ". Clique une case libre dans le jeu pour la dalle magique" : ""));
-                if (st == GPresetImporter.BuildingImportState.NONE) break;
+            PoseCopie.Resultat r;
+            try {
+                r = poser(mobis, murs, source, t::dire, t::arretee, () -> {
+                    int n = nouveaux(avantS, attendusSols, false).size() + nouveaux(avantM, attendusMurs, true).size();
+                    t.progres(Math.min(n, voulus), voulus, "Pose de la copie : " + n + "/" + voulus);
+                });
             }
-            if (!sortie) Salle.sommeil(3500);   // la dalle de l'Atelier est ramassee ~1,5 s apres la fin
+            catch (Throwable e) { return Groupes.Resultat.refus("Pose impossible : " + e); }
+            if (r == null || !r.lancee)
+                return new Groupes.Resultat(false, false, voulus, 0, voulus, "La pose n'a pas démarré. " + ignores, null);
+            arrete = r.arrete && memeSalle(salle);
+            sortie = !memeSalle(salle);
+            if (!sortie) PoseDirecte.suivre(() -> voulus - nouveaux(avantS, attendusSols, false).size()
+                    - nouveaux(avantM, attendusMurs, true).size(), 800, 2000);
         } finally {
             historiqueGrouper(false);
         }
@@ -1228,7 +1205,7 @@ final class GroupeActions {
         int q = ((quarts % 4) + 4) % 4;
         if (dx == 0 && dy == 0 && q == 0) return Groupes.Resultat.refus("Rien à faire : ni déplacement ni pivot.");
         int salle = Groupes.salleCourante();
-        GPresets gp = Salle.gp();
+        Moteur gp = Salle.gp();
         List<Set<Integer>> ids = Groupes.mobis(calqueId);
         List<GroupeCalcul.Element> els = elements(ids.get(0), ids.get(1));
         Set<Integer> types = Generateur.Dalle.typesDalles();
@@ -1332,7 +1309,7 @@ final class GroupeActions {
     private static final long ECART_DALLE_MS = 250;
 
     /** Met les dalles magiques sous le mobi a SA hauteur (celles qui n'y sont pas deja). */
-    private static void reglerDalles(GPresets gp, GroupeCalcul.Cible c, int q, List<GroupeCalcul.Cible> cDalles,
+    private static void reglerDalles(Moteur gp, GroupeCalcul.Cible c, int q, List<GroupeCalcul.Cible> cDalles,
                                      Map<Integer, Integer> hauteurDalle, long[] dernierReglage) {
         int lx = q % 2 == 1 ? c.e.ey : c.e.ex, ly = q % 2 == 1 ? c.e.ex : c.e.ey;
         int valeur = (int) Math.round(Math.max(0, c.z) * 100);
@@ -1406,114 +1383,83 @@ final class GroupeActions {
         return r;
     }
 
-    /** « :abort » donne directement a l'importeur (rien ne part au serveur), a defaut par le chat. */
-    static void abandonner(GPresetImporter imp, GPresets gp) {
-        try {
-            java.lang.reflect.Method m = GPresetImporter.class.getDeclaredMethod("onChat", HMessage.class);
-            m.setAccessible(true);
-            m.invoke(imp, new HMessage(new HPacket(4000, ":abort", 0, -1), HMessage.Direction.TOSERVER, -1));
-        } catch (Throwable t) {
-            gp.sendToServer(new HPacket("Chat", HMessage.Direction.TOSERVER, ":abort", 0, -1));
-        }
-    }
-
     /**
-     * Comme Generateur.poser, mais avec des murs : sols et murs aux positions
-     * ABSOLUES voulues. Le preset est ramene a l'origine (min x, min y) et la
-     * racine mise a ce coin : le moteur de pose pose sols et murs a racine + (x, y)
-     * (placeWallItems : WallPosition.x + rootLocation.x).
+     * Pose avec la dalle magique (PoseCopie) des sols et des murs aux positions
+     * ABSOLUES voulues, synchrone. La copie est ramenee a l'origine (min x,
+     * min y) et le coin mis a ce point ; z est l'altitude au-dessus du sol le
+     * plus bas sous la copie (ancre 0).
+     *
+     * @param stop  arret demande (peut etre null)
+     * @param suivi appele toutes les 400 ms pendant la pose (peut etre null)
+     * @return le resultat ; null si la pose n'a pas pu commencer (la raison est dite)
      */
-    static boolean poser(GPresets gp, GPresetImporter imp, List<Generateur.Mobi> mobis, List<MurPose> murs,
-                         Generateur.Source source, Consumer<String> dire) throws Exception {
-        if (!Salle.dansUneSalle()) { dire.accept("Tu n'es pas dans une salle."); return false; }
-        try {
-            if (imp.getState() != GPresetImporter.BuildingImportState.NONE) {
-                dire.accept("Le moteur de pose est déjà en train d'importer — termine ou tape :abort dans le jeu.");
-                return false;
-            }
-        } catch (Throwable ignored) { }
-        furnidata.FurniDataTools fd = gp.getFurniDataTools();
+    static PoseCopie.Resultat poser(List<Generateur.Mobi> mobis, List<MurPose> murs, Generateur.Source source,
+                                    Consumer<String> dire, java.util.function.BooleanSupplier stop, Runnable suivi) {
+        if (!Salle.dansUneSalle()) { dire.accept("Tu n'es pas dans une salle."); return null; }
+        Moteur gp = Salle.gp();
+        if (gp == null || !Salle.furnidataPrete()) { dire.accept("L'Atelier n'est pas encore prêt."); return null; }
+        if (PoseCopie.occupee()) {
+            dire.accept("L'Atelier est déjà en train de poser : attends la fin, ou tape :abort dans le jeu.");
+            return null;
+        }
+        Furnidata fd = gp.getFurniDataTools();
 
         int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE;
         for (Generateur.Mobi m : mobis) { minX = Math.min(minX, m.x); minY = Math.min(minY, m.y); }
-        List<utils.WallPosition> positions = new ArrayList<>();
+        List<PositionMur> positions = new ArrayList<>();
         for (MurPose w : murs) {
-            utils.WallPosition p = new utils.WallPosition(w.position);
+            PositionMur p = PositionMur.lire(w.position);
             positions.add(p);
-            minX = Math.min(minX, p.getX()); minY = Math.min(minY, p.getY());
+            minX = Math.min(minX, p.x()); minY = Math.min(minY, p.y());
         }
         HPoint racine = new HPoint(minX, minY);
 
-        List<PresetFurni> furni = new ArrayList<>();
+        CopieAppart cfg = new CopieAppart();
+        cfg.ancre = 0.0;
         List<Generateur.Mobi> relatifs = new ArrayList<>();
         int id = 1;
         for (Generateur.Mobi m : mobis) {
-            if (fd.getFloorTypeId(m.classe) == null) { dire.accept("« " + m.classe + " » inconnu de la furnidata : pose annulée."); return false; }
-            PresetFurni p = new PresetFurni(id++, m.classe,
-                    new HPoint(m.x - minX, m.y - minY, Math.max(0, Generateur.arrondi(m.z))), m.rot & 7, m.etat);
-            p.setFurniName(nomSol(fd, m.classe));
-            furni.add(p);
+            if (fd.getFloorTypeId(m.classe) == null) { dire.accept("« " + m.classe + " » inconnu de la furnidata : pose annulée."); return null; }
+            CopieAppart.MobiSol p = new CopieAppart.MobiSol(id++, m.classe, m.x - minX, m.y - minY,
+                    Math.max(0, Generateur.arrondi(m.z)), m.rot & 7, m.etat);
+            p.nom = nomSol(fd, m.classe);
+            cfg.sols.add(p);
             relatifs.add(new Generateur.Mobi(m.classe, m.etat, m.x - minX, m.y - minY, m.z, m.rot));
         }
-        List<PresetWallFurni> wall = new ArrayList<>();
         for (int i = 0; i < murs.size(); i++) {
             MurPose w = murs.get(i);
-            if (fd.getWallTypeId(w.classe) == null) { dire.accept("« " + w.classe + " » (mural) inconnu de la furnidata : pose annulée."); return false; }
-            utils.WallPosition p = positions.get(i);
-            utils.WallPosition rel = new utils.WallPosition(p.getX() - minX, p.getY() - minY,
-                    p.getOffsetX(), p.getOffsetY(), p.getDirection(), p.getAltitude());
-            PresetWallFurni pw = new PresetWallFurni(id++, w.classe, rel, w.etat == null ? "" : w.etat);
+            if (fd.getWallTypeId(w.classe) == null) { dire.accept("« " + w.classe + " » (mural) inconnu de la furnidata : pose annulée."); return null; }
+            PositionMur rel = positions.get(i).deplacee(-minX, -minY);
+            CopieAppart.MobiMur pw = new CopieAppart.MobiMur(id++, w.classe, rel, w.etat == null ? "" : w.etat);
             try {
-                furnidata.details.WallItemDetails d = fd.getWallItemDetails(w.classe);
-                pw.setFurniName(d != null && d.name != null && !d.name.isBlank() ? d.name : w.classe);
-            } catch (Throwable e) { pw.setFurniName(w.classe); }
-            wall.add(pw);
+                Furnidata.Mobi d = fd.getWallItemDetails(w.classe);
+                pw.nom = d != null && d.name != null && !d.name.isBlank() ? d.name : w.classe;
+            } catch (Throwable e) { pw.nom = w.classe; }
+            cfg.murs.add(pw);
         }
+        // meme salle : les murs ne sont pas recales
+        EtatSalle fs = Salle.etat();
+        if (fs != null && fs.getRawFloorplan() != null)
+            cfg.disposition = CopieAppart.Disposition.depuisPlan(fs.getRoomModelName(), fs.getFloorplanWidth(),
+                    fs.getFloorplanHeight(), fs.getFloorScale(), fs.getFloorWallHeight(), fs.getRawFloorplan());
 
-        PresetWireds wi = new PresetWireds(new ArrayList<>(), new ArrayList<>(), new ArrayList<>(),
-                new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), new HashMap<>());
-        PresetConfig cfg = new PresetConfig(furni, wall, wi, new ArrayList<>(), new ArrayList<>());
-        cfg.setSrcAnchorFloorHeight(0.0);
-        try {   // meme salle : les murs ne sont pas recales
-            game.FloorState fs = Salle.etat();
-            if (fs != null && fs.getRawFloorplan() != null)
-                cfg.setRoomLayout(new extension.tools.presetconfig.RoomLayoutInfo(fs.getRoomModelName(),
-                        fs.getFloorplanWidth(), fs.getFloorplanHeight(), fs.getFloorScale(),
-                        fs.getFloorWallHeight(), fs.getRawFloorplan()));
-        } catch (Throwable ignored) { }
-        String json = cfg.toJsonObject().toString(2);
-        PresetConfig relu = new PresetConfig(new org.json.JSONObject(json));
-
-        String fichier = "_atelier_calque";
-        File dossier = OngletApparts.dossierApparts();
-        if (!dossier.exists()) dossier.mkdirs();
-        Files.write(new File(dossier, fichier + ".json").toPath(), json.getBytes(StandardCharsets.UTF_8));
-
-        String entete = (furni.size() + wall.size()) + " mobi(s) envoyés au moteur de pose. ";
-        if (furni.isEmpty()) {
-            // murs seuls : le moteur de pose les pose des « :ip x,y », sans dalle magique
-            boolean ok = Generateur.importer(gp, imp, relu, fichier, source, racine, s -> { }, entete, null);
-            if (ok) dire.accept(entete + "Pose des murs en cours (:abort dans le jeu pour arrêter).");
-            else dire.accept("Le moteur de pose n'a pas lancé la pose (regarde son message dans le jeu).");
-            return ok;
+        HPoint caseDalle = null;
+        if (!relatifs.isEmpty()) {
+            List<int[]> trace = Generateur.Dalle.trace(relatifs, 0, 0, racine);
+            int[] depart = new int[]{racine.getX() + relatifs.get(0).x, racine.getY() + relatifs.get(0).y};
+            Generateur.Dalle.Pret dalle = Generateur.Dalle.preparer(relatifs, trace, depart, dire);
+            if (dalle == null) return null;
+            caseDalle = dalle.ou;
         }
-        List<int[]> trace = Generateur.Dalle.trace(relatifs, 0, 0, racine);
-        int[] depart = new int[]{racine.getX() + relatifs.get(0).x, racine.getY() + relatifs.get(0).y};
-        Generateur.Dalle.Pret dalle = Generateur.Dalle.preparer(gp, relatifs, trace, depart, dire);
-        if (dalle == null) { Generateur.Dalle.finIgnorer(); return false; }
-        boolean ok = Generateur.importer(gp, imp, relu, fichier, source, racine, dire, entete, dalle.ou);
-        if (ok) Generateur.Dalle.apresImport(imp, dalle.poseeParAtelier, dire);
-        else if (dalle.poseeParAtelier > 0)
-            Generateur.Dalle.ramasser(dalle.poseeParAtelier, dire, "La pose n'a pas démarré : j'ai ramassé la dalle magique.");
-        else Generateur.Dalle.finIgnorer();
-        return ok;
+        dire.accept(Ui.accorder((cfg.sols.size() + cfg.murs.size()) + " mobi(s) à poser avec la dalle magique… "
+                + "(:abort dans le jeu pour arrêter)"));
+        PoseCopie.Resultat r = Generateur.poserCopie(cfg, source, racine, dire, caseDalle, stop, suivi);
+        if (r == null || !r.lancee) return null;
+        String bilan = r.texte();
+        dire.accept(bilan);
+        InfoJeu.dire(bilan);
+        return r;
     }
 
-    private static String nomSol(furnidata.FurniDataTools fd, String classe) {
-        try {
-            furnidata.details.FloorItemDetails d = fd.getFloorItemDetails(classe);
-            if (d != null && d.name != null && !d.name.isBlank()) return d.name;
-        } catch (Throwable ignored) { }
-        return classe;
-    }
+    private static String nomSol(Furnidata fd, String classe) { return Generateur.nomSol(fd, classe); }
 }

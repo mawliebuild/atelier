@@ -289,6 +289,8 @@ final class PoseDalle {
                 if (stop.getAsBoolean()) break;
                 String voulu = e.getValue().etat();
                 if (voulu == null || DalleMagique.estDalle(e.getValue().classe())) continue;
+                // « 0 » (etat par defaut) sur un mobi sans etat utilisable : rien a regler
+                if ((voulu.isEmpty() || voulu.equals("0")) && PoseOutils.etat(salle.furniFromId(e.getKey())) == null) continue;
                 if (!PoseOutils.mettreEtat(canal, salle, droits, e.getKey(), voulu, stop)) b.etatsFaux.add(e.getValue().cle());
             }
             if (stop.getAsBoolean()) b.arrete = true;

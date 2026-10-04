@@ -27,7 +27,7 @@ import java.util.regex.Pattern;
 /**
  * La furnidata de l'hotel : classes, ids de type, noms et details des mobis.
  *
- * Remplace furnidata.FurniDataTools, FloorItemDetails et WallItemDetails.
+ * Remplace FurniDataTools (ancien module), FloorItemDetails et WallItemDetails.
  * Meme source : https://www.habbo<domaine>/gamedata/furnidata_json/1, le pays
  * etant lu dans l'hote (« game-fr.habbo.com » -> fr ; s2 = sandbox). Format :
  * roomitemtypes.furnitype[] (sol) et wallitemtypes.furnitype[] (murs).

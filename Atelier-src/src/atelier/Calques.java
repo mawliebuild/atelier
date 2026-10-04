@@ -1,6 +1,5 @@
 package atelier;
 
-import extension.GPresets;
 import gearth.extensions.parsers.HFloorItem;
 import gearth.extensions.parsers.HWallItem;
 import gearth.extensions.parsers.stuffdata.IStuffData;
@@ -21,7 +20,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
  *   masquer     on envoie au client ObjectRemove (sol) ou ItemRemove (mur),
  *               comme si le mobi avait ete ramasse ;
  *   reafficher  on lui renvoie ObjectAdd / ItemAdd, construit depuis l'etat
- *               le plus recent connu (FloorState du moteur de l'Atelier, a defaut la
+ *               le plus recent connu (EtatSalle du moteur de l'Atelier, a defaut la
  *               copie prise au moment de masquer).
  *
  * Pendant qu'un mobi est masque, tout ce que le serveur envoie a son sujet
@@ -32,7 +31,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * WiredMovements) sont recopies sans les mobis masques. Les changements d'etat
  * bloques sont gardes et rejoues au moment de reafficher.
  *
- * FloorState du moteur de l'Atelier ecoute les memes paquets (par nom) : le blocage ne
+ * EtatSalle du moteur de l'Atelier ecoute les memes paquets (par nom) : le blocage ne
  * l'empeche pas de les lire, il garde donc la position et l'etat a jour. On ne
  * modifie jamais un paquet en place (il le lirait modifie) : on bloque
  * l'original et on envoie une copie.
@@ -245,7 +244,7 @@ public final class Calques {
         try {
             HPacket p;
             if (!m.mural) {
-                // FloorState fait foi : absent = ramasse entre-temps.
+                // EtatSalle fait foi : absent = ramasse entre-temps.
                 HFloorItem it = Salle.sol(m.id);
                 if (it == null) return false;
                 p = paquet("ObjectAdd");
@@ -295,7 +294,7 @@ public final class Calques {
     // ------------------------------------------------------------- salle
 
     private static int salleCourante() {
-        try { game.FloorState s = Salle.etat(); return s == null ? -1 : s.getRoomId(); }
+        try { EtatSalle s = Salle.etat(); return s == null ? -1 : s.getRoomId(); }
         catch (Throwable t) { return -1; }
     }
 
@@ -330,7 +329,7 @@ public final class Calques {
     }
 
     private static void envoyerClient(HPacket p) {
-        GPresets gp = Salle.gp();
+        Moteur gp = Salle.gp();
         if (gp == null || p == null) return;
         try {
             int e = Arrays.hashCode(p.toBytes());
@@ -361,7 +360,7 @@ public final class Calques {
         enCours = true;
         Salle.tache("calques-ecoute", () -> {
             for (int i = 0; i < 900 && !installe; i++) {
-                GPresets gp = Salle.gp();
+                Moteur gp = Salle.gp();
                 if (gp != null) { brancher(gp); return; }
                 Salle.sommeil(1000);
             }
@@ -376,11 +375,11 @@ public final class Calques {
     };
 
     /**
-     * Ecoutes PAR NOM : ce sont exactement les noms qu'ecoute FloorState de
+     * Ecoutes PAR NOM : ce sont exactement les noms qu'ecoute EtatSalle de
      * le moteur de l'Atelier pour tenir la salle a jour ; s'ils ne se resolvaient pas, la
      * salle du moteur serait vide elle aussi.
      */
-    private static void brancher(GPresets gp) {
+    private static void brancher(Moteur gp) {
         int n = 0;
         for (String nom : NOMS) {
             try {
@@ -558,7 +557,7 @@ public final class Calques {
     }
 
     /**
-     * WiredMovements : int n, n × (int sorte, ...). Meme lecture que FloorState
+     * WiredMovements : int n, n × (int sorte, ...). Meme lecture que EtatSalle
      * du moteur de l'Atelier : sorte 1 = mobi (ii, x, y, s, s, id, ii, B[i], B[i]).
      * Une sorte inconnue : on laisse passer le paquet tel quel.
      */

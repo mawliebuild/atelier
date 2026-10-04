@@ -1,7 +1,5 @@
 package atelier;
 
-import extension.GPresets;
-import game.FloorState;
 import gearth.protocol.HMessage;
 import gearth.protocol.HPacket;
 
@@ -198,7 +196,7 @@ public class BarreMesure implements Ancrage.Ancrable {
     /** Retient les clics au sol pendant la mesure (meme paquet que le moteur de l'Atelier : MoveAvatar). */
     private synchronized void brancher() {
         if (branche) return;
-        GPresets gp = Salle.gp();
+        Moteur gp = Salle.gp();
         if (gp == null) return;
         try {
             gp.intercept(HMessage.Direction.TOSERVER, "MoveAvatar", m -> {
@@ -257,7 +255,7 @@ public class BarreMesure implements Ancrage.Ancrable {
     private volatile int mesures = 0;
 
     private static void poserDalle(int id, int x, int y) {
-        GPresets gp = Salle.gp();
+        Moteur gp = Salle.gp();
         if (gp == null) return;
         GrilleReseau.installer();
         GrilleReseau.resoudre();
@@ -271,7 +269,7 @@ public class BarreMesure implements Ancrage.Ancrable {
     }
 
     private static void retirerDalles() {
-        GPresets gp = Salle.gp();
+        Moteur gp = Salle.gp();
         for (int id : new int[]{ID_A, ID_B}) {
             if (GrilleReseau.affiches.remove(id) == null || gp == null) continue;
             try { gp.sendToClient(GrilleReseau.retrait(id)); } catch (Throwable ignored) { }
@@ -291,7 +289,7 @@ public class BarreMesure implements Ancrage.Ancrable {
 
     /** Cases praticables du plan de la salle ; -1 si inconnu. */
     static int compterCases() {
-        FloorState s = Salle.etat();
+        EtatSalle s = Salle.etat();
         if (s == null) return -1;
         try {
             int n = 0, l = s.getFloorplanWidth(), h = s.getFloorplanHeight();

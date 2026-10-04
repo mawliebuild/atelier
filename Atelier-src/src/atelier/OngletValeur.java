@@ -1,6 +1,5 @@
 package atelier;
 
-import extension.GPresets;
 import gearth.extensions.parsers.HInventoryItem;
 import gearth.extensions.parsers.HProductType;
 
@@ -499,7 +498,7 @@ public class OngletValeur {
     }
 
     private static Instantane calculer() {
-        GPresets gp = AtelierLauncher.moteur();
+        Moteur gp = AtelierLauncher.moteur();
         Instantane r = new Instantane();
         PrixCalcul.Sources s = sources();
 
@@ -666,7 +665,7 @@ public class OngletValeur {
     // ------------------------------------------------------------- pour les autres volets
 
     /** Prix unitaire d'un mobi, pour les autres volets (Salle) ; -1 si inconnu. */
-    public static int prixUnitaire(GPresets gp, boolean mur, int typeId) {
+    public static int prixUnitaire(Moteur gp, boolean mur, int typeId) {
         try {
             return PrixCalcul.prix(mur, typeId, PrixTexte.classe(gp, mur, typeId), true, sources()).prix;
         } catch (Throwable t) { return -1; }

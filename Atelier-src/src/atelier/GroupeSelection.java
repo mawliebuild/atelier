@@ -135,7 +135,7 @@ final class GroupeSelection {
         // rien (le jeu charge la salle a ce moment-la).
         if (liste.isEmpty() && salle != lueurSalle) { lueurEnvoyee = ""; lueurSalle = salle; lueurA = t; return; }
         if (!Salle.installeeDepuis(3000)) return;
-        extension.GPresets gp = Salle.gp();
+        Moteur gp = Salle.gp();
         if (gp == null) return;
         // Un rappel (liste inchangee) ne redit pas « choisis cet animal » (jetons p…) : sinon
         // le jeu reprendrait la plante de l'Atelier juste apres un clic sur un autre animal.

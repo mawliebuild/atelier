@@ -1,6 +1,5 @@
 package atelier;
 
-import extension.GPresets;
 import gearth.protocol.HMessage;
 import gearth.protocol.HPacket;
 
@@ -46,7 +45,7 @@ final class CalqueMurs {
      */
     static boolean cacher(boolean cacher) {
         installer();
-        GPresets gp = Salle.gp();
+        Moteur gp = Salle.gp();
         if (gp == null) return false;
         caches = cacher;
         boolean ok = envoyer(gp, cacher || FloorReseau.mursCaches, FloorReseau.epMur, FloorReseau.epSol);
@@ -54,7 +53,7 @@ final class CalqueMurs {
         return ok;
     }
 
-    private static boolean envoyer(GPresets gp, boolean murs, int epMur, int epSol) {
+    private static boolean envoyer(Moteur gp, boolean murs, int epMur, int epSol) {
         try {
             HPacket p = new HPacket("RoomVisualizationSettings", HMessage.Direction.TOCLIENT);
             p.appendBoolean(murs);
@@ -73,7 +72,7 @@ final class CalqueMurs {
         FloorReseau.installer();                 // l'etat d'origine (murs, epaisseurs)
         Salle.tache("calque-murs-ecoute", () -> {
             for (int i = 0; i < 900 && !installe; i++) {
-                GPresets gp = Salle.gp();
+                Moteur gp = Salle.gp();
                 if (gp != null) {
                     try {
                         gp.intercept(HMessage.Direction.TOCLIENT, "RoomVisualizationSettings", CalqueMurs::examiner);
@@ -100,7 +99,7 @@ final class CalqueMurs {
             int a = p.readInteger(), b = p.readInteger();
             if (murs) return;
             m.setBlocked(true);
-            GPresets gp = Salle.gp();
+            Moteur gp = Salle.gp();
             if (gp != null) envoyer(gp, true, a, b);
         } catch (Throwable ignored) { }
     }

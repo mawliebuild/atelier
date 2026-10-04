@@ -172,7 +172,7 @@ R1T = 'QName(PackageNamespace("_-910"),"_-R1T")'
 TYPE = 'getproperty QName(PackageNamespace(""),"type")'
 KBD = 'QName(PackageNamespace("com.sulake.core.window.events"),"WindowKeyboardEvent")'
 JAUNE, BLANC = 15384347, 16777215
-DEFAUT_COULEUR = 0xFF5FA2   # rose : mise en valeur par defaut (contour + remplissage, 4 px, 45 %)
+DEFAUT_COULEUR = 0x1FC8C8   # turquoise : mise en valeur par defaut (contour + remplissage, 4 px, 45 %)
 HALO = 16769354   # 0xFFE14A : couleur du halo de selection, sert aussi de signature   # jaune des selecteurs wired (0xEABF1B), blanc
 
 CATS = ["Toutes les catégories", "Halloween", "Noël", "Pâques", "Saint-Valentin", "Été", "Rares",

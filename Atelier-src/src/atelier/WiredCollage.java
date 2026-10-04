@@ -1,11 +1,5 @@
 package atelier;
 
-import extension.GPresets;
-import extension.tools.GPresetImporter;
-import extension.tools.presetconfig.PresetConfig;
-import extension.tools.presetconfig.binding.PresetWiredFurniBinding;
-import extension.tools.presetconfig.furni.PresetFurni;
-import extension.tools.presetconfig.wired.*;
 import gearth.extensions.parsers.HFloorItem;
 import gearth.extensions.parsers.HPoint;
 import gearth.protocol.HMessage;
@@ -109,7 +103,7 @@ public final class WiredCollage {
         final double z;
         /** declencheur / condition / effet / add-on / selecteur / variable ; null = pas un wired */
         final String genre;
-        /** reglage du moteur de l'Atelier (PresetWiredBase.toJsonObject) ; null = pas un wired ou pas lu */
+        /** reglage du wired (ReglageWired.json) ; null = pas un wired ou pas lu */
         final JSONObject config;
         final List<Liaison> liaisons;
 
@@ -321,42 +315,29 @@ public final class WiredCollage {
         return r;
     }
 
-    /** Un reglage du moteur de l'Atelier a partir de son JSON et de son genre. null = genre inconnu. */
-    static PresetWiredBase reglage(String genre, JSONObject o) {
-        switch (genre) {
-            case "declencheur": return new PresetWiredTrigger(o);
-            case "condition":   return new PresetWiredCondition(o);
-            case "effet":       return new PresetWiredEffect(o);
-            case "add-on":      return new PresetWiredAddon(o);
-            case "selecteur":   return new PresetWiredSelector(o);
-            case "variable":    return new PresetWiredVariable(o);
-            default: return null;
-        }
+    /** Un reglage a partir de son JSON et de son genre (« declencheur »...). null = genre inconnu. */
+    static ReglageWired reglage(String genre, JSONObject o) {
+        ReglageWired.Genre g = WiredLecteur.genre(genre);
+        return g == null ? null : ReglageWired.depuisJson(g, o);
     }
 
     /**
-     * Le preset de la pose : les mobis (id = id d'origine), le
-     * reglage de chaque wired (selections reduites aux mobis poses ; le moteur de pose
-     * les remplace par les nouveaux ids), les liaisons des wired instantanes.
+     * La copie de la pose : les mobis (id = id d'origine), le reglage de chaque
+     * wired (selections reduites aux mobis poses ; la pose les remplace par les
+     * nouveaux ids), les liaisons des wired instantanes. z = altitude au-dessus
+     * du sol (ancre 0).
      *
      * @param nom nom lisible d'une classe (peut renvoyer la classe)
      */
-    static PresetConfig versPreset(Copie c, Plan plan, Function<String, String> nom) {
+    static CopieAppart versPreset(Copie c, Plan plan, Function<String, String> nom) {
         Set<Integer> poses = plan.ids();
-        List<PresetFurni> furni = new ArrayList<>();
-        List<PresetWiredCondition> cnd = new ArrayList<>();
-        List<PresetWiredEffect> eff = new ArrayList<>();
-        List<PresetWiredTrigger> trg = new ArrayList<>();
-        List<PresetWiredAddon> add = new ArrayList<>();
-        List<PresetWiredSelector> slc = new ArrayList<>();
-        List<PresetWiredVariable> var = new ArrayList<>();
-        List<PresetWiredFurniBinding> liaisons = new ArrayList<>();
+        CopieAppart cfg = new CopieAppart();
         Set<String> variablesUtiles = new HashSet<>();
         for (Piece p : plan.aPoser) {
-            PresetFurni f = new PresetFurni(p.id, p.classe, new HPoint(p.x, p.y, p.z), p.rot, p.etat);
+            CopieAppart.MobiSol f = new CopieAppart.MobiSol(p.id, p.classe, p.x, p.y, p.z, p.rot, p.etat);
             String n = nom == null ? p.classe : nom.apply(p.classe);
-            f.setFurniName(n == null || n.isBlank() ? p.classe : n);
-            furni.add(f);
+            f.nom = n == null || n.isBlank() ? p.classe : n;
+            cfg.sols.add(f);
             if (!p.wired() || p.config == null) continue;
             JSONObject o = new JSONObject(p.config.toString());
             o.put("wiredId", p.id);
@@ -366,25 +347,19 @@ public final class WiredCollage {
             JSONArray vids = o.optJSONArray("variableIds");
             if (vids != null) for (int i = 0; i < vids.length(); i++) variablesUtiles.add(vids.optString(i));
             if (o.has("variableId")) variablesUtiles.add(o.optString("variableId"));
-            PresetWiredBase w = reglage(p.genre, o);
-            if (w instanceof PresetWiredTrigger) trg.add((PresetWiredTrigger) w);
-            else if (w instanceof PresetWiredCondition) cnd.add((PresetWiredCondition) w);
-            else if (w instanceof PresetWiredEffect) eff.add((PresetWiredEffect) w);
-            else if (w instanceof PresetWiredAddon) add.add((PresetWiredAddon) w);
-            else if (w instanceof PresetWiredSelector) slc.add((PresetWiredSelector) w);
-            else if (w instanceof PresetWiredVariable) var.add((PresetWiredVariable) w);
+            ReglageWired w = reglage(p.genre, o);
+            if (w != null) cfg.ajouter(w);
             for (Liaison b : p.liaisons) {
                 if (!poses.contains(b.furniId)) continue;
-                HPoint ou = b.x == null || b.y == null ? null : new HPoint(b.x, b.y);
-                liaisons.add(new PresetWiredFurniBinding(b.furniId, p.id, ou, b.rot, b.etat, b.alt));
+                cfg.liaisons.add(new CopieAppart.Liaison(b.furniId, p.id, b.x == null || b.y == null ? null : b.x,
+                        b.x == null || b.y == null ? null : b.y, b.rot, b.etat, b.alt));
             }
         }
-        HashMap<String, String> vmap = new HashMap<>();
+        // « variables_map » : nom -> id d'origine (c.variables est id -> nom)
         for (Map.Entry<String, String> e : c.variables.entrySet())
-            if (variablesUtiles.contains(e.getKey())) vmap.put(e.getKey(), e.getValue());
-        PresetWireds w = new PresetWireds(cnd, eff, trg, add, slc, var, vmap);
-        PresetConfig cfg = new PresetConfig(furni, new ArrayList<>(), w, liaisons, new ArrayList<>());
-        cfg.setSrcAnchorFloorHeight(0.0);       // z = altitude au-dessus du sol
+            if (variablesUtiles.contains(e.getKey()) && e.getValue() != null && !e.getValue().isEmpty())
+                cfg.tableVariables.put(e.getValue(), e.getKey());
+        cfg.ancre = 0.0;       // z = altitude au-dessus du sol
         return cfg;
     }
 
@@ -653,7 +628,7 @@ public final class WiredCollage {
 
     /** Le nom enregistre, ou null si rien n'a ete copie. */
     private static String copier0(List<Integer> ids, Boite b, String voulu, boolean avecCibles) {
-        game.FloorState fs = Salle.etat();
+        EtatSalle fs = Salle.etat();
         if (fs == null) { b.fin("Tu n'es pas dans une salle."); return null; }
         int salle = fs.getRoomId();
         List<HFloorItem> mobis = new ArrayList<>();
@@ -711,7 +686,7 @@ public final class WiredCollage {
                 genre = c != null ? c.genre : WiredLecteur.genreDe(cls);
                 if (c != null && c.brut != null) {
                     try {
-                        json = c.brut.toJsonObject();
+                        json = c.brut.json();
                         if (A_LIAISONS.contains(cls)) liaisons = lireLiaisons(c.texte);
                     } catch (Throwable t) { json = null; }
                 }
@@ -772,7 +747,7 @@ public final class WiredCollage {
         Copie c = lire(nom);
         if (c == null || c.nbWired() == 0) { b.fin("Rien à coller : copie d'abord une config wired."); return; }
         if (enCours) { b.fin("Une copie ou un collage est déjà en cours."); return; }
-        GPresets gp = Salle.gp();
+        Moteur gp = Salle.gp();
         if (gp == null) { b.fin("L'Atelier n'est pas encore prêt."); return; }
         if (!Salle.dansUneSalle()) { b.fin("Tu n'es pas dans une salle."); return; }
         if (!Salle.furnidataPrete()) { b.fin("Furnidata pas encore chargée."); return; }
@@ -788,7 +763,7 @@ public final class WiredCollage {
      * serveur). null hors salle ou si aucun mobi n'est dans la salle.
      */
     static Copie capturer(Collection<Integer> idsSols, java.util.function.BooleanSupplier stop) {
-        game.FloorState fs = Salle.etat();
+        EtatSalle fs = Salle.etat();
         if (fs == null || idsSols == null) return null;
         List<HFloorItem> mobis = new ArrayList<>();
         List<Integer> wired = new ArrayList<>();
@@ -802,7 +777,7 @@ public final class WiredCollage {
         Map<Integer, WiredLecteur.Config> cfg = wired.isEmpty() ? Map.of()
                 : WiredLecteur.lireMaintenant(wired, stop == null ? () -> false : stop, (f, t) -> { });
         // parti pendant la lecture : hauteurs du sol et classes ne seraient plus les bonnes
-        game.FloorState apres = Salle.etat();
+        EtatSalle apres = Salle.etat();
         if (apres == null || apres.getRoomId() != fs.getRoomId()) return null;
         List<Piece> pieces = new ArrayList<>();
         for (HFloorItem it : mobis) {
@@ -816,7 +791,7 @@ public final class WiredCollage {
                 genre = c != null ? c.genre : WiredLecteur.genreDe(cls);
                 if (c != null && c.brut != null) {
                     try {
-                        json = c.brut.toJsonObject();
+                        json = c.brut.json();
                         if (A_LIAISONS.contains(cls)) liaisons = lireLiaisons(c.texte);
                     } catch (Throwable t) { json = null; }
                 }
@@ -884,16 +859,16 @@ public final class WiredCollage {
     }
 
     /** Disponibilite par classe : inventaire et BC. Hors fil JavaFX de preference (rapide). */
-    private static String disponibilite(GPresets gp, Plan p, Generateur.Source source) {
+    private static String disponibilite(Moteur gp, Plan p, Generateur.Source source) {
         Map<String, Integer> besoin = new TreeMap<>();
         for (Piece x : p.aPoser) besoin.merge(x.classe, 1, Integer::sum);
         int manqueInv = 0, manqueBc = 0, inconnus = 0;
         List<String> manquants = new ArrayList<>();
-        furnidata.FurniDataTools fd = gp.getFurniDataTools();
-        game.Inventory inv = null;
+        Furnidata fd = gp.getFurniDataTools();
+        Inventaire inv = null;
         try { inv = gp.getInventory(); } catch (Throwable ignored) { }
         boolean invPret = false;
-        try { invPret = inv != null && inv.getState() == game.Inventory.InventoryState.LOADED; } catch (Throwable ignored) { }
+        try { invPret = inv != null && inv.getState() == Inventaire.Etat.LOADED; } catch (Throwable ignored) { }
         for (Map.Entry<String, Integer> e : besoin.entrySet()) {
             Integer type = null;
             try { type = fd.getFloorTypeId(e.getKey()); } catch (Throwable ignored) { }
@@ -904,7 +879,7 @@ public final class WiredCollage {
                 enInv = l == null ? 0 : l.size();
             } catch (Throwable ignored) { }
             boolean bc = false;
-            try { game.BCCatalog cat = gp.getCatalog(); bc = cat != null && cat.getFloorProduct(type) != null; }
+            try { CatalogueBc cat = gp.getCatalog(); bc = cat != null && cat.getFloorProduct(type) != null; }
             catch (Throwable ignored) { }
             int manque = Math.max(0, e.getValue() - enInv);
             if (manque > 0) manqueInv += manque;
@@ -929,9 +904,9 @@ public final class WiredCollage {
         return s.toString();
     }
 
-    private static String nomLisible(GPresets gp, String classe) {
+    private static String nomLisible(Moteur gp, String classe) {
         try {
-            furnidata.details.FloorItemDetails d = gp.getFurniDataTools().getFloorItemDetails(classe);
+            Furnidata.Mobi d = gp.getFurniDataTools().getFloorItemDetails(classe);
             if (d != null && d.name != null && !d.name.isBlank()) return d.name;
         } catch (Throwable ignored) { }
         return classe;
@@ -939,30 +914,20 @@ public final class WiredCollage {
 
     /** La pose elle-meme (fil de travail). */
     private static List<Integer> coller0(Copie c, Plan plan, Generateur.Source source, HPoint origine, Boite b) throws Exception {
-        GPresets gp = Salle.gp();
-        game.FloorState fs = Salle.etat();
+        Moteur gp = Salle.gp();
+        EtatSalle fs = Salle.etat();
         if (gp == null || fs == null) { b.fin("Tu n'es plus dans une salle."); return List.of(); }
         int salle = fs.getRoomId();
-        GPresetImporter imp = gp.getImporter();
-        if (imp == null) { b.fin("Moteur de pose de l'Atelier introuvable."); return List.of(); }
-        try {
-            if (imp.getState() != GPresetImporter.BuildingImportState.NONE) {
-                b.fin("L'Atelier est déjà en train de poser : termine ou tape :abort dans le jeu.");
-                return List.of();
-            }
-        } catch (Throwable ignored) { }
-        furnidata.FurniDataTools fd = gp.getFurniDataTools();
+        if (PoseCopie.occupee()) {
+            b.fin("L'Atelier est déjà en train de poser : attends la fin, ou tape :abort dans le jeu.");
+            return List.of();
+        }
+        Furnidata fd = gp.getFurniDataTools();
         for (Piece p : plan.aPoser)
             if (fd.getFloorTypeId(p.classe) == null) { b.fin("« " + p.classe + " » inconnu de la furnidata : collage annulé."); return List.of(); }
 
-        // 1. le preset, aller-retour JSON (ce que le moteur de pose relira)
-        PresetConfig cfg = versPreset(c, plan, cl -> nomLisible(gp, cl));
-        String json = cfg.toJsonObject().toString(2);
-        PresetConfig relu = new PresetConfig(new JSONObject(json));
-        String fichier = "_atelier_wired";
-        File dossier = OngletApparts.dossierApparts();
-        if (!dossier.exists()) dossier.mkdirs();
-        ecrireAtomique(new File(dossier, fichier + ".json"), json.getBytes(StandardCharsets.UTF_8));
+        // 1. la copie a poser (aller-retour JSON : exactement ce qu'une copie relue donnerait)
+        CopieAppart relu = CopieAppart.lire(versPreset(c, plan, cl -> nomLisible(gp, cl)).json());
 
         // 2. la case du coin
         HPoint racine = origine;
@@ -977,7 +942,7 @@ public final class WiredCollage {
         // la salle a pu changer pendant l'attente du clic (ou depuis l'aperçu)
         if (Salle.salleId() != salle) { b.fin("Tu as changé de salle : collage annulé, rien n'a été posé."); return List.of(); }
 
-        // 3. la dalle magique (hauteurs exactes), comme Dupliquer
+        // 3. la pose avec la dalle magique (hauteurs exactes), comme Dupliquer, puis les reglages
         List<Generateur.Mobi> relatifs = new ArrayList<>();
         Map<Integer, Integer> attendus = new HashMap<>();
         for (Piece p : plan.aPoser) {
@@ -989,52 +954,37 @@ public final class WiredCollage {
         int[] depart = new int[]{racine.getX() + relatifs.get(0).x, racine.getY() + relatifs.get(0).y};
         Set<Integer> avant = new HashSet<>();
         for (HFloorItem it : Salle.sols()) avant.add(it.getId());
-        Generateur.Dalle.Pret dalle = Generateur.Dalle.preparer(gp, relatifs, trace, depart, dire);
-        if (dalle == null) { Generateur.Dalle.finIgnorer(); b.fin("Collage annulé (dalle magique) : rien n'a été posé."); return List.of(); }
-        for (HFloorItem it : Salle.sols()) avant.add(it.getId());    // la dalle posee par l'Atelier
+        Generateur.Dalle.Pret dalle = Generateur.Dalle.preparer(relatifs, trace, depart, dire);
+        if (dalle == null) { b.fin("Collage annulé (dalle magique) : rien n'a été posé."); return List.of(); }
+        // la dalle magique posee par la pose : son type ne compte pas parmi les nouveaux
+        Set<Integer> typesDalles = Generateur.Dalle.typesDalles();
 
-        String entete = plan.aPoser.size() + " mobi(s) envoyés au moteur de pose. ";
-        boolean ok = Generateur.importer(gp, imp, relu, fichier, source, racine, dire, entete, dalle.ou);
-        if (!ok) {
-            if (dalle.poseeParAtelier > 0)
-                Generateur.Dalle.ramasser(dalle.poseeParAtelier, dire, "La pose n'a pas démarré : j'ai ramassé la dalle magique.");
-            else Generateur.Dalle.finIgnorer();
-            b.fin("Le moteur de pose n'a pas lancé la pose (regarde son message dans le jeu). Rien n'a été posé.");
+        int voulus = plan.aPoser.size();
+        final HPoint coin = racine;
+        b.travail(voulus + (voulus > 1 ? " mobis à poser avec la dalle magique." : " mobi à poser avec la dalle magique."));
+        PoseCopie.Resultat pr = Generateur.poserCopie(relu, source, coin, dire, dalle.ou, b::arretee, () -> {
+            int n = nouveaux(avant, attendus, typesDalles).size();
+            b.progres(Math.min(n, voulus), voulus, "L'Atelier pose et règle : " + Math.min(n, voulus) + " / " + voulus
+                    + (n >= voulus && PoseCopie.occupee() ? " (réglage des wired…)" : ""));
+        });
+        if (pr == null || !pr.lancee) {
+            b.fin("La pose n'a pas démarré" + (pr != null && pr.raison != null ? " (" + pr.raison + ")" : "") + ". Rien n'a été posé.");
             return List.of();
         }
-        Generateur.Dalle.apresImport(imp, dalle.poseeParAtelier, dire);
-
-        // 4. suivre le moteur de pose
-        int voulus = plan.aPoser.size();
-        long fin = System.currentTimeMillis() + 30 * 60_000L;
-        boolean arrete = false;
-        while (System.currentTimeMillis() < fin) {
-            Salle.sommeil(200);
-            game.FloorState s = Salle.etat();
-            if (s == null || s.getRoomId() != salle) {
-                abandonner(imp, gp);
-                Generateur.Dalle.finIgnorer();
-                b.fin("Tu as quitté la salle pendant la pose : collage interrompu.");
-                return List.of();
-            }
-            if (b.arretee() && !arrete) { arrete = true; abandonner(imp, gp); }
-            GPresetImporter.BuildingImportState st;
-            try { st = imp.getState(); } catch (Throwable e) { st = GPresetImporter.BuildingImportState.NONE; }
-            int n = nouveaux(avant, attendus).size();
-            b.progres(Math.min(n, voulus), voulus, "L'Atelier pose et règle : " + Math.min(n, voulus) + " / " + voulus
-                    + (st == GPresetImporter.BuildingImportState.AWAITING_UNOCCUPIED_SPACE
-                       ? " — clique une case LIBRE dans le jeu pour la dalle magique" : "")
-                    + (n >= voulus && st != GPresetImporter.BuildingImportState.NONE ? " (réglage des wired…)" : ""));
-            if (st == GPresetImporter.BuildingImportState.NONE) break;
+        EtatSalle apresPose = Salle.etat();
+        if (apresPose == null || apresPose.getRoomId() != salle) {
+            b.fin("Tu as quitté la salle pendant la pose : collage interrompu.");
+            return List.of();
         }
+        boolean arrete = pr.arrete;
         // suivi : seulement le temps que les derniers mobis apparaissent (au lieu
-        // de 3,5 s fixes) ; la dalle de l'Atelier est deja dans « avant »
+        // de 3,5 s fixes) ; la dalle de la pose ne compte pas (types des dalles)
         long finImport = System.currentTimeMillis();
-        PoseDirecte.suivre(() -> voulus - nouveaux(avant, attendus).size(), 800, 3500);
+        PoseDirecte.suivre(() -> voulus - nouveaux(avant, attendus, typesDalles).size(), 800, 3500);
 
         // 5. verifier : retrouver chaque piece, relire les wired poses
         List<Neuf> neufs = new ArrayList<>();
-        for (Integer id : nouveaux(avant, attendus)) {
+        for (Integer id : nouveaux(avant, attendus, typesDalles)) {
             HFloorItem it = Salle.sol(id);
             if (it == null) continue;
             neufs.add(new Neuf(id, Salle.classe(it.getTypeId(), false), it.getTile().getX(), it.getTile().getY(), it.getTile().getZ()));
@@ -1086,29 +1036,22 @@ public final class WiredCollage {
         }
     }
 
-    /** Nouveaux mobis de sol des types attendus (au plus le nombre attendu par type). */
-    private static List<Integer> nouveaux(Set<Integer> avant, Map<Integer, Integer> attendus) {
+    /**
+     * Nouveaux mobis de sol des types attendus (au plus le nombre attendu par type).
+     * Une dalle magique apparue est celle de la pose tant que la copie n'en demande pas.
+     */
+    private static List<Integer> nouveaux(Set<Integer> avant, Map<Integer, Integer> attendus, Set<Integer> dalles) {
         Map<Integer, Integer> reste = new HashMap<>(attendus);
         List<Integer> r = new ArrayList<>();
         for (HFloorItem it : Salle.sols()) {
             if (avant.contains(it.getId())) continue;
+            if (dalles.contains(it.getTypeId()) && !attendus.containsKey(it.getTypeId())) continue;
             Integer k = reste.get(it.getTypeId());
             if (k == null || k <= 0) continue;
             reste.put(it.getTypeId(), k - 1);
             r.add(it.getId());
         }
         return r;
-    }
-
-    /** « :abort » donne directement a l'importeur, a defaut par le chat. */
-    private static void abandonner(GPresetImporter imp, GPresets gp) {
-        try {
-            java.lang.reflect.Method m = GPresetImporter.class.getDeclaredMethod("onChat", HMessage.class);
-            m.setAccessible(true);
-            m.invoke(imp, new HMessage(new HPacket(4000, ":abort", 0, -1), HMessage.Direction.TOSERVER, -1));
-        } catch (Throwable t) {
-            gp.sendToServer(new HPacket("Chat", HMessage.Direction.TOSERVER, ":abort", 0, -1));
-        }
     }
 
     // ============================================================ petite fenetre
@@ -1197,7 +1140,7 @@ public final class WiredCollage {
         /** Aperçu chiffre du collage, choix de la source, Confirmer / Annuler. */
         void apercu(Copie c, String nom, HPoint origine) {
             fx(() -> {
-                GPresets gp = Salle.gp();
+                Moteur gp = Salle.gp();
                 CheckBox autres = new CheckBox();
                 Label lAutres = new Label("Poser aussi les autres mobis copiés");
                 lAutres.setOnMouseClicked(e -> autres.fire());
