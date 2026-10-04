@@ -25,7 +25,7 @@ final class ApercuSurlignage {
 
     /** Couleurs proposees d'un clic (la premiere est le defaut). */
     private static final String[][] TEINTES = {
-            {"FF5FA2", "Rose"}, {"FFE14A", "Jaune"}, {"3EB6F0", "Bleu"}, {"5BD16B", "Vert"},
+            {"1FC8C8", "Turquoise"}, {"FF5FA2", "Rose"}, {"FFE14A", "Jaune"}, {"3EB6F0", "Bleu"}, {"5BD16B", "Vert"},
             {"A77BFF", "Violet"}, {"FF8A3D", "Orange"}, {"FFFFFF", "Blanc"}};
 
     static VBox section() {
@@ -84,7 +84,7 @@ final class ApercuSurlignage {
         Label lOp = new Label("Opacité du remplissage");
 
         Button defaut = new Button("Par défaut");
-        Ui.bulle(defaut, "Contour + remplissage, rose, épaisseur 4, opacité 45 %");
+        Ui.bulle(defaut, "Contour + remplissage, turquoise, épaisseur 4, opacité 45 %");
         Label etat = Ui.discret("");
         etat.setMaxWidth(Double.MAX_VALUE);
 

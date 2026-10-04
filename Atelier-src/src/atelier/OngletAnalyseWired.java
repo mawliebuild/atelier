@@ -44,8 +44,6 @@ public class OngletAnalyseWired {
     // Verificateur
     private ListView<WiredAnalyse.Probleme> problemes;
     private Label resumeVerif, etatVerif;
-    /** Copie des problemes, lue hors fil JavaFX par MiseEnValeur (jamais la ListView). */
-    private volatile List<WiredAnalyse.Probleme> derniersProblemes = List.of();
 
     // Rechercher
     private ListView<WiredAnalyse.Resultat> resultats;
@@ -139,7 +137,7 @@ public class OngletAnalyseWired {
     private Node legende() {
         List<Node> n = new ArrayList<>();
         for (Wired.Rang r : Wired.Rang.values()) {
-            if (r == Wired.Rang.AUTRE) continue;
+            if (r == Wired.Rang.AUTRE || r == Wired.Rang.MOBI_WIRED) continue;
             Rectangle c = new Rectangle(9, 9, WiredGraphe.couleur(r));
             Label l = new Label(r.libelle, c);
             l.setStyle("-fx-font-size: 10px;");
@@ -151,6 +149,8 @@ public class OngletAnalyseWired {
     }
 
     private void choisirPile(WiredAnalyse.Pile p) {
+        // pile choisie dans le graphe : toute sa pile est mise en valeur dans le jeu
+        if (p != null) MiseEnValeur.ChoixWired.pile(p.x, p.y);
         if (graphe != null && graphe.choisie() != p) graphe.choisir(p);
         if (grapheGrand != null && grapheGrand.choisie() != p) grapheGrand.choisir(p);
         remplirDetail(detail, p);
@@ -240,14 +240,12 @@ public class OngletAnalyseWired {
         resumeVerif.setWrapText(true);
         etatVerif = Ui.etat();
         problemes = new ListView<>();
-        // fenetre Wired ouverte : les wired des piles a probleme s'allument dans l'appart
-        MiseEnValeur.fournir("wired", () -> {
-            java.util.Set<Long> cases = new java.util.HashSet<>();
-            for (WiredAnalyse.Probleme q : derniersProblemes)
-                cases.add(((long) q.x << 32) | (q.y & 0xffffffffL));
-            if (cases.isEmpty()) return java.util.List.of();
-            return MiseEnValeur.solsOu(it -> cases.contains(((long) it.getTile().getX() << 32) | (it.getTile().getY() & 0xffffffffL))
-                    && Wired.estWired(Salle.classe(it.getTypeId(), false)));
+        // clic sur une ligne : le wired en cause (ou sa pile, si le probleme est celui
+        // de toute la pile) est mis en valeur dans le jeu (MiseEnValeur.ChoixWired)
+        problemes.getSelectionModel().selectedItemProperty().addListener((o, av, q) -> {
+            if (q == null || enMaj) return;          // mise a jour automatique : pas un choix
+            if (q.id > 0) MiseEnValeur.ChoixWired.lignes(List.of(q.id));
+            else MiseEnValeur.ChoixWired.pile(q.x, q.y);
         });
         problemes.setPrefHeight(260);
         problemes.setMinHeight(160);
@@ -318,6 +316,10 @@ public class OngletAnalyseWired {
                 setText(null);
                 setGraphic(l);
             }
+        });
+        // clic sur un resultat : ce wired seul est mis en valeur dans le jeu
+        resultats.getSelectionModel().selectedItemProperty().addListener((o, av, r) -> {
+            if (r != null && !enMaj) MiseEnValeur.ChoixWired.lignes(List.of(r.fil.id));
         });
         resultats.setOnMouseClicked(e -> {
             if (e.getClickCount() != 2) return;
@@ -419,11 +421,17 @@ public class OngletAnalyseWired {
         }
         T choisi = lv.getSelectionModel().getSelectedItem();
         String cleChoisie = choisi == null ? null : cle.apply(choisi);
-        if (vieux == null) lv.setItems(FXCollections.observableArrayList(neuf));
-        else vieux.setAll(neuf);
-        if (cleChoisie != null)
-            for (T x : neuf) if (cleChoisie.equals(cle.apply(x))) { lv.getSelectionModel().select(x); break; }
+        enMaj = true;
+        try {
+            if (vieux == null) lv.setItems(FXCollections.observableArrayList(neuf));
+            else vieux.setAll(neuf);
+            if (cleChoisie != null)
+                for (T x : neuf) if (cleChoisie.equals(cle.apply(x))) { lv.getSelectionModel().select(x); break; }
+        } finally { enMaj = false; }
     }
+
+    /** Une liste est remplacee par le programme (fil JavaFX) : sa selection n'est pas un choix. */
+    private static boolean enMaj = false;
 
     // ----------------------------------------------------------- analyse
 
@@ -458,7 +466,6 @@ public class OngletAnalyseWired {
 
         try {
             List<WiredAnalyse.Probleme> l = a.verifier();
-            derniersProblemes = List.copyOf(l);
             majListe(problemes, l, q -> q.gravite + "|" + q.x + "|" + q.y + "|" + q.texte);
             int err = 0, att = 0, inf = 0;
             for (WiredAnalyse.Probleme q : l) {
@@ -471,9 +478,12 @@ public class OngletAnalyseWired {
                     : err + " erreur(s) · " + att + " attention · " + inf + " info");
             Map<String, String> vars = WiredLecteur.variables();
             dire(etatVerif, a.nbLus == 0 && a.parId.size() > 0
-                    ? "Réglages pas encore lus : seuls l'ordre et la composition des piles sont vérifiés pour l'instant."
+                    ? "Réglages pas encore lus : seuls l'ordre et la composition des piles sont vérifiés pour l'instant. "
+                      + WiredLecteur.message()
                     : a.nbLus + " / " + a.parId.size() + " wired lus"
-                      + (vars == null ? " · liste des variables inconnue (variables non vérifiées)" : ""));
+                      + (a.nbIllisibles > 0 ? " · " + a.nbIllisibles + " illisible(s), raison dans la liste" : "")
+                      + (vars == null ? " · liste des variables inconnue (variables non vérifiées)" : "")
+                      + (a.nbLus < a.parId.size() ? " · " + WiredLecteur.message() : ""));
         } catch (Throwable t) { dire(etatVerif, "Erreur de vérification : " + t); }
 
         try { refaireRecherche(); } catch (Throwable t) { dire(etatRecherche, "Erreur de recherche : " + t); }

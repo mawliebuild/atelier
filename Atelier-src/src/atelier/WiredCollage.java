@@ -639,7 +639,7 @@ public final class WiredCollage {
             if (it == null) { absents++; continue; }
             mobis.add(it);
             String c = Salle.classe(it.getTypeId(), false);
-            if (Wired.estWired(c)) wired.add(id);
+            if (Wired.estBoite(c)) wired.add(id);
         }
         if (wired.isEmpty()) { b.fin("Aucun wired parmi ces " + mobis.size() + " mobi(s) : rien à copier."); return null; }
 
@@ -664,7 +664,7 @@ public final class WiredCollage {
                 for (Integer id : l) {
                     if (id == null || !deja.add(id)) continue;
                     HFloorItem it = Salle.sol(id);
-                    if (it == null || Wired.estWired(Salle.classe(it.getTypeId(), false))) continue;
+                    if (it == null || Wired.estBoite(Salle.classe(it.getTypeId(), false))) continue;
                     mobis.add(it);
                     cibles++;
                 }
@@ -681,7 +681,7 @@ public final class WiredCollage {
             String genre = null;
             JSONObject json = null;
             List<Liaison> liaisons = List.of();
-            if (Wired.estWired(cls)) {
+            if (Wired.estBoite(cls)) {
                 WiredLecteur.Config c = cfg.get(it.getId());
                 genre = c != null ? c.genre : WiredLecteur.genreDe(cls);
                 if (c != null && c.brut != null) {
@@ -771,7 +771,7 @@ public final class WiredCollage {
             HFloorItem it = id == null ? null : Salle.sol(id);
             if (it == null) continue;
             mobis.add(it);
-            if (Wired.estWired(Salle.classe(it.getTypeId(), false))) wired.add(id);
+            if (Wired.estBoite(Salle.classe(it.getTypeId(), false))) wired.add(id);
         }
         if (mobis.isEmpty()) return null;
         Map<Integer, WiredLecteur.Config> cfg = wired.isEmpty() ? Map.of()
@@ -786,7 +786,7 @@ public final class WiredCollage {
             String genre = null;
             JSONObject json = null;
             List<Liaison> liaisons = List.of();
-            if (Wired.estWired(cls)) {
+            if (Wired.estBoite(cls)) {
                 WiredLecteur.Config c = cfg.get(it.getId());
                 genre = c != null ? c.genre : WiredLecteur.genreDe(cls);
                 if (c != null && c.brut != null) {

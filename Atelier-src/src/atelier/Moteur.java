@@ -360,6 +360,10 @@ public final class Moteur extends ExtensionForm {
     /** L'ancien cache.json (dossier « G-Presets/Cache » d'Application Support ou d'APPDATA), ou null. */
     private static File ancienCache() {
         File base = Dossiers.ancienModule();
-        return base == null ? null : new File(new File(base, "Cache"), "cache.json");
+        File reel = base == null ? null : new File(new File(base, "Cache"), "cache.json");
+        if (reel != null && reel.isFile()) return reel;
+        // sous sudo, l'ancien moteur le rangeait chez root (user.home = /var/root)
+        File root = new File(System.getProperty("user.home"), "Library/Application Support/G-Presets/Cache/cache.json");
+        return root.isFile() ? root : reel;
     }
 }

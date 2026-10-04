@@ -26,6 +26,8 @@ public final class WiredAnalyse {
         /** null si pas (encore) lu */
         public final WiredLecteur.Config conf;
         public final boolean illisible;
+        /** Pourquoi il est illisible (« pas de réponse du serveur après 3 essais »...), null sinon. */
+        public final String raison;
         Pile pile;
 
         Fil(HFloorItem it, String classe) {
@@ -38,6 +40,7 @@ public final class WiredAnalyse {
             z = it.getTile().getZ();
             conf = WiredLecteur.config(id);
             illisible = conf == null && WiredLecteur.illisible(id);
+            raison = illisible ? WiredLecteur.raison(id) : null;
         }
 
         public boolean estEffet() {
@@ -59,7 +62,11 @@ public final class WiredAnalyse {
         public String caseTexte() { return "(" + x + "," + y + ")"; }
     }
 
-    /** Une pile : les wired d'une case, du bas vers le haut. */
+    /**
+     * Une pile : les BOITES wired d'une case, du bas vers le haut. Les mobis
+     * wired qui ne sont pas des boites (dalle colorée, antenne, compteur...)
+     * n'y sont jamais : ni lus, ni verifies, ni comptes.
+     */
     public static final class Pile {
         public final int x, y;
         public final List<Fil> wired = new ArrayList<>();
@@ -106,7 +113,10 @@ public final class WiredAnalyse {
         public final Gravite gravite;
         public final int x, y;
         public final String texte;
-        Probleme(Gravite g, int x, int y, String t) { gravite = g; this.x = x; this.y = y; texte = t; }
+        /** Le wired en cause, ou 0 si le probleme concerne toute la pile. */
+        public final int id;
+        Probleme(Gravite g, int x, int y, String t) { this(g, x, y, t, 0); }
+        Probleme(Gravite g, int x, int y, String t, int id) { gravite = g; this.x = x; this.y = y; texte = t; this.id = id; }
     }
 
     public static final class Resultat {
@@ -133,7 +143,7 @@ public final class WiredAnalyse {
         for (HFloorItem it : Salle.sols()) {
             String cls;
             try { cls = Salle.classe(it.getTypeId(), false); } catch (Throwable t) { continue; }
-            if (!Wired.estWired(cls)) continue;
+            if (!Wired.estBoite(cls)) continue;      // mobis wired (dalles, antennes...) : hors analyse
             Fil f;
             // un mobi illisible (en cours d'arrivee, case nulle) est ignore seul
             try { f = new Fil(it, cls); } catch (Throwable t) { ign++; continue; }
@@ -294,7 +304,7 @@ public final class WiredAnalyse {
             boolean dec = p.aDeclencheur(), eff = p.aEffet();
             boolean queVariables = true;
             for (Fil f : p.wired)
-                if (!f.classe.toLowerCase(Locale.ROOT).startsWith("wf_var_")) queVariables = false;
+                if (!String.valueOf(Wired.normaliser(f.classe)).startsWith("wf_var_")) queVariables = false;
 
             if (!dec && eff) {
                 r.add(new Probleme(Gravite.ERREUR, p.x, p.y,
@@ -319,7 +329,7 @@ public final class WiredAnalyse {
                 if (b.rang.ordre < a.rang.ordre) {
                     r.add(new Probleme(Gravite.ATTENTION, p.x, p.y,
                             "Pile dans le désordre : « " + b.rang.libelle + " » ("
-                                    + b.nom + ") est au-dessus de « " + a.rang.libelle + " »."));
+                                    + b.nom + ") est au-dessus de « " + a.rang.libelle + " ».", b.id));
                     break;
                 }
             }
@@ -327,7 +337,9 @@ public final class WiredAnalyse {
             for (Fil f : p.wired) {
                 if (f.illisible) {
                     r.add(new Probleme(Gravite.INFO, p.x, p.y,
-                            "« " + f.nom + " » illisible : pas de réponse du serveur."));
+                            "« " + f.nom + " » pas encore lu : "
+                                    + (f.raison == null ? "pas de réponse du serveur" : f.raison)
+                                    + ". Nouvel essai automatique plus tard.", f.id));
                     continue;
                 }
                 if (f.conf == null) continue;
@@ -336,18 +348,18 @@ public final class WiredAnalyse {
                 if (absents > 0)
                     r.add(new Probleme(Gravite.ERREUR, p.x, p.y,
                             "« " + f.nom + " » sélectionne " + absents
-                                    + " mobi(s) qui n'existe(nt) plus dans la salle."));
+                                    + " mobi(s) qui n'existe(nt) plus dans la salle.", f.id));
                 if (demandeDesMobis(f) && f.tousLesMobis().isEmpty()
                         && !(f.estEffet() && p.aSelecteur()))
                     r.add(new Probleme(Gravite.ATTENTION, p.x, p.y,
-                            "« " + f.nom + " » attend des mobis mais n'en sélectionne aucun."));
+                            "« " + f.nom + " » attend des mobis mais n'en sélectionne aucun.", f.id));
                 if (vars != null) {
                     for (String v : f.conf.variables) {
                         if (v.startsWith("-")) continue;       // variables internes
                         if (!vars.containsKey(v))
                             r.add(new Probleme(Gravite.ATTENTION, p.x, p.y,
                                     "« " + f.nom + " » utilise la variable " + v
-                                            + " introuvable dans la salle."));
+                                            + " introuvable dans la salle.", f.id));
                     }
                 }
             }
@@ -461,7 +473,8 @@ public final class WiredAnalyse {
         b.append(f.nom).append("  ·  ").append(f.rang.libelle);
         b.append("\n   ").append(f.classe).append("  ·  id ").append(f.id);
         if (f.conf == null) {
-            b.append(f.illisible ? "\n   illisible (pas de réponse)" : "\n   pas encore lu");
+            b.append(f.illisible ? "\n   illisible : " + (f.raison == null ? "pas de réponse du serveur" : f.raison)
+                    : "\n   pas encore lu");
             return b.toString();
         }
         WiredLecteur.Config c = f.conf;

@@ -98,12 +98,12 @@ public class OngletCollageWired {
         copierTout.setMaxWidth(Double.MAX_VALUE);
         copierTout.setOnAction(e -> {
             List<Integer> ids = new ArrayList<>();
-            for (HFloorItem it : WiredLecteur.wiredDeLaSalle()) ids.add(it.getId());
+            for (HFloorItem it : WiredLecteur.boitesDeLaSalle()) ids.add(it.getId());
             if (ids.isEmpty()) { Journal.erreur("Aucun wired dans cet appart."); return; }
             copier(ids);
         });
         // survol : ce qui va etre copie s'allume dans le jeu
-        MiseEnValeur.auSurvol(copierTout, () -> MiseEnValeur.solsOu(it -> Wired.estWired(Salle.classe(it.getTypeId(), false))));
+        MiseEnValeur.auSurvol(copierTout, () -> MiseEnValeur.solsOu(it -> Wired.estBoite(Salle.classe(it.getTypeId(), false))));
         MiseEnValeur.auSurvol(copierSel, () -> {
             List<String> j = new ArrayList<>();
             for (int s : Groupes.selection().sols) j.add("s" + s);

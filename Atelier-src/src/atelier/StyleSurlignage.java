@@ -27,7 +27,7 @@ final class StyleSurlignage {
     }
 
     static final Mode MODE_DEFAUT = Mode.LES2;
-    static final String COULEUR_DEFAUT = "FF5FA2";   // rose
+    static final String COULEUR_DEFAUT = "1FC8C8";   // bleu turquoise
     static final int EPAISSEUR_DEFAUT = 4;
     static final int OPACITE_DEFAUT = 45;            // % du remplissage
 
@@ -46,6 +46,11 @@ final class StyleSurlignage {
         if (prefs.getInt("surlignage.version", 2) < 3) {
             if (prefs.getInt("surlignage.epaisseur", EPAISSEUR_DEFAUT) == 3) prefs.putInt("surlignage.epaisseur", EPAISSEUR_DEFAUT);
             prefs.putInt("surlignage.version", 3);
+        }
+        // Defaut passe du rose au turquoise : seulement si le rose d'avant etait garde.
+        if (prefs.getInt("surlignage.version", 3) < 4) {
+            if ("FF5FA2".equalsIgnoreCase(prefs.get("surlignage.couleur", ""))) prefs.put("surlignage.couleur", COULEUR_DEFAUT);
+            prefs.putInt("surlignage.version", 4);
         }
     }
     private static volatile Mode mode = Mode.de(prefs.get("surlignage.mode", MODE_DEFAUT.code));

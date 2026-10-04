@@ -53,6 +53,7 @@ final class ReglageWired {
         /** Le genre d'apres la classe d'un mobi (wf_trg_..., wf_cnd_...), ou null. */
         static Genre deClasse(String classe) {
             if (classe == null) return null;
+            classe = Wired.normaliser(classe);       // wf_test_*, wf_proto_*... ramenes a leur genre
             for (Genre g : values()) if (classe.startsWith(g.prefixe)) return g;
             return null;
         }

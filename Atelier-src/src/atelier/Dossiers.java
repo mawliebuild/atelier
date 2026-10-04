@@ -155,7 +155,8 @@ final class Dossiers {
      * existantes y restent ; null sur un autre systeme.
      */
     static File ancienModule() {
-        String home = System.getProperty("user.home");
+        // le dossier personnel REEL (sous sudo, user.home vaut /var/root : les copies s'y perdaient)
+        String home = maison().getPath();
         if (WINDOWS) {
             String ad = System.getenv("APPDATA");
             if (vide(ad)) ad = joindre(OS, home, "AppData", "Roaming");

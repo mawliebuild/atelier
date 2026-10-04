@@ -488,9 +488,10 @@ public class OutilMiroir {
             }
             if (variable != null) oublier(variable);
             Journal.debug("@altitude : recherche sur le mobi " + idMobi + ".");
+            // Seulement la plage connue : essayer des variables inconnues ecrirait des valeurs
+            // dans des reglages internes du mobi (position…), sans pouvoir les remettre.
             java.util.List<Integer> plage = new java.util.ArrayList<>();
             for (int v = -100; v >= -140; v--) plage.add(v);
-            for (int v = -1; v >= -400; v--) if (v > -100 || v < -140) plage.add(v);
             for (int v : plage) {
                 String c = String.valueOf(v);
                 if (ordre.contains(c)) continue;
@@ -513,6 +514,9 @@ public class OutilMiroir {
         }
 
         static String variable() { return variable; }
+
+        /** La recherche de @altitude a deja echoue pendant cette session (erreur deja dite). */
+        static boolean rate() { return essaiRate; }
 
         /**
          * Pour les rafales : ecrire() seulement si la variable a deja marche

@@ -808,13 +808,15 @@ public class OngletApparts {
                 // Pose directe, mobi par mobi, chacun a son altitude (@altitude), wired compris ;
                 // puis les reglages des wired, sur les wired qu'on vient de poser.
                 boolean avecWired = aDesWired(brut);
+                boolean floorRemis = floor != null && floorVoulu;
                 double ancre = cfg.ancre == null ? 0 : cfg.ancre;
                 gearth.extensions.parsers.HPoint repere = clic != null ? clic : racine;   // case de reference des hauteurs
                 double sol0 = Math.max(0, Salle.hauteurSol(repere.getX(), repere.getY()));
                 List<PoseDirecte.Sol> sols = new ArrayList<>();
                 for (CopieAppart.MobiSol pf : cfg.sols)
+                    // floor de la copie remis tel quel : z est deja l'altitude absolue d'origine
                     sols.add(new PoseDirecte.Sol(pf.classe, racine.getX() + pf.x, racine.getY() + pf.y,
-                            Math.max(0, pf.z - ancre + sol0), pf.rotation, pf.etat, pf.id));
+                            floorRemis ? Math.max(0, pf.z) : Math.max(0, pf.z - ancre + sol0), pf.rotation, pf.etat, pf.id));
                 // Tout est une seule action pour Ctrl+Z.
                 collageArrete = false;
                 Platform.runLater(() -> collageEnCours.set(true));
@@ -1603,7 +1605,45 @@ public class OngletApparts {
                 : Paths.get(System.getProperty("user.home"), "Library", "Application Support", "G-Presets", "presets").toFile();
         d.mkdirs();
         migrerAnciennesCopies(d);
+        migrerDepuisRoot(base);
         return d;
+    }
+
+    private static volatile boolean migrationRootFaite = false;
+
+    /**
+     * Sous sudo, les anciennes versions rangeaient tout (copies d'apparts et leurs
+     * apercus, configs wired) chez root : /var/root/Library/Application Support/
+     * G-Presets. On recopie ici, une fois, ce qui n'existe pas encore, sans rien
+     * ecraser ; les originaux restent en place.
+     */
+    private static synchronized void migrerDepuisRoot(File cible) {
+        if (migrationRootFaite || cible == null) return;
+        migrationRootFaite = true;
+        try {
+            File racine = new File(System.getProperty("user.home"), "Library/Application Support/G-Presets");
+            if (!racine.isDirectory() || racine.getCanonicalPath().equals(cible.getCanonicalPath())) return;
+            int[] n = {0};
+            recopier(racine, cible, n);
+            if (n[0] > 0) Journal.info(Ui.accorder(n[0] + " fichier(s) de copies retrouvé(s) et remis dans ton dossier."));
+        } catch (Throwable t) {
+            Journal.debug("copies : reprise depuis le dossier de root impossible (" + t + ")");
+        }
+    }
+
+    private static void recopier(File de, File vers, int[] n) throws java.io.IOException {
+        File[] l = de.listFiles();
+        if (l == null) return;
+        if (!vers.isDirectory() && vers.mkdirs()) Capture.rendre(vers);
+        for (File f : l) {
+            if (f.getName().equals("Cache")) continue;          // le cache de connexion est repris ailleurs
+            File g = new File(vers, f.getName());
+            if (f.isDirectory()) { recopier(f, g, n); continue; }
+            if (g.exists()) continue;
+            Files.copy(f.toPath(), g.toPath());
+            Capture.rendre(g);
+            n[0]++;
+        }
     }
 
     private static volatile boolean migrationFaite = false;

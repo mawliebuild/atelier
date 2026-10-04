@@ -9,35 +9,48 @@ import javafx.application.Platform;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
 
 /**
  * Lecture des configurations des wired de la salle.
  *
- * Meme methode que l'export de l'Atelier (GPresetExporter) : pour chaque
- * wired, on envoie Open(id) au serveur, qui repond par la fenetre de reglage
- * (WiredFurniTrigger / Condition / Action / Addon / Selector / Variable). On
- * BLOQUE cette reponse pour que la fenetre ne s'ouvre pas dans le jeu, et on la
- * decode avec les classes RetrievedWired* du moteur de l'Atelier.
+ * Pour chaque BOITE wired (Wired.estBoite : declencheur, selecteur, condition,
+ * effet, add-on, variable), on envoie Open(id) au serveur, qui repond par la
+ * fenetre de reglage (WiredFurniTrigger / Condition / Action / Addon /
+ * Selector / Variable). On BLOQUE cette reponse pour que la fenetre ne s'ouvre
+ * pas dans le jeu, et on la decode (ReglageWired, sinon lecture tolerante).
+ * Les mobis wired qui ne sont pas des boites (dalle colorée, antenne,
+ * compteur...) ne sont jamais demandes.
  *
  * Seules les reponses a NOS demandes sont bloquees : un wired que
- * l'utilisatrice ouvre elle-meme dans le jeu s'ouvre normalement.
+ * l'utilisatrice ouvre elle-meme dans le jeu s'ouvre normalement. Une demande
+ * reste « a bloquer » 30 s : une reponse tardive (ou en double, apres un nouvel
+ * essai) n'ouvre donc jamais de fenetre toute seule.
+ *
+ * Demandes robustes :
+ *  - la reponse est rattachee a SON wired par l'id qu'elle porte (pas par
+ *    l'ordre d'arrivee) ;
+ *  - plusieurs demandes en vol quand le serveur suit (1, puis 2, puis 3 apres
+ *    des reponses sans faute), une seule et plus espacees des qu'une reponse
+ *    manque (Rythme, logique pure testee) ;
+ *  - attente adaptative : environ 4 fois le temps de reponse observe, entre
+ *    2,5 et 8 s ;
+ *  - un wired sans reponse est redemande apres les autres, 3 essais en tout ;
+ *    alors seulement il est « illisible », avec sa raison, et il est encore
+ *    redemande tout seul plus tard (30 s, 2 min, 5 min).
  *
  * Sans droits wired dans la salle, le serveur ne repond pas : on le detecte
- * (permissions du moteur de l'Atelier, puis absence de reponse sur les premiers wired).
+ * (permissions du moteur de l'Atelier, puis absence de toute reponse sur les
+ * premiers wired) ; on reessaie une minute plus tard.
  *
  * SEULEMENT QUAND L'OUTIL WIRED EST OUVERT (actif(true)) : en entrant dans un
- * appart, rien n'est envoye — sinon le jeu ouvrait parfois la fenetre de
- * reglage d'un wired toute seule. Outil ouvert, le suivi (toutes les 200 ms)
- * lit tous les wired de la salle ; ensuite il
- * ne relit que ce qui change : wired pose (id inconnu), wired modifie (paquet
- * Update* envoye par le client), wired dont un mobi choisi a disparu. Un wired
- * deplace ou retire ne demande aucune relecture : l'analyse est seulement
- * refaite. Les changements sont regroupes (350 ms de calme, 1 s au plus).
+ * appart, rien n'est envoye. Outil ouvert, le suivi (toutes les 200 ms) lit
+ * tous les wired de la salle ; ensuite il ne relit que ce qui change : wired
+ * pose (id inconnu), wired modifie (paquet Update* envoye par le client),
+ * wired dont un mobi choisi a disparu. Les changements sont regroupes (350 ms
+ * de calme, 1 s au plus).
  *
  * Quand l'utilisatrice ouvre elle-meme un wired (Open de 10 octets vu sortir),
- * la lecture se met en pause 2,5 s et la reponse a SON Open n'est jamais
+ * les envois se mettent en pause 2,5 s et la reponse a SON Open n'est jamais
  * bloquee, meme si on avait demande le meme wired.
  */
 public final class WiredLecteur {
@@ -101,9 +114,25 @@ public final class WiredLecteur {
     // ------------------------------------------------------------------ etat
 
     private static final Map<Integer, Config> cache = new ConcurrentHashMap<>();
-    private static final Set<Integer> illisibles = ConcurrentHashMap.newKeySet();
-    /** Ids pour lesquels on a envoye Open et dont la reponse est a bloquer. */
-    private static final Set<Integer> demandes = ConcurrentHashMap.newKeySet();
+
+    /** Un wired reste sans reglage : pourquoi, et quand le redemander. */
+    private record Echec(String raison, long prochainEssai, int tours) { }
+
+    /** Wired illisibles (apres plusieurs essais) : id -> raison et prochain essai. */
+    private static final Map<Integer, Echec> echecs = new ConcurrentHashMap<>();
+    /** Relances automatiques des illisibles : apres 30 s, 2 min, puis 5 min. */
+    private static final long[] RELANCES_MS = {30_000, 120_000, 300_000};
+
+    /** Une demande envoyee : reponses encore a bloquer, instant du dernier envoi. */
+    private record Demande(long envoi, String classe, int enAttente) { }
+
+    /** Ids pour lesquels on a envoye Open : leur reponse est a bloquer (30 s au plus). */
+    private static final Map<Integer, Demande> demandes = new ConcurrentHashMap<>();
+    private static final long DEMANDE_VALIDE_MS = 30_000;
+    /** Instant de la derniere reponse recue par wired (reglage lu ou pas). */
+    private static final Map<Integer, Long> recuA = new ConcurrentHashMap<>();
+    /** Reponses recues mais pas decodables : id -> instant. */
+    private static final Map<Integer, Long> formatInconnu = new ConcurrentHashMap<>();
     /** Wired ouverts par l'utilisatrice elle-meme : id -> instant. Jamais bloques. */
     private static final Map<Integer, Long> elleOuvre = new ConcurrentHashMap<>();
     /** Wired a relire (modifies) : id -> pas avant cet instant. */
@@ -114,10 +143,6 @@ public final class WiredLecteur {
     private static volatile long attenteVariablesJusqua = 0;
     private static volatile boolean variablesDemandees = false;
 
-    private static volatile int attendu = 0;
-    private static volatile String classeAttendue = null;
-    private static volatile CountDownLatch reponse = new CountDownLatch(0);
-
     private static volatile boolean branche = false, enBranchement = false, suiviLance = false;
     /** true des qu'une interception par nom a servi : le repli par contenu se tait. */
     private static volatile boolean parNomOk = false;
@@ -125,18 +150,19 @@ public final class WiredLecteur {
     private static volatile boolean enLecture = false, arret = false;
     private static volatile String message = "En attente de la salle…";
     private static volatile int lus = 0, total = 0;
-    private static volatile long dernierEnvoi = 0;
     /** Pas d'envoi avant cet instant (l'utilisatrice vient d'ouvrir un wired). */
     private static volatile long pauseJusqua = 0;
 
     /** Salle suivie (-1 hors salle). */
     private static volatile int salleCourante = -1;
-    /** Le serveur n'a repondu a rien dans cette salle : on n'insiste plus. */
+    /** Le serveur n'a repondu a rien dans cette salle : on attend avant de reessayer. */
     private static volatile boolean sansReponse = false;
+    private static volatile long sansReponseDepuis = 0;
     private static volatile Boolean derniersDroits = null;
-    /** Ids des wired de la salle au dernier regroupement. */
+    /** Ids des boites wired de la salle au dernier regroupement. */
     private static volatile Set<Integer> wiredConnus = Set.of();
     private static final Map<Integer, Boolean> estWiredParType = new ConcurrentHashMap<>();
+    private static final Map<Integer, Boolean> estBoiteParType = new ConcurrentHashMap<>();
 
     private static final List<Runnable> ecouteursProgres = new CopyOnWriteArrayList<>();
     private static final List<Runnable> ecouteursFin = new CopyOnWriteArrayList<>();
@@ -145,21 +171,37 @@ public final class WiredLecteur {
     private static final java.util.concurrent.atomic.AtomicBoolean finPostee =
             new java.util.concurrent.atomic.AtomicBoolean(false);
 
-    /** Pause minimale entre deux Open (anti-flood). */
-    private static final long PAUSE_MS = 260;
-    /** Attente d'une reponse pour un wired. */
-    private static final long ATTENTE_MS = 1500;
     /** Pause de la lecture apres un Open de l'utilisatrice. */
     private static final long PAUSE_ELLE_MS = 2500;
     /** Delai avant de relire un wired modifie (le serveur applique d'abord). */
     private static final long DELAI_RELECTURE_MS = 700;
+    /** Essais d'un wired dans une lecture avant de le dire illisible. */
+    static final int ESSAIS = 3;
+    /** Sans aucune reponse dans la salle : nouvel essai apres ce delai. */
+    private static final long REESSAI_SANS_REPONSE_MS = 60_000;
+
+    /** Rythme des demandes, partage par toutes les lectures (il apprend du serveur). */
+    private static final Rythme RYTHME = new Rythme();
 
     // -------------------------------------------------------------- lectures
 
     public static Config config(int id) { return cache.get(id); }
-    public static boolean illisible(int id) { return illisibles.contains(id); }
+
+    /** true si ce wired n'a pas pu etre lu apres plusieurs essais (voir raison). */
+    public static boolean illisible(int id) { return echecs.containsKey(id) && !cache.containsKey(id); }
+
+    /**
+     * Pourquoi ce wired est illisible, en francais (« pas de réponse du serveur
+     * après 3 essais »...) ; null s'il ne l'est pas.
+     */
+    public static String raison(int id) {
+        if (cache.containsKey(id)) return null;
+        Echec e = echecs.get(id);
+        return e == null ? null : e.raison();
+    }
+
     public static boolean enLecture() { return enLecture; }
-    /** Etat court : « 42 wired lus », « lecture… 12 / 42 », « pas de droits wired ici »... */
+    /** Etat court : « 42 wired lus », « Lecture… 12 / 42 », « Pas de droits wired ici. »... */
     public static String message() { return message; }
     public static int lus() { return lus; }
     public static int total() { return total; }
@@ -237,7 +279,7 @@ public final class WiredLecteur {
         if (!poses.contains("WiredAllVariablesDiffs")) try {
             gp.intercept(HMessage.Direction.TOCLIENT, "WiredAllVariablesDiffs", m -> {
                 // Liste de toutes les variables de la salle (gros paquet, frequent dans
-                // les salles de jeu) : lue sur le fil VARIABLES, pas ici.
+                // les salles de jeu) : copiee ici, lue sur le fil VARIABLES.
                 try {
                     boolean pourMoi = System.currentTimeMillis() <= attenteVariablesJusqua;
                     HPacket copie = new HPacket(m.getPacket());
@@ -293,20 +335,21 @@ public final class WiredLecteur {
         }
     }
 
-    /** Un wired connu de la salle ? (sans recopier la salle) */
+    /** Une boite wired connue de la salle ? (sans recopier la salle) */
     private static boolean estWiredDeLaSalle(int id) {
         if (id <= 0) return false;
         if (wiredConnus.contains(id)) return true;
         HFloorItem it = Salle.sol(id);
-        return it != null && estWiredType(it.getTypeId());
+        return it != null && estBoiteType(it.getTypeId());
     }
 
     /** L'utilisatrice ouvre un wired : sa reponse passera, et on se met en pause. */
     private static void elleOuvre(int id) {
         long now = System.currentTimeMillis();
         // Nos propres envois ne repassent normalement pas ici ; par prudence,
-        // un Open du wired qu'on vient de demander a l'instant est le notre.
-        if (id == attendu && now - dernierEnvoi < 150) return;
+        // un Open d'un wired qu'on vient de demander a l'instant est le notre.
+        Demande d = demandes.get(id);
+        if (d != null && now - d.envoi() < 150) return;
         if (!estWiredDeLaSalle(id)) return;
         elleOuvre.put(id, now);
         demandes.remove(id);
@@ -328,12 +371,60 @@ public final class WiredLecteur {
 
     // --------------------------------------------------------------- reponses
 
-    private static ReglageWired decoder(HPacket brut, String genre) {
+    /** Ce qu'une reponse a donne : l'id du wired, et son reglage (null : format inconnu). */
+    record Decodage(int id, ReglageWired reglage) { }
+
+    /**
+     * Decode une reponse (sur une copie du paquet). D'abord la lecture
+     * complete (ReglageWired.lireEntrant) ; si elle echoue, une lecture
+     * tolerante : les champs communs suffisent (les champs propres au genre,
+     * en fin de paquet, gardent leur valeur par defaut). Si meme l'id ne se
+     * lit pas, null : ce n'est pas une reponse de wired.
+     */
+    static Decodage decoder(HPacket brut, String genre) {
         ReglageWired.Genre g = genre(genre);
         if (g == null) return null;
+        try {
+            HPacket p = new HPacket(brut);
+            p.resetReadIndex();
+            ReglageWired w = ReglageWired.lireEntrant(g, p);
+            if (w != null && w.wiredId > 0) return new Decodage(w.wiredId, w);
+        } catch (Throwable ignored) { }
         HPacket p = new HPacket(brut);
         p.resetReadIndex();
-        try { return ReglageWired.lireEntrant(g, p); } catch (Throwable t) { return null; }
+        ReglageWired r = new ReglageWired(g);
+        try {
+            p.readInteger();
+            r.items = entiers(p);
+            r.items2 = entiers(p);
+            r.typeId = p.readInteger();
+            r.wiredId = p.readInteger();
+        } catch (Throwable t) { return null; }
+        if (r.wiredId <= 0) return null;
+        try {
+            r.texte = p.readString();
+            r.options = entiers(p);
+            int n = p.readInteger();
+            if (n < 0 || n > 4096) throw new IllegalStateException("variables");
+            List<String> v = new ArrayList<>();
+            for (int i = 0; i < n; i++) v.add(p.readString());
+            r.variables = v;
+            r.sourcesMobis = entiers(p);
+            r.sourcesAvatars = entiers(p);
+        } catch (Throwable t) {
+            return new Decodage(r.wiredId, null);           // reponse a nous, mais illisible
+        }
+        if (g == ReglageWired.Genre.VARIABLE) r.variableId = "";
+        return new Decodage(r.wiredId, r);
+    }
+
+    /** Liste d'entiers bornee par la taille du paquet (une taille absurde echoue tout de suite). */
+    private static List<Integer> entiers(HPacket p) {
+        int n = p.readInteger();
+        if (n < 0 || (long) n * 4 > p.getBytesLength() - p.getReadIndex()) throw new IllegalStateException("liste");
+        List<Integer> l = new ArrayList<>(n);
+        for (int i = 0; i < n; i++) l.add(p.readInteger());
+        return l;
     }
 
     /** « declencheur », « condition »... -> le genre d'un reglage, ou null. */
@@ -350,27 +441,47 @@ public final class WiredLecteur {
         }
     }
 
-    /** Reponse reconnue par son nom de paquet. */
+    /**
+     * Reponse reconnue par son nom de paquet (fil des paquets : decodage d'une
+     * copie bornee a 20 000 octets, aucune attente).
+     */
     private static void recevoir(HMessage m, String genre, boolean parNom) {
         if (demandes.isEmpty() && elleOuvre.isEmpty()) return;   // rien a faire
         if (m.getPacket().getBytesLength() > 20000) return;
-        ReglageWired w = decoder(m.getPacket(), genre);
-        if (w == null) return;
-        int id = w.wiredId;
+        Decodage d = decoder(m.getPacket(), genre);
+        if (d == null) return;
+        int id = d.id();
+        long now = System.currentTimeMillis();
         Long t = elleOuvre.remove(id);
-        boolean elle = t != null && System.currentTimeMillis() - t < 10000;
+        boolean elle = t != null && now - t < 10000;
         if (elle) {
             // SA fenetre : on ne bloque pas, on garde seulement la configuration.
             demandes.remove(id);
         } else {
-            if (!demandes.remove(id)) return;    // pas a nous : la fenetre s'ouvre
+            if (!reponseANous(id, now)) return;    // pas a nous : la fenetre s'ouvre
             m.setBlocked(true);
         }
         if (parNom) parNomOk = true;
-        cache.put(id, new Config(w, genre));
-        illisibles.remove(id);
-        if (id == attendu) reponse.countDown();
+        if (d.reglage() == null) {
+            formatInconnu.put(id, now);
+        } else {
+            cache.put(id, new Config(d.reglage(), genre));
+            echecs.remove(id);
+            formatInconnu.remove(id);
+        }
+        recuA.put(id, now);
         if (elle) donneesChangees();
+    }
+
+    /** Cette reponse repond-elle a une de nos demandes (encore valable) ? La decompte. */
+    private static boolean reponseANous(int id, long now) {
+        boolean[] anous = {false};
+        demandes.computeIfPresent(id, (k, d) -> {
+            if (now - d.envoi() > DEMANDE_VALIDE_MS) return null;      // trop vieille : oubliee
+            anous[0] = true;
+            return d.enAttente() <= 1 ? null : new Demande(d.envoi(), d.classe(), d.enAttente() - 1);
+        });
+        return anous[0];
     }
 
     /**
@@ -378,15 +489,23 @@ public final class WiredLecteur {
      * reponse attendue a son contenu (elle se decode et porte l'id demande).
      */
     private static void parContenu(HMessage m) {
-        if (parNomOk || attendu == 0 || m.isBlocked()) return;
+        if (parNomOk || demandes.isEmpty() || m.isBlocked()) return;
         int taille = m.getPacket().getBytesLength();
         if (taille < 30 || taille > 20000) return;
-        // Ce repli voit passer TOUS les paquets recus pendant l'attente : avant de
-        // decoder, un simple balayage des octets (la reponse porte l'id demande).
-        if (!contientEntier(m.getPacket().toBytes(), attendu)) return;
-        String g = genreDe(classeAttendue);
-        recevoir(m, g, false);
-        if (g.equals("add-on") && demandes.contains(attendu)) recevoir(m, "variable", false);
+        long now = System.currentTimeMillis();
+        byte[] b = null;
+        for (Map.Entry<Integer, Demande> e : demandes.entrySet()) {
+            Demande d = e.getValue();
+            if (now - d.envoi() > 10000) continue;          // seulement les demandes recentes
+            // Avant de decoder, un simple balayage des octets (la reponse porte l'id demande).
+            if (b == null) b = m.getPacket().toBytes();
+            int id = e.getKey();
+            if (!contientEntier(b, id)) continue;
+            String g = genreDe(d.classe());
+            recevoir(m, g, false);
+            if (g.equals("add-on") && demandes.containsKey(id) && !cache.containsKey(id)) recevoir(m, "variable", false);
+            return;
+        }
     }
 
     /** Les 4 octets de v (gros-boutiste) figurent-ils apres l'en-tete ? Logique pure. */
@@ -406,9 +525,10 @@ public final class WiredLecteur {
                 return t;
             });
 
-    /** Genre de paquet attendu d'apres le nom technique du wired. */
+    /** Genre de paquet attendu d'apres le nom technique du wired (variantes test/proto comprises). */
     static String genreDe(String classe) {
-        String c = classe == null ? "" : classe.toLowerCase(Locale.ROOT);
+        String c = Wired.normaliser(classe);
+        if (c == null) c = "";
         if (c.startsWith("wf_trg_")) return "declencheur";
         if (c.startsWith("wf_cnd_")) return "condition";
         if (c.startsWith("wf_act_")) return "effet";
@@ -441,6 +561,44 @@ public final class WiredLecteur {
         if (dernier) attenteVariablesJusqua = 0;
     }
 
+    // ------------------------------------------------------------------ rythme
+
+    /**
+     * Rythme adaptatif des demandes. Logique pure (testee hors du jeu) :
+     *  - fenetre : demandes en vol a la fois ; 1 au depart, +1 apres 5 reponses
+     *    de suite sans silence (3 au plus), retour a 1 au premier silence ;
+     *  - pause entre deux envois : 260 ms, x1,6 a chaque silence (1,5 s au
+     *    plus), -10 % a chaque reponse ;
+     *  - attente d'une reponse : 4 x le temps de reponse moyen + 1,2 s,
+     *    bornee a 2,5..8 s.
+     */
+    static final class Rythme {
+        static final long PAUSE_MIN = 260, PAUSE_MAX = 1500, ATTENTE_MIN = 2500, ATTENTE_MAX = 8000;
+        private double latence = 400;
+        private int fenetre = 1, deSuite = 0;
+        private double pause = PAUSE_MIN;
+
+        synchronized int fenetre() { return fenetre; }
+        synchronized long pause() { return Math.round(pause); }
+        synchronized long attente() {
+            return Math.max(ATTENTE_MIN, Math.min(ATTENTE_MAX, Math.round(latence * 4 + 1200)));
+        }
+
+        /** Une reponse est arrivee apres ms millisecondes. */
+        synchronized void reponse(long ms) {
+            latence = 0.7 * latence + 0.3 * Math.max(0, ms);
+            pause = Math.max(PAUSE_MIN, pause * 0.9);
+            if (++deSuite >= 5 && fenetre < 3) { fenetre++; deSuite = 0; }
+        }
+
+        /** Une demande est restee sans reponse. */
+        synchronized void silence() {
+            fenetre = 1;
+            deSuite = 0;
+            pause = Math.min(PAUSE_MAX, pause * 1.6);
+        }
+    }
+
     // ------------------------------------------------------------------ suivi
 
     private static boolean estWiredType(int typeId) {
@@ -453,11 +611,31 @@ public final class WiredLecteur {
         return w;
     }
 
-    /** Wired presents dans la salle (mobis de sol). */
+    private static boolean estBoiteType(int typeId) {
+        Boolean b = estBoiteParType.get(typeId);
+        if (b != null) return b;
+        String c = Salle.classe(typeId, false);
+        if (c == null) return false;               // furnidata pas prete : pas de cache
+        boolean w = Wired.estBoite(c);
+        estBoiteParType.put(typeId, w);
+        return w;
+    }
+
+    /** Mobis de la famille wired presents dans la salle (boites ET mobis wired : dalles, antennes...). */
     public static List<HFloorItem> wiredDeLaSalle() {
         List<HFloorItem> r = new ArrayList<>();
         for (HFloorItem it : Salle.sols()) {
             try { if (estWiredType(it.getTypeId())) r.add(it); }
+            catch (Throwable ignored) { }
+        }
+        return r;
+    }
+
+    /** Boites wired presentes dans la salle (celles qui ont un reglage). */
+    public static List<HFloorItem> boitesDeLaSalle() {
+        List<HFloorItem> r = new ArrayList<>();
+        for (HFloorItem it : Salle.sols()) {
+            try { if (estBoiteType(it.getTypeId())) r.add(it); }
             catch (Throwable ignored) { }
         }
         return r;
@@ -522,7 +700,7 @@ public final class WiredLecteur {
         Regroupeur reg = new Regroupeur(350, 1000);
         while (true) {
             try { tour(reg); } catch (Throwable t) {
-                Journal.info("Suivi des wired en erreur : " + t);   // dedoublonne : pas de spam toutes les 200 ms
+                Journal.debug("Suivi des wired en erreur : " + t);   // diagnostic : pas de spam toutes les 200 ms
             }
             Salle.sommeil(200);
         }
@@ -531,16 +709,20 @@ public final class WiredLecteur {
     /** Oublie les reglages deja lus (« Vider le cache wired ») : ils seront relus. */
     static void viderCache() {
         cache.clear();
-        illisibles.clear();
+        echecs.clear();
+        formatInconnu.clear();
         aRelire.clear();
         lus = 0;
+        sansReponse = false;
         donneesChangees();
     }
 
     /** Oublie tout ce qui concerne la salle precedente. */
     private static void oublierSalle() {
         cache.clear();
-        illisibles.clear();
+        echecs.clear();
+        formatInconnu.clear();
+        recuA.clear();
         aRelire.clear();
         elleOuvre.clear();
         demandes.clear();
@@ -568,11 +750,13 @@ public final class WiredLecteur {
             oublierSalle();
             reg.forcer();
         }
+        long now = System.currentTimeMillis();
+        demandes.values().removeIf(d -> now - d.envoi() > DEMANDE_VALIDE_MS);
         if (!actif) { etat("Lecture des wired en pause (outil Wired fermé)."); return; }
         if (!Salle.furnidataPrete()) { etat("Furnidata en cours de chargement…"); return; }
         if (!branche) { etat("Écoute des paquets en préparation…"); return; }
 
-        // Photographie : wired (avec position) + ensemble des ids de la salle.
+        // Photographie : boites wired (avec position) + ensemble des ids de la salle.
         List<HFloorItem> sols = Salle.sols();
         List<HFloorItem> wired = new ArrayList<>();
         long sigW = 0, sigTous = 0;
@@ -580,7 +764,7 @@ public final class WiredLecteur {
             int id = it.getId();
             sigTous += melange(id);
             boolean w;
-            try { w = estWiredType(it.getTypeId()); } catch (Throwable t) { w = false; }
+            try { w = estBoiteType(it.getTypeId()); } catch (Throwable t) { w = false; }
             if (!w) continue;
             wired.add(it);
             try {
@@ -589,7 +773,6 @@ public final class WiredLecteur {
             } catch (Throwable t) { sigW += melange(id); }
         }
         String signature = sols.size() + "/" + sigTous + "/" + wired.size() + "/" + sigW;
-        long now = System.currentTimeMillis();
         if (reg.tic(signature, now)) appliquer(sols, wired, now);
         total = wired.size();
 
@@ -597,20 +780,26 @@ public final class WiredLecteur {
         if (!Objects.equals(droits, derniersDroits)) {
             derniersDroits = droits;
             sansReponse = false;
-            illisibles.clear();          // droits changes : on retente tout
+            echecs.clear();          // droits changes : on retente tout
         }
-        if (Boolean.FALSE.equals(droits)) { etat("Pas de droits wired ici."); return; }
-        if (sansReponse) { etat("Pas de réponse du serveur : pas de droits wired ici ?"); return; }
+        if (Boolean.FALSE.equals(droits)) { etat("Pas de droits wired ici : les réglages ne peuvent pas être lus."); return; }
+        if (sansReponse) {
+            if (now - sansReponseDepuis < REESSAI_SANS_REPONSE_MS) {
+                etat("Pas de réponse du serveur : pas de droits wired ici ? Nouvel essai dans une minute.");
+                return;
+            }
+            sansReponse = false;     // une minute plus tard : on retente
+        }
         if (reg.enAttente()) return;           // la salle bouge encore : on attend qu'elle se pose
         if (wired.isEmpty()) { etat("Aucun wired ici."); return; }
-        String occ = occupe(gp);
+        String occ = occupe();
         if (occ != null) { etat(occ); return; }
 
         List<HFloorItem> aLire = choisirALire(wired, now);
         if (aLire.isEmpty()) { etat(bilan()); return; }
         synchronized (LECTURE) { lecture(gp, salle, aLire); }
         donneesChangees();
-        etat(bilan());
+        if (!sansReponse) etat(bilan());
     }
 
     /**
@@ -619,7 +808,7 @@ public final class WiredLecteur {
      * encore regle. (La copie d'un appart lit elle-meme ses wired par
      * lireMaintenant : rien a attendre.)
      */
-    private static String occupe(Moteur gp) {
+    private static String occupe() {
         return PoseCopie.occupee() ? "En attente : l'Atelier pose un appart." : null;
     }
 
@@ -635,7 +824,9 @@ public final class WiredLecteur {
         Set<Integer> ids = new HashSet<>();
         for (HFloorItem it : wired) ids.add(it.getId());
         cache.keySet().retainAll(ids);
-        illisibles.retainAll(ids);
+        echecs.keySet().retainAll(ids);
+        formatInconnu.keySet().retainAll(ids);
+        recuA.keySet().retainAll(ids);
         aRelire.keySet().retainAll(ids);
         Set<Integer> tous = new HashSet<>(sols.size() * 2);
         for (HFloorItem it : sols) tous.add(it.getId());
@@ -656,13 +847,21 @@ public final class WiredLecteur {
         return r;
     }
 
-    /** Ce qu'il reste a lire : wired jamais lus (hors illisibles) et wired modifies murs. */
+    /**
+     * Ce qu'il reste a lire : wired jamais lus, wired modifies murs, et
+     * illisibles dont la relance automatique est venue.
+     */
     private static List<HFloorItem> choisirALire(List<HFloorItem> wired, long now) {
         List<HFloorItem> r = new ArrayList<>();
         for (HFloorItem it : wired) {
             int id = it.getId();
             Long t = aRelire.get(id);
-            if (t != null ? t <= now : (!cache.containsKey(id) && !illisibles.contains(id))) r.add(it);
+            Echec e = echecs.get(id);
+            boolean lire;
+            if (t != null) lire = t <= now;
+            else if (cache.containsKey(id)) lire = false;
+            else lire = e == null || (e.tours() <= RELANCES_MS.length && e.prochainEssai() <= now);
+            if (lire) r.add(it);
         }
         // Du bas de la salle vers le haut, pour une progression lisible.
         r.sort(Comparator.comparingInt((HFloorItem it) -> it.getTile().getY())
@@ -674,12 +873,21 @@ public final class WiredLecteur {
     private static String bilan() {
         Set<Integer> ids = wiredConnus;
         int nIll = 0;
-        for (Integer i : ids) if (illisibles.contains(i)) nIll++;
+        for (Integer i : ids) if (illisible(i)) nIll++;
         Map<String, String> v = variablesSalle;
         return lus + " wired lus"
                 + (lus < total ? " / " + total : "")
-                + (nIll > 0 ? " · " + nIll + " illisible(s)" : "")
+                + (nIll > 0 ? " · " + nIll + " illisible(s), nouvel essai automatique plus tard" : "")
                 + (v != null && !v.isEmpty() ? " · " + v.size() + " variable(s)" : "");
+    }
+
+    /** Note l'echec d'un wired (apres ESSAIS essais) et programme sa relance. */
+    private static void noterEchec(int id, String raison, long now) {
+        Echec avant = echecs.get(id);
+        int tours = avant == null ? 1 : avant.tours() + 1;
+        long relance = tours <= RELANCES_MS.length ? RELANCES_MS[tours - 1] : Long.MAX_VALUE / 4;
+        echecs.put(id, new Echec(raison, now + relance, tours));
+        Journal.debug("wired " + id + " illisible (" + raison + "), tour " + tours);
     }
 
     // ---------------------------------------------------------------- lecture
@@ -691,56 +899,156 @@ public final class WiredLecteur {
         try {
             boolean variables = !variablesDemandees;
             for (HFloorItem it : aLire) {
-                String c = Salle.classe(it.getTypeId(), false);
-                if (c != null && c.toLowerCase(Locale.ROOT).startsWith("wf_var_")) variables = true;
+                String c = Wired.normaliser(Salle.classe(it.getTypeId(), false));
+                if (c != null && c.startsWith("wf_var_")) variables = true;
             }
             if (variables) {
                 variablesDemandees = true;
                 variablesRecues.clear();
                 attenteVariablesJusqua = System.currentTimeMillis() + 8000;
                 try {
-                    attendrePause(salle);
-                    gp.sendToServer(new HPacket("WiredGetAllVariablesDiffs", HMessage.Direction.TOSERVER, 0));
-                    dernierEnvoi = System.currentTimeMillis();
+                    if (attendrePause(salle, true)) {
+                        Salle.espacer();
+                        gp.sendToServer(new HPacket("WiredGetAllVariablesDiffs", HMessage.Direction.TOSERVER, 0));
+                    }
                 } catch (Throwable ignored) { }
             }
-
-            Set<Integer> ids = wiredConnus;
+            List<Integer> ids = new ArrayList<>();
+            for (HFloorItem it : aLire) ids.add(it.getId());
+            Set<Integer> connus = wiredConnus;
             boolean dejaLu = !cache.isEmpty();
-            int essais = 0, reussis = 0;
-            long derniereMaj = System.currentTimeMillis();
-            for (HFloorItem it : aLire) {
-                if (arret || !memeSalle(salle)) return;
-                if (!attendrePause(salle)) return;
-                if (occupe(gp) != null) return;          // reprendra apres, tout seul
-                int id = it.getId();
-                if (!wiredConnus.contains(id) && Salle.sol(id) == null) continue;   // retire entre-temps
-                aRelire.remove(id);
-                Config avant = cache.remove(id);
-                etat("Lecture… " + compterLus(ids) + " / " + total);
-                String cls = Salle.classe(it.getTypeId(), false);
-                boolean ok = demander(gp, id, cls, salle);
-                if (!ok && !arret && memeSalle(salle)) ok = demander(gp, id, cls, salle);
-                essais++;
-                if (ok) reussis++;
-                else if (avant != null) cache.putIfAbsent(id, avant);     // garder l'ancienne
-                else illisibles.add(id);
-                lus = compterLus(ids);
-                // Trois premiers wired sans reponse, rien jamais lu ici : on n'insiste pas.
-                if (essais >= 3 && reussis == 0 && !dejaLu) {
+            lireLot(gp, salle, ids, () -> arret, true, dejaLu,
+                    (f, t) -> etat("Lecture… " + compterLus(connus) + " / " + total));
+            lus = compterLus(wiredConnus);
+        } finally {
+            enLecture = false;
+            if (!memeSalle(salle)) { salleCourante = -2; }  // le prochain tour repart propre
+        }
+    }
+
+    /**
+     * Lit un lot de wired, plusieurs demandes en vol au besoin (Rythme).
+     * Chaque reponse est rattachee a son wired par l'id qu'elle porte. Un wired
+     * sans reponse est redemande apres les autres ; apres ESSAIS essais il est
+     * note illisible (avec la raison) et sera relance plus tard.
+     *
+     * @param auto   lecture automatique : arret au bouton/fermeture, et
+     *               detection « aucune reponse dans cette salle »
+     * @param dejaLu des reglages ont deja ete lus ici (le serveur repond)
+     */
+    private static void lireLot(Moteur gp, int salle, List<Integer> ids,
+                                java.util.function.BooleanSupplier stop, boolean auto, boolean dejaLu,
+                                java.util.function.BiConsumer<Integer, Integer> progres) {
+        Deque<Integer> file = new ArrayDeque<>(ids);
+        Map<Integer, Long> enVol = new LinkedHashMap<>();
+        Map<Integer, Integer> essais = new HashMap<>();
+        Map<Integer, Config> anciennes = new HashMap<>();
+        int fait = 0, recues = 0, silences = 0, nb = ids.size();
+        long prochain = 0, derniereMaj = System.currentTimeMillis();
+        int faitAnnonce = -1;
+        try {
+            while (!file.isEmpty() || !enVol.isEmpty()) {
+                if ((stop != null && stop.getAsBoolean()) || !memeSalle(salle)) break;
+                long now = System.currentTimeMillis();
+
+                // 1. reponses arrivees, et silences
+                long attente = RYTHME.attente();
+                for (Iterator<Map.Entry<Integer, Long>> i = enVol.entrySet().iterator(); i.hasNext(); ) {
+                    Map.Entry<Integer, Long> e = i.next();
+                    int id = e.getKey();
+                    Long r = recuA.get(id);
+                    if (r != null && r >= e.getValue()) {
+                        i.remove();
+                        fait++;
+                        recues++;
+                        RYTHME.reponse(r - e.getValue());
+                        if (!cache.containsKey(id)) {
+                            Config a = anciennes.get(id);
+                            if (a != null) cache.putIfAbsent(id, a);       // garder l'ancienne
+                            else noterEchec(id, "le jeu a répondu, mais sous une forme que l'Atelier ne sait pas lire", now);
+                        }
+                        aRelire.remove(id);
+                        continue;
+                    }
+                    if (now - e.getValue() > attente) {
+                        i.remove();
+                        silences++;
+                        RYTHME.silence();
+                        int n = essais.merge(id, 1, Integer::sum);
+                        Journal.debug("wired " + id + " : pas de réponse en " + attente + " ms (essai " + n + ")");
+                        if (n < ESSAIS) file.addLast(id);          // redemande apres les autres
+                        else {
+                            fait++;
+                            Config a = anciennes.get(id);
+                            if (a != null) cache.putIfAbsent(id, a);
+                            else noterEchec(id, "pas de réponse du serveur après " + n + " essais"
+                                    + (Boolean.TRUE.equals(derniersDroits) ? " (tu as pourtant les droits wired)"
+                                       : " : as-tu les droits wired ici ?"), now);
+                        }
+                    }
+                }
+
+                // Rien jamais lu ici et le serveur se tait : pas la peine d'insister.
+                if (auto && !dejaLu && recues == 0 && silences >= 4) {
                     sansReponse = true;
+                    sansReponseDepuis = now;
+                    etat("Pas de réponse du serveur : pas de droits wired ici ? Nouvel essai dans une minute.");
+                    for (Map.Entry<Integer, Config> e : anciennes.entrySet()) cache.putIfAbsent(e.getKey(), e.getValue());
                     return;
                 }
-                if (System.currentTimeMillis() - derniereMaj > 2000) {
+
+                // L'Atelier pose un appart : on s'efface (la lecture reprendra seule apres).
+                if (auto && enVol.isEmpty() && occupe() != null) return;
+
+                // 2. une nouvelle demande, si la fenetre le permet
+                if (!file.isEmpty() && enVol.size() < RYTHME.fenetre() && now >= prochain
+                        && now >= pauseJusqua && (!auto || occupe() == null)) {
+                    int id = file.pollFirst();
+                    HFloorItem it = Salle.sol(id);
+                    if (it == null || !estBoiteType(it.getTypeId())) { fait++; continue; }   // retire, ou pas une boite
+                    if (!anciennes.containsKey(id)) {
+                        Config avant = cache.remove(id);           // une relecture remplace l'ancienne
+                        if (avant != null) anciennes.put(id, avant);
+                    }
+                    if (ouvertParElle(id)) {
+                        enVol.put(id, now);                         // sa reponse a elle remplira le cache
+                    } else {
+                        Salle.espacer();
+                        long envoi = System.currentTimeMillis();
+                        String cls = Salle.classe(it.getTypeId(), false);
+                        demandes.merge(id, new Demande(envoi, cls, 1),
+                                (a, b) -> new Demande(envoi, cls, a.enAttente() + 1));
+                        try {
+                            gp.sendToServer(new HPacket("Open", HMessage.Direction.TOSERVER, id));
+                        } catch (Throwable t) {
+                            demandes.remove(id);
+                            Journal.debug("Open " + id + " impossible : " + t);
+                            fait++;
+                            Config a = anciennes.get(id);
+                            if (a != null) cache.putIfAbsent(id, a);
+                            continue;
+                        }
+                        enVol.put(id, envoi);
+                    }
+                    prochain = System.currentTimeMillis() + RYTHME.pause();
+                } else if (now < pauseJusqua && auto) {
+                    etat("Lecture en pause : tu as ouvert un wired.");
+                }
+
+                if (fait != faitAnnonce && progres != null) {
+                    faitAnnonce = fait;
+                    try { progres.accept(fait, nb); } catch (Throwable ignored) { }
+                }
+                if (auto && System.currentTimeMillis() - derniereMaj > 2000) {
                     derniereMaj = System.currentTimeMillis();
                     donneesChangees();
                 }
+                Salle.sommeil(25);
             }
         } finally {
-            enLecture = false;
-            attendu = 0;
-            demandes.clear();
-            if (!memeSalle(salle)) { salleCourante = -2; }  // le prochain tour repart propre
+            // interrompu : on garde ce qui etait lu avant (les demandes restent a bloquer 30 s)
+            for (Map.Entry<Integer, Config> e : anciennes.entrySet()) cache.putIfAbsent(e.getKey(), e.getValue());
+            if (progres != null && fait != faitAnnonce) try { progres.accept(fait, nb); } catch (Throwable ignored) { }
         }
     }
 
@@ -750,11 +1058,11 @@ public final class WiredLecteur {
     }
 
     /** Attend la fin d'une pause (l'utilisatrice a ouvert un wired). false si salle quittee. */
-    private static boolean attendrePause(int salle) {
+    private static boolean attendrePause(int salle, boolean auto) {
         boolean annonce = false;
         while (System.currentTimeMillis() < pauseJusqua) {
-            if (arret || !memeSalle(salle)) return false;
-            if (!annonce) { etat("Lecture en pause : tu as ouvert un wired."); annonce = true; }
+            if ((auto && arret) || !memeSalle(salle)) return false;
+            if (!annonce && auto) { etat("Lecture en pause : tu as ouvert un wired."); annonce = true; }
             Salle.sommeil(100);
         }
         return true;
@@ -766,32 +1074,6 @@ public final class WiredLecteur {
         return n;
     }
 
-    /** Envoie Open(id) et attend la reponse ; true si la configuration est arrivee. */
-    private static boolean demander(Moteur gp, int id, String classe, int salle) {
-        long attente = PAUSE_MS - (System.currentTimeMillis() - dernierEnvoi);
-        if (attente > 0) Salle.sommeil(attente);
-        if (!attendrePause(salle)) return false;
-        if (ouvertParElle(id)) return cache.containsKey(id);   // c'est elle qui l'a ouvert
-        CountDownLatch l = new CountDownLatch(1);
-        reponse = l;
-        classeAttendue = classe;
-        attendu = id;
-        demandes.add(id);
-        try {
-            gp.sendToServer(new HPacket("Open", HMessage.Direction.TOSERVER, id));
-        } catch (Throwable t) {
-            demandes.remove(id);
-            attendu = 0;
-            return false;
-        }
-        dernierEnvoi = System.currentTimeMillis();
-        try { l.await(ATTENTE_MS, TimeUnit.MILLISECONDS); } catch (InterruptedException ignored) { }
-        attendu = 0;
-        // L'id reste dans « demandes » : une reponse tardive sera encore bloquee
-        // et mise en cache. La liste est videe en fin de lecture.
-        return cache.containsKey(id);
-    }
-
     // ------------------------------------------------------- lecture a la demande
 
     /** Une seule lecture a la fois (suivi automatique ou lecture a la demande). */
@@ -800,9 +1082,10 @@ public final class WiredLecteur {
     /**
      * Lit TOUT DE SUITE les wired donnes, meme si l'outil Wired est ferme
      * (copie de configuration : WiredCollage). Un wired deja lu et pas modifie
-     * depuis n'est pas redemande. Bloquant : jamais sur le fil JavaFX.
+     * depuis n'est pas redemande ; un mobi wired qui n'est pas une boite
+     * (dalle, antenne...) n'est jamais demande. Bloquant : jamais sur le fil JavaFX.
      *
-     * @param arret   true = s'arreter (bouton Arreter)
+     * @param stop    true = s'arreter (bouton Arreter)
      * @param progres (faits, total), appele hors du fil JavaFX
      * @return les configurations obtenues (les wired absents n'ont pas repondu)
      */
@@ -820,31 +1103,32 @@ public final class WiredLecteur {
         if (enLecture) arret = true;          // la lecture automatique cede la place, elle reprendra
         synchronized (LECTURE) {
             arret = false;
-            int fait = 0;
+            List<Integer> aLire = new ArrayList<>();
+            long attendreJusqua = 0;
             for (Integer id : ids) {
                 if (id == null) continue;
-                if (stop != null && stop.getAsBoolean()) break;
-                if (!memeSalle(salle)) break;
-                Config c = cache.get(id);
+                HFloorItem it = Salle.sol(id);
+                if (it == null || !estBoiteType(it.getTypeId())) continue;
                 Long t = aRelire.get(id);
-                if (t != null && t > System.currentTimeMillis())
-                    Salle.sommeil(Math.min(2000, t - System.currentTimeMillis()));
-                if (c == null || t != null) {
-                    HFloorItem it = Salle.sol(id);
-                    String cls = it == null ? null : Salle.classe(it.getTypeId(), false);
-                    if (it != null) {
-                        boolean ok = demander(gp, id, cls, salle);
-                        if (!ok && memeSalle(salle)) ok = demander(gp, id, cls, salle);
-                        if (ok) { aRelire.remove(id); illisibles.remove(id); }
-                    }
-                    c = cache.get(id);
-                }
-                if (c != null) r.put(id, c);
-                fait++;
-                if (progres != null) try { progres.accept(fait, ids.size()); } catch (Throwable ignored) { }
+                if (cache.containsKey(id) && t == null) continue;
+                if (t != null) attendreJusqua = Math.max(attendreJusqua, t);
+                aLire.add(id);
             }
-            attendu = 0;
-            demandes.clear();
+            long reste = Math.min(2000, attendreJusqua - System.currentTimeMillis());
+            if (reste > 0) Salle.sommeil(reste);   // un wired tout juste enregistre : le serveur applique d'abord
+            int n = ids.size(), dejaFaits = n - aLire.size();
+            if (!aLire.isEmpty()) {
+                lireLot(gp, salle, aLire, stop, false, true, (f, t) -> {
+                    if (progres != null) progres.accept(dejaFaits + f, n);
+                });
+            } else if (progres != null) {
+                try { progres.accept(n, n); } catch (Throwable ignored) { }
+            }
+            for (Integer id : ids) {
+                if (id == null) continue;
+                Config c = cache.get(id);
+                if (c != null) r.put(id, c);
+            }
         }
         donneesChangees();
         return r;
@@ -857,10 +1141,12 @@ public final class WiredLecteur {
         if (s.equals(message)) return;
         message = s;
         if (!progresPoste.compareAndSet(false, true)) return;
-        Platform.runLater(() -> {
-            progresPoste.set(false);
-            for (Runnable r : ecouteursProgres) try { r.run(); } catch (Throwable ignored) { }
-        });
+        try {
+            Platform.runLater(() -> {
+                progresPoste.set(false);
+                for (Runnable r : ecouteursProgres) try { r.run(); } catch (Throwable ignored) { }
+            });
+        } catch (Throwable t) { progresPoste.set(false); }
     }
 
     /** Previent les volets que les donnees ont change (regroupe). */

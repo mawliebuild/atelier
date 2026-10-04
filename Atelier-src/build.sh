@@ -1,5 +1,5 @@
 #!/bin/bash
-# Construit l'Atelier : G-Earth 1.5.4 + G-Presets + G-BuildTools + mes classes,
+# Construit l'Atelier : G-Earth 1.5.4 (licence MIT) + mes classes,
 # dans un seul jar, sans notion d'extension.
 #
 #   bash ~/Documents/Atelier-src/build.sh
@@ -9,7 +9,9 @@ SRC="$HOME/Documents/Atelier-src"
 CIBLE="$HOME/Documents/Atelier"
 JDK="/Library/Java/JavaVirtualMachines/zulu-17.jdk/Contents/Home"
 
-GPRESETS="$HOME/Downloads/GPresets-v1.3.8-fix by Zyker.jar"
+# Base : G-Earth seul (licence MIT), sans G-Presets. Fabrique par outils/gearth-base.sh
+# a partir du jar d'origine ; l'Atelier n'utilise plus aucune classe de G-Presets.
+GPRESETS="$SRC/Dependencies/gearth-base.jar"
 GBUILD=""
 DEPS="$CIBLE/Dependencies"
 
@@ -34,7 +36,7 @@ fi
 grep -v "unchecked\|Recompile" "$SRC/erreurs.txt" 2>/dev/null || true
 
 echo "== assemblage =="
-# 1) base : le fat jar de Zyker (contient G-Earth 1.5.4-beta-10 + G-Presets)
+# 1) base : G-Earth 1.5.4-beta-10 seul (gearth-base.jar)
 (cd etape && unzip -q "$GPRESETS")
 
 # 2) G-BuildTools n'est PAS fusionne : sa classe furnidata.FurniDataTools est

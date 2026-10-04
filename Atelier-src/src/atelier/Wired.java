@@ -1,15 +1,34 @@
 package atelier;
 
+import java.util.Locale;
+
 /**
  * Classement des mobis wired, pour les empiler dans le bon ordre.
  *
  * Les rangs sont ceux du fonctionnement de Habbo, du bas vers le haut. Les
- * prefixes viennent de la furnidata reelle de habbo.fr :
- *   wf_trg_*        27 mobis   declencheurs
- *   wf_slc_*        20 mobis   selecteurs
- *   wf_cnd_*        44 mobis   conditions (dont wf_cnd_not_* pour les negatives)
- *   wf_act_*        53 mobis   effets (dont send_signal et neg_*)
- *   wf_xtra_*       31 mobis   add-ons
+ * prefixes viennent de la furnidata reelle de habbo.fr (267 classes « wf_ ») :
+ *
+ *   BOITES (une fenetre de reglage, lue par Open -> WiredFurni*) :
+ *   wf_trg_*        27   declencheurs
+ *   wf_slc_*        20   selecteurs
+ *   wf_cnd_*        44   conditions (dont wf_cnd_not_* pour les negatives)
+ *   wf_act_*        53   effets (dont send_signal et neg_*)
+ *   wf_xtra_*       31   add-ons (dont wf_xtra_filter_* : selecteurs filtres)
+ *   wf_var_*         8   variables (fenetre WiredFurniVariable)
+ *   et leurs variantes « personnalisees » ou anciennes : wf_test_trg / _cnd /
+ *   _act / _xtra / _slc / _var, wf_proto_trg_*, wf_proto_cnd_*,
+ *   wf_ltdproto_act_*.
+ *
+ *   MOBIS WIRED (pas de fenetre de reglage wired, jamais lus ni verifies) :
+ *   dalles (wf_colortile, wf_arrowplate*, wf_pressureplate, wf_ringplate,
+ *   wf_tile1/2, wf_numbertile1/2, wf_teamcolortile, wf_teamcolorquarter),
+ *   portes et murs (wf_glassdoor, wf_firegate, wf_fx_firegate, wf_maze),
+ *   antennes (wf_antenna1/2), compteurs (wf_upcounter1/2, wf_game_upcounter1/2,
+ *   wf_teammeter1..4, wf_vu, wf_numberscreen), boutons et leviers
+ *   (wf_button*, wf_floor_switch1/2, wf_knob, wf_slider, wf_toggle), jetons
+ *   (wf_token1..11), connexions (wf_wire1..4), blobs, roue, balle, pyramide
+ *   (wf_pyramid, wf_proto_pyramid), wf_box, wf_screenseparator, coffres
+ *   (wf_storage_*), contrats (wf_contract_*), wf_room_linker, wf_test_26secret*.
  */
 public final class Wired {
 
@@ -23,7 +42,9 @@ public final class Wired {
         EFFET_SIGNAL     (6, "Effet envoyer un signal"),
         EFFET_NEGATIF    (7, "Effet négatif"),
         ADDON            (8, "Add-on"),
-        AUTRE            (9, "Pas un wired");
+        /** Mobi de la famille wired qui n'est pas une boite : dalle, porte, antenne, compteur... */
+        MOBI_WIRED       (9, "Mobi wired"),
+        AUTRE            (10, "Pas un wired");
 
         public final int ordre;
         public final String libelle;
@@ -33,9 +54,47 @@ public final class Wired {
 
     private Wired() { }
 
-    /** true si le mobi est un wired. */
+    /**
+     * true si le mobi est de la famille wired (« wf_ ») : boite OU mobi wired
+     * (dalle colorée, antenne...). Pour les calques, les comptes, le miroir.
+     * Pour lire, verifier ou ranger des reglages : estBoite.
+     */
     public static boolean estWired(String classe) {
-        return classe != null && classe.startsWith("wf_");
+        return classe != null && classe.toLowerCase(Locale.ROOT).startsWith("wf_");
+    }
+
+    /**
+     * true si le mobi est une BOITE wired (declencheur, selecteur, condition,
+     * effet, add-on, variable) : elle a une fenetre de reglage, se lit, se
+     * verifie et se range dans une pile.
+     */
+    public static boolean estBoite(String classe) {
+        String c = normaliser(classe);
+        return c != null && (c.startsWith("wf_trg_") || c.startsWith("wf_slc_") || c.startsWith("wf_cnd_")
+                || c.startsWith("wf_act_") || c.startsWith("wf_xtra_") || c.startsWith("wf_var_"));
+    }
+
+    /** Mobi de la famille wired qui n'est pas une boite (dalle, porte, antenne, compteur...). */
+    public static boolean estMobiWired(String classe) {
+        return estWired(classe) && !estBoite(classe);
+    }
+
+    /**
+     * Nom technique en minuscules, variantes ramenees a la forme commune :
+     * wf_test_trg -> wf_trg_, wf_proto_cnd_x -> wf_cnd_x, wf_ltdproto_act_x ->
+     * wf_act_x. Logique pure ; null si classe est null.
+     */
+    static String normaliser(String classe) {
+        if (classe == null) return null;
+        String c = classe.toLowerCase(Locale.ROOT);
+        for (String p : new String[]{"wf_test_", "wf_ltdproto_", "wf_proto_"}) {
+            if (!c.startsWith(p)) continue;
+            String reste = c.substring(p.length());
+            for (String g : new String[]{"trg", "slc", "cnd", "act", "xtra", "var"})
+                if (reste.equals(g) || reste.startsWith(g + "_")) return "wf_" + g + "_" + reste.substring(g.length()).replaceFirst("^_", "");
+            return c;
+        }
+        return c;
     }
 
     /**
@@ -44,11 +103,12 @@ public final class Wired {
      * Deux cas sont reconnus par leur nom exact, car leur prefixe seul ne suffit
      * pas : « Envoyer un signal » (wf_act_send_signal) et les effets negatifs
      * (wf_act_neg_*), qui sont des wf_act_ mais doivent monter au-dessus des
-     * effets ordinaires.
+     * effets ordinaires. Les variables (wf_var_) sont rangees avec les add-ons ;
+     * les autres « wf_ » sont des mobis wired (MOBI_WIRED), pas des boites.
      */
     public static Rang rang(String classe) {
-        if (classe == null) return Rang.AUTRE;
-        String c = classe.toLowerCase();
+        String c = normaliser(classe);
+        if (c == null) return Rang.AUTRE;
 
         if (c.startsWith("wf_trg_"))  return Rang.DECLENCHEUR;
         if (c.startsWith("wf_slc_"))  return Rang.SELECTEUR;
@@ -62,8 +122,8 @@ public final class Wired {
             return Rang.EFFET;
         }
         if (c.startsWith("wf_xtra_")) return Rang.ADDON;
-        if (c.startsWith("wf_"))      return Rang.ADDON;   // variables, compteurs...
+        if (c.startsWith("wf_var_"))  return Rang.ADDON;
+        if (c.startsWith("wf_"))      return Rang.MOBI_WIRED;
         return Rang.AUTRE;
     }
-
 }
