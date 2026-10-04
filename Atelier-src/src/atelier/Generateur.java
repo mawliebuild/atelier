@@ -23,14 +23,14 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
 /**
- * Fabrique un appart temporaire G-Presets et le fait poser par G-Presets.
+ * Fabrique un appart temporaire et le fait poser par le moteur de pose.
  *
  * Escalier, remplissage et copie miroir ne posent rien eux-memes : ils
  * decrivent les mobis voulus (classe, case relative, altitude au-dessus du
- * sol, rotation, etat), et G-Presets s'occupe du reste — dalle magique,
+ * sol, rotation, etat), et le moteur de pose s'occupe du reste — dalle magique,
  * hauteurs, inventaire ou BC — exactement comme pour « Coller cet appart ».
  *
- * Ce qui a ete verifie dans le bytecode de G-Presets 1.3.8 :
+ * Ce qui a ete verifie dans le bytecode du moteur de pose (v1.3.8) :
  *  - PresetFurni(JSONObject) exige « name » : on le renseigne toujours ;
  *  - les cases sont posees a racine + (x,y) du preset, sans recentrage ;
  *  - z est absolu, decale de importZDelta = solLePlusBas(destination)
@@ -48,7 +48,7 @@ public final class Generateur {
 
     private Generateur() { }
 
-    /** D'ou G-Presets prend les meubles (ses quatre boutons radio). */
+    /** D'ou le moteur de pose prend les meubles (ses quatre boutons radio). */
     public enum Source { INVENTAIRE, BC, BC_PUIS_INVENTAIRE, INVENTAIRE_PUIS_BC }
 
     /** Un mobi du preset : case relative (origine 0,0), altitude au-dessus du sol. */
@@ -114,7 +114,7 @@ public final class Generateur {
         return new Modele(classe, etat, nom, lx, ly, hauteur, emp);
     }
 
-    /** Etat d'un mobi tel que G-Presets l'exporte : la chaine « legacy » de son stuff. */
+    /** Etat d'un mobi tel que le moteur de pose l'exporte : la chaine « legacy » de son stuff. */
     public static String etatDe(HFloorItem it) {
         try {
             String s = it.getStuff() == null ? null : it.getStuff().getLegacyString();
@@ -194,7 +194,7 @@ public final class Generateur {
 
     // ------------------------------------------------- choix de la source (UI)
 
-    /** Les quatre sources de G-Presets, en boutons radio. */
+    /** Les quatre sources du moteur de pose, en boutons radio. */
     public static final class ChoixSource {
         private final RadioButton inv, bc, bcInv, invBc;
         private final VBox bloc;
@@ -221,7 +221,7 @@ public final class Generateur {
     // ------------------------------------------------------------ pose
 
     /**
-     * Ecrit l'appart, le donne a G-Presets et lance son import.
+     * Ecrit l'appart, le donne au moteur de pose et lance son import.
      *
      * @param fichier  nom reserve, sans extension (ex. « _atelier_escalier »)
      * @param racine   case de la salle ou mettre l'origine (0,0) du preset ;
@@ -242,22 +242,22 @@ public final class Generateur {
     private static boolean poser0(String fichier, List<Mobi> mobis, Source source,
                                   HPoint racine, Consumer<String> dire) throws Exception {
         GPresets gp = Salle.gp();
-        if (gp == null) { dire.accept("G-Presets pas encore prêt."); return false; }
+        if (gp == null) { dire.accept("L'Atelier n'est pas encore prêt."); return false; }
         if (!Salle.dansUneSalle()) { dire.accept("Tu n'es pas dans une salle."); return false; }
         if (!Salle.furnidataPrete()) { dire.accept("Furnidata pas encore chargée."); return false; }
         if (mobis == null || mobis.isEmpty()) { dire.accept("Rien à poser."); return false; }
 
         GPresetImporter imp = gp.getImporter();
-        if (imp == null) { dire.accept("Importeur de G-Presets introuvable."); return false; }
+        if (imp == null) { dire.accept("Moteur de pose introuvable."); return false; }
         try {
             if (imp.getState() != GPresetImporter.BuildingImportState.NONE) {
-                dire.accept("G-Presets est déjà en train d'importer — termine ou tape :abort dans le jeu.");
+                dire.accept("Le moteur de pose est déjà en train d'importer — termine ou tape :abort dans le jeu.");
                 return false;
             }
         } catch (Throwable ignored) { }
 
         // 1. le preset : sans murs ni wired ; les classes doivent etre connues,
-        //    sinon G-Presets plante (getFloorTypeId(...).intValue()).
+        //    sinon le moteur de pose plante (getFloorTypeId(...).intValue()).
         furnidata.FurniDataTools fd = gp.getFurniDataTools();
         int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE;
         for (Mobi m : mobis) { minX = Math.min(minX, m.x); minY = Math.min(minY, m.y); }
@@ -268,7 +268,7 @@ public final class Generateur {
                 dire.accept("« " + m.classe + " » inconnu de la furnidata : pose annulée.");
                 return false;
             }
-            // origine ramenee a (0,0) : G-Presets pose a racine + (x,y)
+            // origine ramenee a (0,0) : le moteur de pose pose a racine + (x,y)
             PresetFurni p = new PresetFurni(id++, m.classe,
                     new HPoint(m.x - minX, m.y - minY, Math.max(0, arrondi(m.z))), m.rot & 7, m.etat);
             String nom = m.classe;
@@ -287,7 +287,7 @@ public final class Generateur {
         PresetConfig cfg = new PresetConfig(furni, new ArrayList<>(), w, new ArrayList<>(), new ArrayList<>());
         cfg.setSrcAnchorFloorHeight(0.0);       // z = altitude au-dessus du sol
 
-        // aller-retour JSON : ce que G-Presets relira est exactement ceci
+        // aller-retour JSON : ce que le moteur de pose relira est exactement ceci
         String json = cfg.toJsonObject().toString(2);
         PresetConfig relu = new PresetConfig(new org.json.JSONObject(json));
 
@@ -314,19 +314,19 @@ public final class Generateur {
         if (dalle == null) { Dalle.finIgnorer(); return false; }
 
         boolean ok = importer(gp, imp, relu, fichier, source, racine, dire,
-                mobis.size() + " mobi(s) envoyés à G-Presets. ", dalle.ou);
+                mobis.size() + " mobi(s) envoyés au moteur de pose. ", dalle.ou);
         if (ok) Dalle.apresImport(imp, dalle.poseeParAtelier, dire);
         else if (dalle.poseeParAtelier > 0)
             Dalle.ramasser(dalle.poseeParAtelier, dire, "La pose n'a pas démarré (voir le message de "
-                    + "G-Presets dans le jeu) : j'ai ramassé la dalle magique.");
+                    + "l'Atelier dans le jeu) : j'ai ramassé la dalle magique.");
         else Dalle.finIgnorer();
         return ok;
     }
 
     /**
-     * Fait poser un appart par G-Presets, sans passer par sa liste.
+     * Fait poser un appart par le moteur de pose, sans passer par sa liste.
      *
-     * Selectionner une ligne de presetListView NE charge PAS l'appart : G-Presets
+     * Selectionner une ligne de presetListView NE charge PAS l'appart : le moteur de pose
      * ne le charge qu'au double-clic. Un « :ip » envoye juste apres posait donc
      * l'appart charge AVANT. Ici le preset est donne directement a l'importeur,
      * puis :ip est lance sur l'importeur lui-meme.
@@ -341,7 +341,7 @@ public final class Generateur {
     }
 
     /**
-     * @param dalleOu case ou G-Presets doit ranger sa dalle magique (« empty area »),
+     * @param dalleOu case ou le moteur de pose doit ranger sa dalle magique (« empty area »),
      *                donnee a sa place ; null = l'utilisatrice la clique dans le jeu.
      */
     public static boolean importer(GPresets gp, GPresetImporter imp, PresetConfig relu, String fichier,
@@ -349,7 +349,7 @@ public final class Generateur {
                                    HPoint dalleOu)
             throws Exception {
         // 2 bis. les mobis introuvables (ni inventaire ni BC selon la source) sont
-        // retires : G-Presets refuserait toute la pose pour un seul manquant.
+        // retires : le moteur de pose refuserait toute la pose pour un seul manquant.
         // On le dit, et on colle le reste.
         relu = sansManquants(gp, relu, source, dire);
         if (relu == null) return false;
@@ -371,18 +371,18 @@ public final class Generateur {
             } catch (Throwable t) { erreur[0] = String.valueOf(t); }
             finally { fait.countDown(); }
         });
-        if (!fait.await(5, TimeUnit.SECONDS)) { dire.accept("G-Presets ne répond pas (fil graphique occupé)."); return false; }
+        if (!fait.await(5, TimeUnit.SECONDS)) { dire.accept("Le moteur de pose ne répond pas (fil graphique occupé)."); return false; }
         if (erreur[0] != null) { dire.accept("Préparation impossible : " + erreur[0]); return false; }
 
         try {
             if (!imp.isReady()) {
-                dire.accept("G-Presets n'est pas prêt à importer (inventaire ou catalogue BC pas chargé, "
+                dire.accept("Le moteur de pose n'est pas prêt à importer (inventaire ou catalogue BC pas chargé, "
                         + "droits de la salle ?) — vérifie l'état dans Apparts.");
                 return false;
             }
         } catch (Throwable ignored) { }
 
-        // la liste de G-Presets se recharge en differe : on selectionne apres coup (cosmetique)
+        // la liste du moteur de pose se recharge en differe : on selectionne apres coup (cosmetique)
         Salle.sommeil(400);
         Platform.runLater(() -> {
             try {
@@ -405,7 +405,7 @@ public final class Generateur {
             GPresetImporter.BuildingImportState st = null;
             try { st = imp.getState(); } catch (Throwable ignored) { }
             if (st == GPresetImporter.BuildingImportState.NONE) {
-                dire.accept("G-Presets n'a pas lancé la pose : regarde son message dans le jeu "
+                dire.accept("Le moteur de pose n'a pas lancé la pose : regarde son message dans le jeu "
                         + "(mobis manquants dans la source choisie ?).");
                 return false;
             }
@@ -437,7 +437,7 @@ public final class Generateur {
             game.BCCatalog cat = gp.getCatalog();
             boolean invPret = inv != null && inv.getState() == game.Inventory.InventoryState.LOADED;
             boolean prendInv = source != Source.BC, prendBc = source != Source.INVENTAIRE;
-            if (prendInv && !invPret) return cfg;            // on ne sait pas : on laisse G-Presets juger
+            if (prendInv && !invPret) return cfg;            // on ne sait pas : on laisse le moteur de pose juger
             org.json.JSONObject o = cfg.toJsonObject();
             Map<String, Integer> stock = new HashMap<>();
             Map<String, Integer> manque = new TreeMap<>();
@@ -518,7 +518,6 @@ public final class Generateur {
             int resteMurs = o.optJSONArray("wallFurni") == null ? 0 : o.getJSONArray("wallFurni").length();
             String msg = retires.size() + " mobi(s) introuvable(s) (ni dans l'inventaire ni au BC) : " + liste
                     + ". Je colle le reste sans eux.";
-            System.out.println("[Atelier] " + msg);
             InfoJeu.consigne(msg);
             dire.accept(msg);
             if (resteFurni + resteMurs == 0) { dire.accept("Rien d'autre à poser."); return null; }
@@ -542,7 +541,7 @@ public final class Generateur {
     /**
      * Lance « :ip ». D'abord en appelant directement le gestionnaire de chat de
      * l'importeur (rien ne part vers le serveur) ; a defaut, comme
-     * OngletApparts : un paquet Chat que G-Presets intercepte et bloque.
+     * OngletApparts : un paquet Chat que le moteur de pose intercepte et bloque.
      */
     private static void lancer(GPresets gp, GPresetImporter imp, String cmd) {
         try {
@@ -552,7 +551,7 @@ public final class Generateur {
             m.invoke(imp, new HMessage(p, HMessage.Direction.TOSERVER, -1));
             return;
         } catch (Throwable t) {
-            System.out.println("[Atelier] appel direct de :ip impossible (" + t + "), envoi par le chat.");
+            Journal.debug("appel direct de :ip impossible (" + t + "), envoi par le chat.");
         }
         gp.sendToServer(new HPacket("Chat", HMessage.Direction.TOSERVER, cmd, 0, -1));
     }
@@ -560,11 +559,11 @@ public final class Generateur {
     // ------------------------------------------------------------ dalle magique
 
     /**
-     * La dalle magique (tile_stackmagic*) qu'il faut a G-Presets pour poser a
+     * La dalle magique (tile_stackmagic*) qu'il faut au moteur de pose pour poser a
      * hauteur exacte. S'il n'y en a pas de la bonne taille dans la salle,
      * l'Atelier la pose lui-meme, a cote du trace, puis la ramasse a la fin.
      *
-     * Regles recopiees du bytecode de G-Presets 1.3.8 (extension.tools.GPresetImporter) :
+     * Regles recopiees du bytecode du moteur de pose v1.3.8 (extension.tools.GPresetImporter) :
      *  - requiredStackTileDimension : 1×1 -> 1, 1×2 / 2×1 -> -1 (tile_stackmagic1),
      *    sinon le plus grand cote arrondi a 1, 2, 4, 6, 8 ;
      *  - collectRequiredStackTileDimensions : mobis empilables seulement, hors
@@ -632,7 +631,7 @@ public final class Generateur {
         /**
          * La dalle a poser : la 1×1 des qu'elle suffit, sinon la plus petite qui
          * couvre tout. La 1×2 (dimension -1) n'est prise que pour des mobis 1×2 :
-         * G-Presets l'accepte aussi pour un 2×2, mais elle ne le couvre pas.
+         * Le moteur de pose l'accepte aussi pour un 2×2, mais elle ne le couvre pas.
          * null si aucune.
          */
         static extension.tools.StackTileSetting modele(Set<Integer> exigences) {
@@ -705,7 +704,7 @@ public final class Generateur {
             candidats.sort((a, b) -> a[2] != b[2] ? Integer.compare(a[2], b[2])
                     : a[1] != b[1] ? Integer.compare(a[1], b[1]) : Integer.compare(a[0], b[0]));
             // En dernier recours, SUR le trace : dans une salle juste assez grande
-            // pour la pose (6x6 dans 6x6), il n'y a pas d'autre place. G-Presets
+            // pour la pose (6x6 dans 6x6), il n'y a pas d'autre place. Le moteur de pose
             // l'accepte : il deplace la dalle sous chaque mobi pendant la pose,
             // seules des cases vides au depart comptent.
             for (Set<Long> interdit : List.of(autour, dessus, Set.<Long>of())) {
@@ -818,7 +817,7 @@ public final class Generateur {
             for (int type : typesDalles()) Historique.ignorerType(type, 30 * 60_000L);
 
             if (!dalles.isEmpty() && toutCouvert(dims, exig)) {
-                // celle que G-Presets prendra : la plus petite dimension
+                // celle que le moteur de pose prendra : la plus petite dimension
                 int k = 0;
                 for (int i = 1; i < dims.size(); i++) if (dims.get(i) < dims.get(k)) k = i;
                 HFloorItem principale = dalles.get(k);
@@ -843,7 +842,7 @@ public final class Generateur {
                             + "à côté : libère un peu de place près du départ.");
                     return null;
                 }
-                dire.accept("Dalle magique déplacée par G-Presets en (" + c[0] + "," + c[1] + ").");
+                dire.accept("Dalle magique déplacée par le moteur de pose en (" + c[0] + "," + c[1] + ").");
                 return new Pret(new HPoint(c[0], c[1]), -1);
             }
 
@@ -973,13 +972,13 @@ public final class Generateur {
                 m.invoke(imp, new HMessage(p, HMessage.Direction.TOSERVER, -1));
                 return imp.getState() != GPresetImporter.BuildingImportState.AWAITING_UNOCCUPIED_SPACE;
             } catch (Throwable t) {
-                System.out.println("[Atelier] case de la dalle non transmise (" + t + ")");
+                Journal.debug("case de la dalle non transmise (" + t + ")");
                 return false;
             }
         }
 
         /**
-         * Quand G-Presets a fini (ou :abort) : ramasse la dalle que l'Atelier a
+         * Quand le moteur de pose a fini (ou :abort) : ramasse la dalle que l'Atelier a
          * posee (id > 0) et rend la dalle a l'historique.
          */
         static void apresImport(GPresetImporter imp, int id, Consumer<String> dire) {
@@ -990,7 +989,15 @@ public final class Generateur {
                     GPresetImporter.BuildingImportState s;
                     try { s = imp.getState(); } catch (Throwable t) { s = GPresetImporter.BuildingImportState.NONE; }
                     if (s == GPresetImporter.BuildingImportState.NONE) break;
-                    if (!Salle.dansUneSalle()) { finIgnorer(); return; }
+                    if (!Salle.dansUneSalle()) {
+                        finIgnorer();
+                        if (id > 0) {
+                            String m = "Tu as quitté la salle : la dalle magique n'a pas pu être ramassée, ramasse-la à la main.";
+                            dire.accept(m);
+                            InfoJeu.dire(m);
+                        }
+                        return;
+                    }
                 }
                 Salle.sommeil(1500);
                 if (id > 0) ramasser(id, dire, "Terminé. J'ai ramassé la dalle magique que j'avais posée.");
@@ -1006,7 +1013,7 @@ public final class Generateur {
             String fin = Salle.sol(id) == null ? message
                     : "La dalle magique (id " + id + ") n'a pas pu être ramassée : ramasse-la à la main.";
             dire.accept(fin);
-            InfoJeu.dire(fin.startsWith("Terminé") ? "Pose terminée." : fin);
+            InfoJeu.dire(fin);    // meme texte : InfoJeu le dedoublonne si la ligne d'etat l'a deja dit
         }
 
         static void finIgnorer() {
@@ -1017,6 +1024,8 @@ public final class Generateur {
 
         private static volatile java.util.concurrent.CompletableFuture<HPoint> attente;
         private static volatile boolean ecoute = false;
+        /** En-tete de MoveAvatar, appris au premier clic au sol (-1 : pas encore connu). */
+        private static volatile int enteteMove = -1;
 
         /**
          * Attend un clic au sol dans le jeu et le BLOQUE (l'avatar ne marche pas
@@ -1044,6 +1053,16 @@ public final class Generateur {
             if (ecoute) return;
             GPresets gp = Salle.gp();
             if (gp == null) return;
+            // Apprend l'en-tete de MoveAvatar (pose AVANT l'ecoute par contenu, pour
+            // passer avant elle) : un LookTo (meme forme x, y) n'est alors plus pris
+            // pour le clic attendu.
+            try {
+                gp.intercept(HMessage.Direction.TOSERVER, "MoveAvatar", m -> {
+                    try { enteteMove = m.getPacket().headerId(); } catch (Throwable ignored) { }
+                });
+            } catch (Throwable t) {
+                Journal.debug("en-tete MoveAvatar pas resolu : " + t);
+            }
             try {
                 // Reconnu par son CONTENU (deux petits entiers x, y), pas par son nom :
                 // un intercept par nom echoue en silence quand le nom ne se resout
@@ -1055,6 +1074,8 @@ public final class Generateur {
                         int n = m.getPacket().getBytesLength();
                         if (n < 14 || n > 20) return;
                         HPacket p = m.getPacket();
+                        int e = enteteMove;
+                        if (e >= 0 ? p.headerId() != e : n != 14) return;   // seulement MoveAvatar
                         int x = p.readInteger(6), y = p.readInteger(10);
                         if (x < 0 || y < 0 || Salle.hauteurSol(x, y) < 0) return;
                         m.setBlocked(true);
@@ -1064,7 +1085,7 @@ public final class Generateur {
                 });
                 ecoute = true;
             } catch (Throwable t) {
-                System.out.println("[Atelier] ecoute des clics (MoveAvatar) impossible : " + t);
+                Journal.debug("ecoute des clics (MoveAvatar) impossible : " + t);
             }
         }
     }

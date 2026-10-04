@@ -12,7 +12,7 @@ import java.util.*;
  * Ctrl+V :
  *   - meme appart  : comme Dupliquer (copie posee sur place, nouveau calque,
  *                    puis les fleches) ; on peut coller plusieurs fois ;
- *   - autre appart : la copie portable est posee par G-Presets apres un clic
+ *   - autre appart : la copie portable est posee par le moteur de pose apres un clic
  *                    sur la case du coin haut-gauche (sols seulement) ;
  *   - sinon        : un message clair.
  *
@@ -79,7 +79,7 @@ final class GroupePressePapier {
 
     /** Message de Ctrl+C. */
     static String messageCopie(String nom, int n) {
-        return "Calque « " + nom + " » copié (" + mobis(n) + "). Ctrl+V pour coller.";
+        return "Calque « " + nom + " » copié (" + mobis(n) + "). Option + Maj + V pour coller (Cmd + V dans le panneau).";
     }
 
     /** Message de fusion. */

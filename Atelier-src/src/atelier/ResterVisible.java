@@ -21,6 +21,10 @@ import javafx.application.Platform;
  * appli est devant (BarrePremierPlan le fait expres), elle le reste.
  * Les appels AppKit passent par le fil JavaFX, qui est le fil principal de l'appli sur macOS. Hors macOS, ou si le chargement echoue :
  * rien ne se passe.
+ *
+ * Sous Windows, rien a faire : aucun raccourci systeme ne masque l'appli
+ * quand on clique dans une autre (Alt + clic ne fait rien), et c'est
+ * BarrePremierPlan qui cache / reaffiche l'Atelier selon le premier plan.
  */
 final class ResterVisible {
 
@@ -81,7 +85,7 @@ final class ResterVisible {
             if (!RaccourcisGlobaux.estHabbo(RaccourcisGlobaux.Devant.app())) return;
             if (BarrePremierPlan.masqueVoulu()) return;
             objc.objc_msgSend(app, sRemontrer);
-            System.out.println("[Atelier] macOS avait masqué l'Atelier (Option + clic) : remis à l'écran.");
+            Journal.debug("macOS avait masqué l'Atelier (Option + clic) : remis à l'écran.");
         } catch (Throwable ignored) { }
     }
 }

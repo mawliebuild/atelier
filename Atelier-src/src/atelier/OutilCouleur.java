@@ -47,6 +47,8 @@ public class OutilCouleur {
     // ------------------------------------------------------------------ UI
 
     public Tab construire() {
+        // fenetre Couleur de decor ouverte : le mobi Couleur de decor est mis en valeur dans le jeu
+        MiseEnValeur.fournir("salle-couleur", () -> { int id = cible(); return id > 0 ? java.util.List.of("s" + id) : java.util.List.<String>of(); });
         code = new TextField();
         code.setPromptText("#ff56c2");
         code.setMaxWidth(Double.MAX_VALUE);
@@ -137,30 +139,30 @@ public class OutilCouleur {
 
     // ------------------------------------------------------------ temps reel
 
-    /** La derniere couleur voulue en direct ; un seul fil l'envoie, au plus toutes les 120 ms. */
+    /** La derniere couleur voulue en direct ; un seul fil l'envoie, au plus toutes les 150 ms. */
     private volatile Color voulue = null;
     private volatile boolean envoiEnCours = false;
-    private static final long PAS_MS = 120;
+    private static final long PAS_MS = 150;
 
     private void enDirect(Color c) {
         voulue = c;
         if (envoiEnCours) return;
         envoiEnCours = true;
         Thread t = new Thread(() -> {
+            Color tentee = null;               // la derniere couleur TENTEE (envoyee ou non)
             try {
-                Color derniere = null;
                 while (true) {
                     Color v = voulue;
-                    if (v == null || v.equals(derniere)) break;
-                    derniere = v;
-                    envoyer(v, false);
+                    if (v == null || v.equals(tentee)) break;
+                    tentee = v;
+                    if (!envoyer(v, false)) break;   // echec : dit une fois, on s'arrete
                     try { Thread.sleep(PAS_MS); } catch (InterruptedException e) { break; }
                 }
             } finally {
                 envoiEnCours = false;
                 Color v = voulue;
-                // une couleur arrivee pendant la fin de boucle : on repart
-                if (v != null && !v.equals(dernierEnvoi)) enDirect(v);
+                // une NOUVELLE couleur arrivee pendant la fin de boucle : on repart
+                if (v != null && !v.equals(tentee)) enDirect(v);
             }
         }, "atelier-couleur-direct");
         t.setDaemon(true);
@@ -192,14 +194,14 @@ public class OutilCouleur {
 
     private synchronized void brancher() {
         if (installe) return;
-        GPresets gp = AtelierLauncher.gpresets();
+        GPresets gp = AtelierLauncher.moteur();
         if (gp == null) return;
         try {
-            gp.intercept(HMessage.Direction.TOSERVER, m -> {
+            gp.intercept(HMessage.Direction.TOSERVER, "SetRoomBackgroundColorData", m -> {
                 try { apprendre(m); } catch (Throwable ignored) { }
             });
             installe = true;
-            System.out.println("[Atelier] couleur de décor : écoute active.");
+            Journal.debug("couleur de décor : écoute active.");
         } catch (Throwable t) {
             dire("Écoute indisponible : " + t);
         }
@@ -211,9 +213,9 @@ public class OutilCouleur {
      * employees par le client.
      */
     private void apprendre(HMessage m) {
-        HPacket p = new HPacket(m.getPacket());
-        int taille = p.getBytesLength();
+        int taille = m.getPacket().getBytesLength();
         if (taille < 18 || taille > 26) return;          // 4 entiers = 22 octets
+        HPacket p = m.getPacket();
 
         int[] v = new int[4];
         try {
@@ -223,10 +225,14 @@ public class OutilCouleur {
         // trois valeurs de couleur plausibles apres l'identifiant
         for (int i = 1; i < 4; i++)
             if (v[i] < 0 || v[i] > 360) return;
-        if (v[0] == 0) return;
+        if (v[0] <= 0) return;
+        // seulement un vrai mobi Couleur de decor de la salle
+        gearth.extensions.parsers.HFloorItem it = Salle.sol(v[0]);
+        String c = it == null ? null : Salle.classe(it.getTypeId(), false);
+        if (c == null || !c.toLowerCase(java.util.Locale.ROOT).startsWith("roombg_color")) return;
 
         idMobi = v[0];
-        System.out.println("[Atelier] couleur de décor apprise : id=" + v[0]
+        Journal.debug("couleur de décor apprise : id=" + v[0]
                 + " h=" + v[1] + " s=" + v[2] + " l=" + v[3] + " taille=" + taille);
     }
 
@@ -238,15 +244,16 @@ public class OutilCouleur {
         envoyer(c, true);
     }
 
-    private volatile Color dernierEnvoi = null;
-
-    /** Envoie la couleur au mobi ; parler = dire le detail dans la ligne d'etat. */
-    private void envoyer(Color c, boolean parler) {
-        GPresets gp = AtelierLauncher.gpresets();
-        if (gp == null) { dire("G-Presets pas encore prêt."); return; }
+    /**
+     * Envoie la couleur au mobi. Le changement se voit dans le jeu : pas de
+     * message de reussite ; un echec est dit une fois dans la ligne d'etat.
+     * @return true si le paquet est parti
+     */
+    private boolean envoyer(Color c, boolean parler) {
+        GPresets gp = AtelierLauncher.moteur();
+        if (gp == null) { dire("L'Atelier n'est pas encore prêt."); return false; }
         int id = cible();
-        if (id < 0) { dire("Pose un mobi Couleur de décor dans l'appart."); return; }
-        dernierEnvoi = c;
+        if (id < 0) { dire("Pose un mobi Couleur de décor dans l'appart."); return false; }
 
         // HSL, pas HSB : le mobi suit la roue HSL. Les accesseurs de JavaFX
         // (getSaturation/getBrightness) donnent du HSB — pour #ff56c2 ils
@@ -256,9 +263,14 @@ public class OutilCouleur {
         int s = (int) Math.round(hsl[1] * MAX);
         int l = (int) Math.round(hsl[2] * MAX);
 
-        gp.sendToServer(new HPacket("SetRoomBackgroundColorData",
-                HMessage.Direction.TOSERVER, id, h, s, l));
-
+        boolean ok;
+        try {
+            ok = gp.sendToServer(new HPacket("SetRoomBackgroundColorData",
+                    HMessage.Direction.TOSERVER, id, h, s, l));
+        } catch (Throwable t) { ok = false; }
+        if (!ok) { dire("Couleur non envoyée : la connexion au jeu a échoué."); return false; }
+        dire("");                                   // efface une consigne restee affichee
+        return true;
     }
 
     /**

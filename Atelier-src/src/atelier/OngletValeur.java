@@ -59,7 +59,7 @@ public class OngletValeur {
     /** « 12 345 crédits · 246,9 lingots ». */
     static String credits(long c) { return NOMBRE.format(c) + " crédits · " + enLingots(c) + " lingots"; }
 
-    private Label valeur, detail, detailApparts, progression, etat;
+    private Label valeur, detail, detailApparts, progression;
     private TableView<Appart> tableApparts;
     private final ObservableList<Appart> apparts = FXCollections.observableArrayList();
 
@@ -78,6 +78,8 @@ public class OngletValeur {
     }
     private Button maj, arreter;
     private TableView<Ligne> table;
+    /** Ligne choisie, recopiee sur le fil FX (lue par MiseEnValeur sur un autre fil). */
+    private volatile Ligne choisie;
     private final ObservableList<Ligne> lignes = FXCollections.observableArrayList();
     private volatile boolean enCours = false, stop = false;
     private volatile int vuTaille = -1;
@@ -85,10 +87,12 @@ public class OngletValeur {
     public Tab construire() {
         valeur = Ui.valeur("—");
         valeur.setStyle("-fx-font-size: 18px; -fx-font-weight: bold;");
-        detail = Ui.etat();
-        detailApparts = Ui.etat();
+        // Valeurs permanentes, pas des etats : texte simple.
+        detail = new Label();
+        detail.setWrapText(true);
+        detailApparts = new Label();
+        detailApparts.setWrapText(true);
         progression = Ui.etat();
-        etat = Ui.etat();
 
         maj = new Button("Mettre à jour les prix");
         maj.getStyleClass().add("primaire");
@@ -98,6 +102,15 @@ public class OngletValeur {
         arreter.setOnAction(e -> stop = true);
 
         table = new TableView<>(lignes);
+        // Le fournisseur est appele hors du fil FX : il ne lit que cette copie.
+        table.getSelectionModel().selectedItemProperty().addListener((o, a, b) -> choisie = b);
+        // fenetre Patrimoine ouverte : les exemplaires de la ligne choisie posees dans l'appart s'allument
+        MiseEnValeur.fournir("patrimoine", () -> {
+            Ligne l = choisie;
+            if (l == null) return java.util.List.of();
+            return l.mur ? MiseEnValeur.mursOu(w -> w.getTypeId() == l.typeId)
+                         : MiseEnValeur.solsOu(it -> it.getTypeId() == l.typeId);
+        });
         table.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
         table.setPlaceholder(new Label("Inventaire pas encore reçu."));
         table.setPrefHeight(320);
@@ -162,8 +175,7 @@ public class OngletValeur {
                 Ui.bloc("Dans les apparts", tableApparts,
                         Ui.aide("Tes mobis posés dans tes apparts et chez les autres. Un appart est "
                                 + "compté quand tu y entres, tel qu'il était à ton dernier passage. "
-                                + "Clic droit : ne plus le compter.")),
-                etat);
+                                + "Clic droit : ne plus le compter.")));
         v.setFillWidth(true);
         v.setPadding(new Insets(12, 14, 14, 14));
 
@@ -300,7 +312,7 @@ public class OngletValeur {
     }
 
     private void afficher() {
-        GPresets gp = AtelierLauncher.gpresets();
+        GPresets gp = AtelierLauncher.moteur();
         if (gp == null) return;
         long total = 0;
         boolean[] jeu = {false};
@@ -399,7 +411,7 @@ public class OngletValeur {
         // Tant que habbofurni n'est pas lu, on ne sait pas quels prix manquent :
         // inutile de tout demander au jeu.
         if (!forcer && !PrixSite.fini()) return;
-        GPresets gp = AtelierLauncher.gpresets();
+        GPresets gp = AtelierLauncher.moteur();
         List<HInventoryItem> inv = OngletInventaire.dernierInventaire();
         if (gp == null) return;
         if (inv == null) inv = List.of();
@@ -417,7 +429,8 @@ public class OngletValeur {
             if (forcer || !Marche.aJour(mur, typeId)) aDemander.add(k);
         }
         if (aDemander.isEmpty()) {
-            Platform.runLater(() -> progression.setText("Tous les prix sont à jour."));
+            // Message seulement quand tu as demande la mise a jour (pas a chaque passage automatique).
+            if (forcer) Platform.runLater(() -> progression.setText("Prix mis à jour : rien à redemander au jeu."));
             return;
         }
         enCours = true;
@@ -448,8 +461,11 @@ public class OngletValeur {
                     afficher();
                     maj.setDisable(false);
                     arreter.setDisable(true);
-                    progression.setText((arrete ? "Arrêté : " : "Terminé : ") + f + " prix sur " + n
-                            + (ec > 0 ? "  ·  " + ec + " sans réponse du jeu (redemandés automatiquement plus tard)" : ""));
+                    String fin = (arrete ? "Mise à jour des prix arrêtée : " : "Prix mis à jour : ") + f + " sur " + n
+                            + (ec > 0 ? ", " + ec + " sans réponse du jeu (redemandés plus tard)" : "") + ".";
+                    // Passage automatique : console seulement, pas de message dans le jeu.
+                    if (forcer) progression.setText(fin);
+                    else { progression.setText(""); Journal.debug(fin); }
                 });
                 enCours = false;
             }
@@ -458,5 +474,4 @@ public class OngletValeur {
         t.start();
     }
 
-    private void dire(String s) { Platform.runLater(() -> etat.setText(s)); }
 }

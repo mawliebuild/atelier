@@ -26,6 +26,8 @@ public final class OutilHistorique {
     private final CheckBox enregistrer = new CheckBox("Enregistrer les modifications");
     private final Label resume = Ui.valeur("—");
     private final Label etat = Ui.etat();
+    /** Suivi automatique (rien a annoncer dans le jeu) : texte discret qui reste en place. */
+    private final Label suivi = Ui.discret("");
     private final Label raccourcis = Ui.discret("");
 
     public Tab construire() {
@@ -74,10 +76,13 @@ public final class OutilHistorique {
                 Ui.bloc("Dernières modifications", liste),
                 Ui.bloc("Réglages", Ui.ligne(enregistrer, vider), raccourcis),
                 aide,
+                suivi,
                 etat);
         contenu.setPadding(new Insets(12, 14, 14, 14));
         contenu.setFillWidth(true);
 
+        suivi.managedProperty().bind(suivi.textProperty().isNotEmpty());
+        suivi.visibleProperty().bind(suivi.managedProperty());
         Historique.ecouter(this::rafraichir);
         rafraichir();
 
@@ -104,8 +109,21 @@ public final class OutilHistorique {
         if (occupe) resume.setText("Envoi en cours…");
         else resume.setText(faites.isEmpty() ? "Rien à annuler"
                 : "Annuler : " + faites.get(0));
-        etat.setText(Historique.message());
+        // Seuls les resultats de tes actions (annuler, retablir, vider, pause) passent
+        // par la ligne d'etat (et donc dans le jeu) ; le suivi automatique reste discret.
+        String m = Historique.message();
+        if (automatique(m)) {
+            suivi.setText(m);
+            if (etat.getText() != null && etat.getText().endsWith("…")) etat.setText("");
+        }
+        else { suivi.setText(""); etat.setText(m); }
         raccourcis.setText(RaccourcisGlobaux.etat());
+    }
+
+    /** Message du suivi automatique de la salle (pas le resultat d'une action). Logique pure. */
+    static boolean automatique(String m) {
+        return m == null || m.startsWith("Enregistré : ") || m.startsWith("Nouvelle salle")
+                || m.startsWith("Salle suivie") || m.startsWith("En attente");
     }
 
     private static ScrollPane defiler(Pane p) {

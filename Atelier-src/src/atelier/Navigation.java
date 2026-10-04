@@ -22,7 +22,7 @@ import java.util.function.Consumer;
  * Un menu a un seul volet le montre tel quel ; a plusieurs, chaque volet
  * devient une section repliable, la premiere ouverte.
  *
- * Le contenu d'Apparts arrive plus tard, quand G-Presets a demarre : on suit
+ * Le contenu d'Apparts arrive plus tard, quand le moteur de l'Atelier a demarre : on suit
  * donc le contenu de chaque onglet, et on remonte les menus qui en dependent.
  */
 public class Navigation {
@@ -170,7 +170,7 @@ public class Navigation {
                 noeuds.add(carte.get(s.volet()));
                 conds.add(s.prerequis());
             } else {
-                // Onglet pas encore pret (Apparts avant G-Presets) : un Node ne
+                // Onglet pas encore pret (Apparts avant le moteur de l'Atelier) : un Node ne
                 // peut avoir qu'un parent, on ne reprend donc pas le contenu
                 // provisoire, partage par deux menus.
                 noms.add(s.titre() != null ? s.titre() : s.volet());
@@ -215,7 +215,7 @@ public class Navigation {
             for (int i = 0; i < noeuds.size(); i++)
                 m.sections.getChildren().add(section(noms.get(i), noeuds.get(i), i == 0, aides.get(i)));
         }
-        System.out.println("[Atelier] menu " + m.nom + " : " + noeuds.size() + " volet(s)");
+        Journal.debug("menu " + m.nom + " : " + noeuds.size() + " volet(s)");
     }
 
     private static Prerequis prerequisEnHaut(Prerequis.Condition[] c) {

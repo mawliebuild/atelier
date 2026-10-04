@@ -9,7 +9,7 @@ import java.util.List;
  * Cases indexees [x][y] comme dans le jeu : x = position dans la ligne,
  * y = numero de ligne. Hauteur 0..35 (caracteres 0-9 puis a-z), -1 = pas de
  * case (caractere 'x'). Meme lecture que FloorState.parseFloorPlan de
- * G-Presets (verifie au javap : lignes coupees sur '\r', floorplan[x][y] =
+ * le moteur de l'Atelier (verifie au javap : lignes coupees sur '\r', floorplan[x][y] =
  * ligne[y].charAt(x)) et que PresetUtils.heightFromChar (chiffre -> 0..9,
  * minuscule -> 10.., 'x' -> 256 = pas de case).
  *

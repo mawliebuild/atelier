@@ -52,6 +52,7 @@ public class OutilCapture {
     private static final long ATTENTE_FICHIER_MS = 30_000;
     private static final long ATTENTE_JEU_MS = 8_000;
     private static final long ATTENTE_MAIN_MS = 5 * 60_000;
+    private static final boolean WINDOWS = Capture.WINDOWS;
 
     // --- controles
     private Label etat, source, toner, nomDernier;
@@ -91,12 +92,12 @@ public class OutilCapture {
      * (taille, attente, tolerance), sans rien a cliquer avant.
      */
     public static void photo(String css, Runnable reglages) {
-        System.out.println("[Atelier] photo : clic sur l'appareil photo.");
+        Journal.debug("photo : clic sur l'appareil photo.");
         OutilCapture c = instance;
-        if (c == null) { InfoJeu.consigne("La capture n'est pas encore prête : réessaie dans un instant."); return; }
+        if (c == null) { Journal.erreur("Impossible : la capture n'est pas encore prête, réessaie dans un instant."); return; }
         Platform.runLater(() -> {
             if (!c.occupe.compareAndSet(false, true)) {
-                InfoJeu.consigne("Une capture est déjà en cours.");
+                Journal.erreur("Impossible : une capture est déjà en cours.");
                 return;
             }
             Options o;
@@ -105,8 +106,7 @@ public class OutilCapture {
                 o = c.lireOptions();
             } catch (Throwable t) {
                 c.occupe.set(false);
-                System.err.println("[Atelier] photo : " + t);
-                InfoJeu.consigne("Photo impossible : " + t);
+                Journal.erreur("Photo impossible", t);
                 return;
             }
             InfoJeu.consigne("Photo de l'appart…");
@@ -115,9 +115,7 @@ public class OutilCapture {
                     Capture.Planche p = c.photographier(o);
                     if (p != null) ApercuCapture.ouvrir(css, p, o.r, reglages);
                 } catch (Throwable t) {
-                    t.printStackTrace();
-                    c.dire("Échec de la capture : " + t);
-                    InfoJeu.consigne("Échec de la photo : " + t);
+                    c.erreur("Échec de la photo", t);
                 } finally {
                     c.occupe.set(false);
                 }
@@ -138,13 +136,13 @@ public class OutilCapture {
                 catch (Throwable t) { erreur = "Photo du jeu illisible : " + t; }
                 finally { j.valeur.delete(); }
             }
-            if (erreur != null) { dire(erreur); InfoJeu.consigne(erreur); }
+            if (erreur != null) erreur(erreur);
             return p;
         }
         if (!Capture.autorisationEcran())
             dire("macOS demande l'autorisation « Enregistrement de l'écran » — essai quand même…");
         Capture.Ou<Capture.Cadre> lu = Capture.lireCadreHabbo();
-        if (lu.erreur != null) { dire(lu.erreur); InfoJeu.consigne(lu.erreur); return null; }
+        if (lu.erreur != null) { erreur(lu.erreur); return null; }
         Capture.Cadre avant = lu.valeur;
         String erreur = null;
         Capture.Planche p = null;
@@ -169,7 +167,7 @@ public class OutilCapture {
             Ancrage.actif(ancrage);
             Ancrage.recoller();
         }
-        if (erreur != null) { dire(erreur); InfoJeu.consigne(erreur); return null; }
+        if (erreur != null) { erreur(erreur); return null; }
         return p;
     }
 
@@ -199,7 +197,12 @@ public class OutilCapture {
                 Ui.ligne(new Label("Taille"), largeurF, new Label("×"), hauteurF),
                 Ui.ligne(new Label("Attente du redessin (ms)"), attenteF),
                 hautGauche,
-                Ui.aide("La fenêtre Habbo est agrandie au-delà de l'écran, photographiée seule, "
+                Ui.aide(WINDOWS
+                        ? "La fenêtre Habbo est agrandie au-delà de l'écran, photographiée seule, puis "
+                          + "remise à sa place et à sa taille. Aucune autorisation à donner sous Windows. "
+                          + "Si la salle est quand même coupée, c'est que Habbo ou Windows a refusé la "
+                          + "taille : reviens à :screenshot."
+                        : "La fenêtre Habbo est agrandie au-delà de l'écran, photographiée seule, "
                         + "puis remise à sa place et à sa taille. Exige l'autorisation « Enregistrement "
                         + "de l'écran » en plus d'« Accessibilité ». Si la salle est quand même coupée, "
                         + "c'est que Habbo ou macOS a refusé la taille : reviens à :screenshot."));
@@ -305,8 +308,9 @@ public class OutilCapture {
                         capturer,
                         Ui.aide("Avant : sois dans la salle et ne laisse aucun autre champ de "
                                 + "saisie actif dans Habbo (recherche, messagerie…), sinon la "
-                                + "commande y serait tapée. macOS demande l'autorisation "
-                                + "« Accessibilité » pour Terminal (ou java)."),
+                                + "commande y serait tapée. " + (WINDOWS
+                                ? "L'Atelier met Habbo au premier plan le temps de taper, puis revient."
+                                : "macOS demande l'autorisation « Accessibilité » pour Terminal (ou java).")),
                         coller,
                         auto,
                         Ui.aide("Coché : tape :screenshot dans le jeu quand tu veux, l'Atelier "
@@ -316,7 +320,8 @@ public class OutilCapture {
                         source,
                         Ui.ligne(choisir, oublier),
                         Ui.aide("Trouvé tout seul à la première capture, puis retenu. Sinon : "
-                                + "Bureau, Images, Téléchargements, Documents, puis Spotlight.")),
+                                + "Bureau, Images, Téléchargements, Documents, puis "
+                                + (WINDOWS ? "une recherche dans ton dossier personnel." : "Spotlight."))),
                 Ui.bloc("Fond autour de l'appart",
                         appliquerDecor,
                         toner,
@@ -384,8 +389,7 @@ public class OutilCapture {
         if (init.isDirectory()) dc.setInitialDirectory(init);
         File d = dc.showDialog(fenetre());
         if (d == null) return;
-        retenirDossier(d);
-        dire("Dossier retenu : " + d.getAbsolutePath());
+        retenirDossier(d);                   // le label « source » montre le dossier
     }
 
     private void retenirDossier(File d) {
@@ -429,7 +433,11 @@ public class OutilCapture {
             File[] l = d.listFiles();
             if (l == null) {
                 if (d.isDirectory() && refusesSignales.add(d.getAbsolutePath()))
-                    dire("Accès refusé à « " + d.getName() + " ». Réglages Système › Confidentialité "
+                    erreur(WINDOWS
+                            ? "Accès refusé à « " + d.getName() + " ». Sécurité Windows › Protection contre les "
+                              + "virus et menaces › Protection contre les ransomwares : autorise java, ou "
+                              + "choisis un autre dossier."
+                            : "Accès refusé à « " + d.getName() + " ». Réglages Système › Confidentialité "
                             + "et sécurité › Fichiers et dossiers : autorise Terminal (ou java).");
                 continue;
             }
@@ -501,7 +509,7 @@ public class OutilCapture {
                 else if (o.format == Capture.Format.GIF && o.anime) serie(o);
                 else une(o);
             } catch (Throwable t) {
-                dire("Échec de la capture : " + t);
+                erreur("Échec de la capture", t);
             } finally {
                 occupe.set(false);
                 Platform.runLater(() -> capturer.setText("Capturer l'appart"));
@@ -518,7 +526,7 @@ public class OutilCapture {
     private long declencher(boolean coller) {
         long t0 = System.currentTimeMillis() - 1000;
         String err = Capture.declencher(coller);
-        if (err != null) { dire(err); return -1; }
+        if (err != null) { erreur(err); return -1; }
         return t0;
     }
 
@@ -529,13 +537,13 @@ public class OutilCapture {
     private File prendre(Options o) {
         if (ClientModifie.saitCapturer()) {
             Capture.Ou<File> j = Capture.captureParLeJeu(ATTENTE_JEU_MS);
-            if (j.erreur != null) dire(j.erreur);
+            if (j.erreur != null) erreur(j.erreur);
             return j.valeur;
         }
         long t0 = declencher(o.coller);
         if (t0 < 0) return null;
         File f = attendreFichier(t0, ATTENTE_FICHIER_MS, true);
-        if (f == null && !annule) dire(rienRecu());
+        if (f == null && !annule) erreur(rienRecu());
         return f;
     }
 
@@ -554,7 +562,7 @@ public class OutilCapture {
         dire("En attente de l'image du jeu…");
         File f = attendreFichier(t0, ATTENTE_FICHIER_MS, true);
         if (annule) { dire("Capture annulée."); return; }
-        if (f == null) { dire(rienRecu()); return; }
+        if (f == null) { erreur(rienRecu()); return; }
         traiterFichier(f, o);
     }
 
@@ -594,13 +602,13 @@ public class OutilCapture {
                 try { planches.add(Capture.traiter(Capture.lire(f), o.r)); }
                 catch (Throwable t) { System.err.println("[Atelier] capture : " + f + " : " + t); }
             }
-            if (planches.isEmpty()) { dire("Aucune image exploitable dans la série."); return; }
+            if (planches.isEmpty()) { erreur("Échec : aucune image exploitable dans la série."); return; }
             ecrire(planches, o, o.noteDecor);
         } catch (IllegalStateException e) {
-            dire("Rien à garder : " + e.getMessage() + ". Essaie une tolérance plus basse, "
+            erreur("Rien à garder : " + e.getMessage() + ". Essaie une tolérance plus basse, "
                     + "ou « Garder l'arrière-plan d'origine ».");
         } catch (Throwable t) {
-            dire("Échec de l'assemblage : " + t);
+            erreur("Échec de l'assemblage du GIF", t);
         } finally {
             rangerBrutes(brutes, o.garderBrutes);
         }
@@ -616,7 +624,7 @@ public class OutilCapture {
         if (!Capture.autorisationEcran())
             dire("macOS demande l'autorisation « Enregistrement de l'écran » — essai quand même…");
         Capture.Ou<Capture.Cadre> lu = Capture.lireCadreHabbo();
-        if (lu.erreur != null) { dire(lu.erreur); return; }
+        if (lu.erreur != null) { erreur(lu.erreur); return; }
         Capture.Cadre avant = lu.valeur;
 
         List<Capture.Planche> planches = new ArrayList<>();
@@ -630,7 +638,8 @@ public class OutilCapture {
                 Salle.sommeil(Math.max(0, o.attenteF));
                 Capture.Ou<Capture.Cadre> apres = Capture.lireCadreHabbo();
                 if (apres.valeur != null && (apres.valeur.l < o.largeurF - 4 || apres.valeur.h < o.hauteurF - 4))
-                    note = " Fenêtre limitée à " + apres.valeur.l + "×" + apres.valeur.h + " par macOS ou Habbo.";
+                    note = " Fenêtre limitée à " + apres.valeur.l + "×" + apres.valeur.h
+                            + (WINDOWS ? " par Windows ou Habbo." : " par macOS ou Habbo.");
                 int n = o.anime ? Math.max(2, o.nb) : 1;
                 for (int i = 1; i <= n && !annule; i++) {
                     dire("Image " + i + " / " + n + " : capture de la fenêtre…" + note);
@@ -651,14 +660,14 @@ public class OutilCapture {
         }
 
         if (annule) { dire("Capture annulée." + note); return; }
-        if (erreur != null) { dire(erreur + note); return; }
-        if (planches.isEmpty()) { dire("Aucune image capturée." + note); return; }
+        if (erreur != null) { erreur(erreur + note); return; }
+        if (planches.isEmpty()) { erreur("Échec : aucune image capturée." + note); return; }
         try {
             Options fin = o;
             fin.anime = o.anime && planches.size() > 1;
             ecrire(planches, fin, o.noteDecor + note);
         } catch (Throwable t) {
-            dire("Échec de l'enregistrement : " + t + note);
+            erreur("Échec de l'enregistrement : " + t + note);
         }
     }
 
@@ -725,7 +734,9 @@ public class OutilCapture {
                     }
                 }
             } catch (Throwable t) {
-                dire("Surveillance : " + t.getMessage());
+                // une seule fois par cause : la boucle repasse toutes les 800 ms
+                String m = String.valueOf(t);
+                if (!m.equals(erreurVeille)) { erreurVeille = m; erreur("Erreur de surveillance du dossier", t); }
             }
             tour++;
             Salle.sommeil(800);
@@ -836,10 +847,10 @@ public class OutilCapture {
             Options fixe = o; fixe.anime = false;
             ecrire(List.of(p), fixe, o.noteDecor);
         } catch (IllegalStateException e) {
-            dire("Rien à garder : " + e.getMessage() + ". Essaie une tolérance plus basse, "
+            erreur("Rien à garder : " + e.getMessage() + ". Essaie une tolérance plus basse, "
                     + "ou « Garder l'arrière-plan d'origine ».");
         } catch (Throwable e) {
-            dire("Échec du traitement de « " + f.getName() + " » : " + e);
+            erreur("Échec du traitement de « " + f.getName() + " »", e);
         }
     }
 
@@ -865,14 +876,13 @@ public class OutilCapture {
         }
         Capture.rendre(sortie);
 
-        final String msg = "Enregistré : " + sortie.getName() + "." + note + noteDecor;
-        InfoJeu.dire("Capture enregistrée (Images › Atelier).");
+        final String msg = "Capture enregistrée : " + sortie.getName() + " (Images › Atelier)." + note + noteDecor;
         Platform.runLater(() -> {
             try { apercu.setImage(new Image(sortie.toURI().toString(), 620, 440, true, true, true)); }
             catch (Throwable ignored) { }
             nomDernier.setText(sortie.getName());
-            etat.setText(msg);
         });
+        succes(msg);
     }
 
     /** Suit le toner de la salle tout seul (entree en salle, reglage, allumage). */
@@ -909,8 +919,9 @@ public class OutilCapture {
         File d = Capture.dossierSortie();
         Salle.tache("capture-ouvrir", () -> {
             try {
-                if (System.getProperty("os.name", "").toLowerCase().contains("win")) {
-                    new ProcessBuilder("explorer", d.getAbsolutePath()).start();
+                if (WINDOWS) {
+                    // explorer.exe rend souvent 1 meme quand le dossier s'ouvre : pas de test du code
+                    new ProcessBuilder("explorer.exe", d.getAbsolutePath()).start();
                     return;
                 }
                 List<String> cmd = new ArrayList<>(Capture.prefixeUtilisateur());
@@ -920,7 +931,7 @@ public class OutilCapture {
                 if (!p.waitFor(5, java.util.concurrent.TimeUnit.SECONDS) || p.exitValue() != 0)
                     new ProcessBuilder("/usr/bin/open", d.getAbsolutePath()).start();
             } catch (Throwable e) {
-                dire("Impossible d'ouvrir le dossier : " + e.getMessage());
+                erreur("Impossible d'ouvrir le dossier", e);
             }
         });
     }
@@ -928,4 +939,12 @@ public class OutilCapture {
     private void dire(String s) {
         Platform.runLater(() -> { if (etat != null) etat.setText(s); });
     }
+
+    /** Resultats : genre dit explicitement (ligne d'etat -> Journal). */
+    private void succes(String s) { if (etat != null) Ui.succes(etat, s); else Journal.succes(s); }
+    private void erreur(String s) { if (etat != null) Ui.erreur(etat, s); else Journal.erreur(s); }
+    private void erreur(String s, Throwable t) { if (etat != null) Ui.erreur(etat, s, t); else Journal.erreur(s, t); }
+
+    /** Derniere erreur de la surveillance deja dite (pas de repetition). */
+    private volatile String erreurVeille = null;
 }

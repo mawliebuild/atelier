@@ -20,12 +20,12 @@ import java.util.function.DoubleSupplier;
  * Reperage d'une pose a toi :
  *   1. le client envoie PlaceObject (« -id x y rot ») ou
  *      BuildersClubPlaceRoomItem (int, int, String, x, y, rot) : on note la case.
- *      Les envois de l'Atelier / G-Presets ne passent pas par les intercepteurs ;
+ *      Les envois de l'Atelier (outils et moteur de pose) ne passent pas par les intercepteurs ;
  *   2. le serveur repond ObjectAdd (id, type, x, y, ...) : s'il tombe sur une
  *      case notee il y a moins de 6 s, c'est ton mobi. Les mobis des autres et
  *      les deplacements (ObjectUpdate) ne passent donc pas.
  * Sont aussi laisses : les dalles magiques, et tout ce qui arrive pendant un
- * collage / import G-Presets, une annulation (Historique) ou une pose de dalles.
+ * collage / import par le moteur de pose, une annulation (Historique) ou une pose de dalles.
  *
  * Les intercepteurs ne font que lire quelques entiers et poser un evenement
  * dans une file ; un fil dedie ecrit l'altitude des reception, sans pause,
@@ -112,10 +112,10 @@ final class HauteurSansDalles {
                         gp.intercept(S, "BuildersClubPlaceRoomItem", HauteurSansDalles::surPoseBC);
                         gp.intercept(C, "ObjectAdd", HauteurSansDalles::surObjectAdd);
                         branche = true;
-                        System.out.println("[Atelier] hauteur sans dalles : écoute des poses active.");
+                        Journal.debug("hauteur sans dalles : écoute des poses active.");
                         return;
                     } catch (Throwable t) {
-                        System.err.println("[Atelier] hauteur sans dalles : écoute indisponible : " + t);
+                        Journal.debug("hauteur sans dalles : écoute indisponible : " + t);
                     }
                 }
                 Salle.sommeil(1000);
@@ -172,16 +172,26 @@ final class HauteurSansDalles {
 
     private static final HauteurLogique.Ecritures ecritures = new HauteurLogique.Ecritures(
             new HauteurLogique.Ecritures.Monde() {
-                @Override public void ecrire(int id, double z) { OutilMiroir.Altitude.ecrire(id, z); }
+                @Override public void ecrire(int id, double z) {
+                    // Une ecriture isolee part tout de suite ; en rafale (« Appliquer aux mobis
+                    // deja poses », renvois de verifier()), au moins 150 ms entre deux envois.
+                    long ecart = System.currentTimeMillis() - dernierEcrit;
+                    if (ecart < PAUSE_RAFALE) Salle.sommeil(PAUSE_RAFALE - ecart);
+                    dernierEcrit = System.currentTimeMillis();
+                    OutilMiroir.Altitude.ecrire(id, z);
+                }
                 @Override public Double z(int id) {
                     HFloorItem it = Salle.sol(id);
                     return it == null || it.getTile() == null ? null : it.getTile().getZ();
                 }
             }, HauteurLogique.Ecritures.VERIF);
 
+    static final long PAUSE_RAFALE = 150;
+    private static volatile long dernierEcrit = 0;
+
     private static void travailler() {
         HauteurLogique.Poses poses = new HauteurLogique.Poses();
-        boolean chercheFaite = false;
+        boolean chercheFaite = false, consigneDite = false;
         Set<Integer> types = null;
         while (true) {
             try {
@@ -190,7 +200,7 @@ final class HauteurSansDalles {
                 Ev e = file.poll(attente, TimeUnit.MILLISECONDS);
                 long now = System.currentTimeMillis();
                 if (e != null) switch (e.k) {
-                    case 3: poses = new HauteurLogique.Poses(); chercheFaite = false; types = null; break;
+                    case 3: poses = new HauteurLogique.Poses(); chercheFaite = false; consigneDite = false; types = null; break;
                     case 0: if (actif) poses.demandee(e.a, e.b, e.t); break;
                     case 1: {
                         if (!actif || !poses.apparue(e.c, e.d, now)) break;
@@ -201,7 +211,7 @@ final class HauteurSansDalles {
                                 false);   // une repose (meme id) est retraitee
                         if (refus != null) {
                             ignores++;
-                            System.out.println("[Atelier] hauteur sans dalles : mobi " + e.a + " laissé (" + refus + ").");
+                            Journal.debug("hauteur sans dalles : mobi " + e.a + " laissé (" + refus + ").");
                             break;
                         }
                         double z = hauteur.getAsDouble();
@@ -212,7 +222,11 @@ final class HauteurSansDalles {
                             OutilMiroir.Altitude.chercher(e.a, z);
                         }
                         if (!OutilMiroir.Altitude.connue()) {
-                            InfoJeu.consigne("Règle @altitude une fois dans l'éditeur :wired, puis repose le mobi.");
+                            // une seule fois par activation du mode (pas a chaque pose)
+                            if (!consigneDite) {
+                                consigneDite = true;
+                                Journal.erreur("Hauteur impossible : règle @altitude une fois dans l'éditeur :wired, puis repose le mobi.");
+                            }
                             break;
                         }
                         ecritures.ecrire(e.a, z, System.currentTimeMillis());
@@ -222,14 +236,15 @@ final class HauteurSansDalles {
                     }
                     case 2: {
                         if (!OutilMiroir.Altitude.connue()) {
-                            InfoJeu.consigne("Règle @altitude une fois dans l'éditeur :wired.");
+                            OutilHauteur.echec("Hauteur impossible : règle @altitude une fois dans l'éditeur :wired.");
                             break;
                         }
                         double z = hauteur.getAsDouble();
                         int n = 0;
                         List<Integer> ids;
                         synchronized (traites) { ids = new ArrayList<>(traites); }
-                        for (int id : ids) if (Salle.sol(id) != null) { ecritures.ecrire(id, z, now); n++; }
+                        for (int id : ids)
+                            if (Salle.sol(id) != null) { ecritures.ecrire(id, z, System.currentTimeMillis()); n++; }
                         OutilHauteur.bilan(n == 0 ? "Aucun mobi posé pendant ce mode n'est encore dans l'appart."
                                 : n + " mobi(s) remis à " + OutilHauteur.texte(z) + ".");
                         break;
@@ -239,7 +254,7 @@ final class HauteurSansDalles {
                 List<Integer> perdus = ecritures.verifier(System.currentTimeMillis());
                 if (!perdus.isEmpty()) {
                     rates += perdus.size();
-                    OutilHauteur.bilan(perdus.size() + " mobi(s) pas à la hauteur après deux essais (droits sur l'appart ?).");
+                    OutilHauteur.echec("Échec pour " + perdus.size() + " mobi(s) : pas à la hauteur après deux essais (droits sur l'appart ?).");
                     majUi.run();
                 }
             } catch (InterruptedException ie) {

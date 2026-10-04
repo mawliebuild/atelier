@@ -13,7 +13,7 @@ import javafx.stage.Stage;
  * Rubrique Parametres.
  *
  * Le maintien de la fenetre au premier plan, et les actions de reglage qui
- * passent par les methodes publiques de G-Presets.
+ * passent par les methodes publiques du moteur de l'Atelier.
  */
 public class OngletParametres {
 
@@ -57,9 +57,9 @@ public class OngletParametres {
                 + "transparente quand ta souris est sur le jeu, pour voir les mobis derrière.");
 
         Button cacheBc = plein("Vider le cache BC",
-                gp -> gp.clearBCClick(null), "Cache BC vidé");
+                gp -> gp.clearBCClick(null), "Cache BC vidé.");
         Button cacheWired = plein("Vider le cache wired",
-                gp -> gp.clearWiredClick(null), "Cache wired vidé");
+                gp -> gp.clearWiredClick(null), "Cache wired vidé.");
 
         cacheBc.setMaxWidth(Double.MAX_VALUE);
         cacheWired.setMaxWidth(Double.MAX_VALUE);
@@ -69,7 +69,7 @@ public class OngletParametres {
                 Ui.bloc("Fenêtres", devant, Ui.etiquette("Transparence quand la souris est sur le jeu"), ligneFondu, aideFondu),
                 Ui.bloc("Raccourcis clavier", raccourcis()),
                 Ui.bloc("Données", Ui.ligne(cacheBc, cacheWired),
-                        Ui.aide("Vider un cache force G-Presets à relire le catalogue BC ou les réglages wired.")));
+                        Ui.aide("Vider un cache force l'Atelier à relire le catalogue BC ou les réglages wired.")));
         VBox droite = new VBox(12, blocInventaire());
         for (VBox c : new VBox[]{gauche, droite}) {
             c.setFillWidth(true);
@@ -100,16 +100,16 @@ public class OngletParametres {
                 {"⌥ Option + C", "Mode calque (en mode Construction) : clic sur un mobi = sélection"},
                 {"⌥ Option + G", "Afficher / cacher la grille (mode Construction)"},
                 {"⌥ Option + Maj + C / V", "Copier / coller un calque, dans le jeu"},
-                {"⌘ Cmd + Z / ⌘ Maj + Z", "Annuler / rétablir dans la salle"},
+                {"⌘ Cmd + Z / ⌘ Cmd + Maj + Z", "Annuler / rétablir dans la salle"},
                 {"Échap", "Dans le jeu : relâcher le mobi pris avec Option + clic (il reste à sa place)"},
                 {":h 2,5", "Dans le chat : hauteur fixe des dalles magiques"}};
         GridPane g = new GridPane();
         g.setHgap(14); g.setVgap(6);
         for (int i = 0; i < l.length; i++) {
-            Label k = new Label(l[i][0]);
+            Label k = new Label(WindowsClavier.texte(l[i][0]));
             k.setStyle("-fx-font-weight: bold;");
             k.setMinWidth(Region.USE_PREF_SIZE);
-            Label t = new Label(l[i][1]);
+            Label t = new Label(WindowsClavier.texte(l[i][1]));
             t.setWrapText(true);
             g.add(k, 0, i);
             g.add(t, 1, i);
@@ -153,7 +153,7 @@ public class OngletParametres {
         optionsInstallees.setVisible(false);
         versionJeu = Ui.discret("");
         versionJeu.setStyle("");
-        versionJeu.getStyleClass().add("note");
+        versionJeu.getStyleClass().add("etat-ligne");   // consigne permanente, sans encadre
         versionJeu.managedProperty().bind(versionJeu.visibleProperty());
         versionJeu.setVisible(false);
         etatInv = Ui.etat();
@@ -208,15 +208,13 @@ public class OngletParametres {
         String installe = ClientModifie.empreinte(ClientModifie.swfInstalle());
         String origine = ClientModifie.empreinte(ClientModifie.swfOrigine());
         String niveau, raison, options = null;
+        // Le jeu est adapte automatiquement a chaque version (modifier-jeu.py) : on
+        // regarde donc seulement si le client installe contient le code de l'Atelier.
         if (installe == null) {
             niveau = "absent"; raison = "Client du jeu introuvable : ouvre Habbo une fois par le Launcher.";
-        } else if (origine == null) {
-            niveau = "absent"; raison = "Client d'origine introuvable, comparaison impossible.";
-        } else if (installe.equals(origine)) {
-            niveau = "attente"; raison = "D'origine (inventaire normal).";
-        } else if (!ClientModifie.clientPrevu() && !installe.equals(PREFS.get("inventaire.installe.sha", ""))) {
-            niveau = "absent"; raison = "Ton client Habbo n'est pas la version prévue : les modifs du jeu ne s'y "
-                    + "appliquent pas (l'Atelier marche quand même).";
+        } else if (!ClientModifie.saitSurligner()) {
+            niveau = "attente"; raison = "D'origine (inventaire normal) : ferme Habbo puis relance « Lancer l'Atelier » "
+                    + "pour installer les modifs du jeu.";
         } else {
             niveau = "ok"; raison = "Modifié pour l'Atelier.";
             if (installe.equals(PREFS.get("inventaire.installe.sha", ""))) {
@@ -228,7 +226,7 @@ public class OngletParametres {
                         : "Installé avec : " + String.join(", ", avec) + ".";
             } else options = "Options installées inconnues (modifié en dehors de l'Atelier).";
         }
-        System.out.println("[Atelier] Client du jeu : " + raison + (options != null ? " " + options : ""));
+        Journal.debug("Client du jeu : " + raison + (options != null ? " " + options : ""));
         final String n = niveau, r = raison, o = options;
         Platform.runLater(() -> {
             voyantClient.regler(n, r);
@@ -250,19 +248,19 @@ public class OngletParametres {
                 direInv("Construction du client du jeu" + (sans.isEmpty() ? "" : " (sans : "
                         + String.join(", ", sans) + ")") + "…");
                 ClientModifie.Resultat c = ClientModifie.construire(sans,
-                        l -> direInv("Construction : " + l));
+                        l -> direInv("Construction en cours : " + l));
                 if (!c.reussi() || !ClientModifie.swfConstruit().isFile()) {
                     direInv("Échec de la construction : " + c.derniereLigne());
                     return;
                 }
                 if (!attendreFermeture("Client construit, mais Habbo est ouvert. Ferme Habbo (Cmd+Q) : "
                         + "j'installe dès qu'il est fermé (garde l'Atelier ouvert).")) {
-                    direInv("Installation annulée : Habbo est toujours ouvert. Ferme Habbo (Cmd+Q) puis "
+                    direInv("Installation interrompue : Habbo est toujours ouvert. Ferme Habbo (Cmd+Q) puis "
                             + "clique de nouveau sur Appliquer.");
                     return;
                 }
                 direInv("Installation dans Habbo…");
-                ClientModifie.Resultat i = ClientModifie.installer(l -> direInv("Installation : " + l));
+                ClientModifie.Resultat i = ClientModifie.installer(l -> direInv("Installation en cours : " + l));
                 if (!i.reussi()) {
                     direInv("Échec de l'installation : " + i.derniereLigne());
                     return;
@@ -270,7 +268,7 @@ public class OngletParametres {
                 PREFS.put("inventaire.installe.sans", String.join(",", sans));
                 String sha = ClientModifie.empreinte(ClientModifie.swfInstalle());
                 if (sha != null) PREFS.put("inventaire.installe.sha", sha);
-                direInv("Inventaire modifié installé. Lance Habbo par le Launcher, comme d'habitude.");
+                direInv("Client modifié appliqué au jeu. Lance Habbo par le Launcher, comme d'habitude.");
             } finally {
                 occuper(false);
                 lireEtatClient();
@@ -297,12 +295,12 @@ public class OngletParametres {
             try {
                 if (!attendreFermeture("Habbo est ouvert. Ferme Habbo (Cmd+Q) : je remets l'original dès "
                         + "qu'il est fermé (garde l'Atelier ouvert).")) {
-                    direInv("Rien n'a changé : Habbo est toujours ouvert. Ferme Habbo (Cmd+Q) puis "
+                    direInv("Remise interrompue : Habbo est toujours ouvert. Ferme Habbo (Cmd+Q) puis "
                             + "clique de nouveau sur Revenir.");
                     return;
                 }
                 direInv("Remise du client d'origine…");
-                ClientModifie.Resultat r = ClientModifie.restaurer(l -> direInv(l));
+                ClientModifie.Resultat r = ClientModifie.restaurer(l -> direInv("Remise en cours : " + l));
                 if (!r.reussi()) {
                     direInv("Échec de la remise du client d'origine : " + r.derniereLigne());
                     return;
@@ -355,7 +353,8 @@ public class OngletParametres {
 
     private void direInv(String s) {
         String t = Ui.majuscule(s);
-        System.out.println("[Atelier] Inventaire : " + t);
+        if (Journal.genre(t) == Journal.Genre.PROGRESSION) Journal.debug("Inventaire : " + t);
+        else Journal.info("Inventaire : " + t);
         Platform.runLater(() -> etatInv.setText(t));
     }
 
@@ -367,10 +366,10 @@ public class OngletParametres {
         Button b = new Button(texte);
         b.setMaxWidth(Double.MAX_VALUE);
         b.setOnAction(e -> {
-            GPresets gp = AtelierLauncher.gpresets();
-            if (gp == null) { dire("G-Presets pas encore prêt."); return; }
+            GPresets gp = AtelierLauncher.moteur();
+            if (gp == null) { dire("L'Atelier n'est pas encore prêt."); Journal.erreur("L'Atelier n'est pas encore prêt."); return; }
             try { a.faire(gp); dire(succes); }
-            catch (Throwable t) { dire("Erreur : " + t); }
+            catch (Throwable t) { t.printStackTrace(); dire("Échec : " + t); }
         });
         return b;
     }

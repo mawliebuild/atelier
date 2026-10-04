@@ -10,14 +10,15 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * Empeche G-Earth de se connecter a lui-meme en boucle.
+ * Empeche le proxy de l'Atelier de se connecter a lui-meme en boucle.
  *
- * Avant chaque connexion, G-Earth demande au systeme l'adresse du serveur
+ * Avant chaque connexion, le proxy demande au systeme l'adresse du serveur
  * (game-fr.habbo.com) et la retient comme « vrai serveur », puis redirige ce
- * nom vers 127.0.0.x dans /etc/hosts (« # G-Earth replacement »). Si, au
+ * nom vers 127.0.0.x dans /etc/hosts (lignes marquees par le proxy, voir MARQUE
+ * par la bibliotheque). Si, au
  * moment de la demande, le systeme repond deja 127.0.0.x — ligne restee apres
  * un crash, ou cache DNS de macOS qui s'en souvient encore juste apres une
- * deconnexion —, chaque connexion du jeu en ouvre une autre vers G-Earth
+ * deconnexion —, chaque connexion du jeu en ouvre une autre vers le proxy
  * lui-meme, avec un thread chacune. En une dizaine de secondes, la JVM atteint
  * la limite de macOS (4096 threads par processus) : OutOfMemoryError « unable
  * to create native thread », puis connexion perdue.
@@ -27,9 +28,13 @@ import java.util.Set;
  */
 final class GardeConnexion {
 
-    private static final Path HOSTS = Paths.get("/etc/hosts");
+    private static final boolean WINDOWS = System.getProperty("os.name", "").toLowerCase().contains("win");
+    /** Le fichier hosts du systeme (Windows : %SystemRoot%\\System32\\drivers\\etc\\hosts). */
+    private static final Path HOSTS = WINDOWS
+            ? Paths.get(System.getenv().getOrDefault("SystemRoot", "C:\\Windows"), "System32", "drivers", "etc", "hosts")
+            : Paths.get("/etc/hosts");
     private static final String MARQUE = "G-Earth replacement";
-    /** Le nom que G-Earth redirige pour l'hotel francais. */
+    /** Le nom que le proxy redirige pour l'hotel francais. */
     private static final String SERVEUR = "game-fr.habbo.com";
 
     private GardeConnexion() { }
@@ -55,7 +60,7 @@ final class GardeConnexion {
         int retirees = 0;
         try {
             if (autreInstance()) {
-                System.out.println("[Atelier] une autre instance tourne : /etc/hosts laisse tel quel.");
+                Journal.debug("une autre instance tourne : " + HOSTS + " laisse tel quel.");
             } else if (Files.isWritable(HOSTS)) {
                 List<String> lignes = Files.readAllLines(HOSTS);
                 List<String> gardees = new ArrayList<>();
@@ -65,10 +70,10 @@ final class GardeConnexion {
                     if (t.length >= 2) noms.add(t[1]);
                 }
                 retirees = lignes.size() - gardees.size();
-                if (retirees > 0) Files.write(HOSTS, gardees);
+                if (retirees > 0) ecrireAtomique(gardees);
             }
         } catch (Throwable t) {
-            System.err.println("[Atelier] lecture de /etc/hosts impossible : " + t);
+            System.err.println("[Atelier] lecture de " + HOSTS + " impossible : " + t);
         }
 
         // Toujours vider le cache DNS : juste apres une deconnexion, la ligne
@@ -85,12 +90,36 @@ final class GardeConnexion {
 
         String r = null;
         if (retirees > 0)
-            r = retirees + " redirection(s) G-Earth restée(s) dans /etc/hosts, retirée(s).";
+            r = retirees + " redirection(s) de l'Atelier restée(s) dans le fichier hosts, retirée(s).";
         if (local)
             r = (r == null ? "" : r + " ") + SERVEUR + " pointe encore vers cet ordinateur : "
                     + "la connexion risque de boucler.";
-        if (r != null) System.out.println("[Atelier] " + r);
+        if (r != null) Journal.info(r);
         return r;
+    }
+
+    /**
+     * Reecrit /etc/hosts sans jamais le laisser vide ou tronque : fichier
+     * temporaire a cote (meme disque, droits 644), puis remplacement atomique.
+     */
+    private static void ecrireAtomique(List<String> lignes) throws java.io.IOException {
+        Path tmp = HOSTS.resolveSibling("hosts.atelier.tmp");
+        try {
+            Files.write(tmp, lignes);
+            try {
+                Files.setPosixFilePermissions(tmp,
+                        java.nio.file.attribute.PosixFilePermissions.fromString("rw-r--r--"));
+            } catch (Throwable ignored) { }
+            try {
+                Files.move(tmp, HOSTS, java.nio.file.StandardCopyOption.ATOMIC_MOVE,
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            } catch (java.io.IOException e) {
+                if (!WINDOWS) throw e;
+                Files.write(HOSTS, lignes);   // Windows : hosts parfois verrouille (antivirus) contre le remplacement
+            }
+        } finally {
+            try { Files.deleteIfExists(tmp); } catch (Throwable ignored) { }
+        }
     }
 
     /** Une adresse locale (127.x, ::1) pour ce nom ? false si le nom ne se resout pas. */
@@ -104,8 +133,13 @@ final class GardeConnexion {
 
     private static void viderCacheDns() {
         try {
-            new ProcessBuilder("dscacheutil", "-flushcache").start().waitFor();
-            new ProcessBuilder("killall", "-HUP", "mDNSResponder").start().waitFor();
+            if (WINDOWS) {
+                new ProcessBuilder("ipconfig", "/flushdns").redirectErrorStream(true)
+                        .redirectOutput(ProcessBuilder.Redirect.DISCARD).start().waitFor();
+            } else {
+                new ProcessBuilder("dscacheutil", "-flushcache").start().waitFor();
+                new ProcessBuilder("killall", "-HUP", "mDNSResponder").start().waitFor();
+            }
             Salle.sommeil(150);
         } catch (Throwable ignored) { }
     }

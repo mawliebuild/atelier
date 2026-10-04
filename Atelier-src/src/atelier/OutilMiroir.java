@@ -99,7 +99,7 @@ public class OutilMiroir {
                                 + "(est ↔ ouest, ou nord ↔ sud).")),
                 Ui.bloc("Copie", copie, Ui.ligne(Ui.etiquette("Écart (cases)"), ecartCopie),
                         Ui.aide("La copie est générée comme appart temporaire et posée par "
-                                + "G-Presets à droite de la zone (axe x) ou en dessous (axe y). "
+                                + "l'Atelier à droite de la zone (axe x) ou en dessous (axe y). "
                                 + "Pas de dalle magique dans la salle ? Je la pose à côté, "
                                 + "puis je la ramasse à la fin.")),
                 source.bloc(),
@@ -178,13 +178,13 @@ public class OutilMiroir {
     // ------------------------------------------------------------ action
 
     private void lancer() {
-        if (enCours) { etat.setText("Un miroir est déjà en cours..."); return; }
-        if (Salle.gp() == null) { etat.setText("G-Presets pas encore prêt."); return; }
-        if (!Salle.dansUneSalle()) { etat.setText("Tu n'es pas dans une salle."); return; }
-        if (!Zone.definie()) { etat.setText("Choisis d'abord la zone."); return; }
+        if (enCours) { refus("Un miroir est déjà en cours."); return; }
+        if (Salle.gp() == null) { refus("L'Atelier n'est pas encore prêt."); return; }
+        if (!Salle.dansUneSalle()) { refus("Tu n'es pas dans une salle."); return; }
+        if (!Zone.definie()) { refus("Choisis d'abord la zone."); return; }
         boolean surX = axeX.isSelected();
         List<Cible> c = calculer(surX);
-        if (c.isEmpty()) { etat.setText("Aucun mobi dans la zone."); return; }
+        if (c.isEmpty()) { refus("Aucun mobi dans la zone."); return; }
         if (copie.isSelected()) { copier(c, surX); return; }
 
         boolean chercher = chercherAlt.isSelected();
@@ -210,18 +210,21 @@ public class OutilMiroir {
             m.add(new Generateur.Mobi(cls, Generateur.etatDe(k.it),
                     k.x - Zone.minX(), k.y - Zone.minY(), k.zSol, k.rot));
         }
-        if (m.isEmpty()) { etat.setText("Rien à copier (classes inconnues ou wired seulement)."); return; }
+        if (m.isEmpty()) { refus("Rien à copier (classes inconnues ou wired seulement)."); return; }
         int ec = ecartCopie.getValue();
         HPoint racine = surX ? new HPoint(Zone.maxX() + 1 + ec, Zone.minY())
                              : new HPoint(Zone.minX(), Zone.maxY() + 1 + ec);
         Generateur.Source src = source.source();
-        final int ig = ignores;
-        etat.setText("Préparation de la copie miroir (" + m.size() + " mobis)...");
+        // les ignores sont dits des le depart : le resultat de la pose reste un seul message
+        etat.setText("Préparation de la copie miroir (" + m.size() + " mobis"
+                + (ignores > 0 ? ", " + ignores + " wired ou inconnu(s) laissé(s) de côté" : "") + ")...");
+        enCours = true;
+        lancer.setDisable(true);
         Salle.tache("miroir-copie", () -> {
-            boolean ok = Generateur.poser("_atelier_miroir", m, src, racine, s -> Generateur.dire(etat, s));
-            if (ok && ig > 0) {
-                Salle.sommeil(1500);
-                Generateur.dire(etat, etat.getText() + "  —  " + ig + " mobi(s) ignoré(s) (wired ou inconnus).");
+            try { Generateur.poser("_atelier_miroir", m, src, racine, s -> Generateur.dire(etat, s)); }
+            finally {
+                enCours = false;
+                Platform.runLater(() -> { lancer.setDisable(false); majApercu(); });
             }
         });
     }
@@ -247,6 +250,8 @@ public class OutilMiroir {
     private static void deplacer(List<Cible> toutes, boolean chercher, java.util.function.Consumer<String> dire) {
         List<Cible> reste = new ArrayList<>();
         for (Cible k : toutes) if (!k.immobile()) reste.add(k);
+        // du bas vers le haut : un mobi empile se repose sur celui du dessous
+        reste.sort(Comparator.comparingDouble((Cible k) -> k.it.getTile().getZ()).thenComparingInt(k -> k.it.getId()));
         if (reste.isEmpty()) { dire.accept("Rien à déplacer : la zone est déjà symétrique."); return; }
 
         for (int passe = 1; passe <= 3 && !reste.isEmpty(); passe++) {
@@ -295,22 +300,27 @@ public class OutilMiroir {
                     if (aRegler.isEmpty()) break;
                 }
                 faux = aRegler.size();
-                hauteurs = faux == 0 ? " Hauteurs remises." : " " + faux + " hauteur(s) non remise(s).";
+                hauteurs = faux == 0 ? " Hauteurs remises." : " ⚠ " + faux + " hauteur(s) pas remise(s).";
             } else {
                 hauteurs = " ⚠ " + aRegler.size() + " mobi(s) ont changé de hauteur (posés sur le dessus "
                         + "de la pile) : @altitude inconnue — règle-la une fois dans l'éditeur :wired, ou "
                         + "coche « Chercher @altitude ».";
             }
         }
-        dire.accept((toutes.size() - bloques) + " mobi(s) en place"
+        // un seul message de resultat : la ligne d'etat (Ui.etat) le passe au Journal
+        dire.accept("Miroir terminé : " + (toutes.size() - bloques) + " mobi(s) en place"
                 + (bloques > 0 ? ", " + bloques + " bloqué(s) (case occupée, échange de place "
-                        + "entre mobis non empilables ?) — à finir à la main." : ".")
+                        + "entre mobis non empilables ?) : à finir à la main." : ".")
                 + hauteurs);
-        InfoJeu.dire("Miroir : " + (toutes.size() - bloques) + " mobi(s) en place"
-                + (bloques > 0 ? ", " + bloques + " bloqué(s) à finir à la main." : "."));
     }
 
     /** Altitude voulue a l'arrivee : sol de la case d'arrivee + hauteur d'origine au-dessus du sol. */
+    /** Refus avant de commencer : ligne d'etat + Journal (une fois). */
+    private void refus(String s) {
+        etat.setText(s);
+        if (Journal.genre(s) != Journal.Genre.ERREUR) Journal.erreur(s);
+    }
+
     private static double voulu(Cible k) {
         return Generateur.arrondi(Math.max(0, Salle.hauteurSol(k.x, k.y)) + k.zSol);
     }
@@ -333,18 +343,76 @@ public class OutilMiroir {
      * essai reussi est deja la correction).
      */
     static final class Altitude {
-        private static volatile String variable;
+        private static final java.util.prefs.Preferences PREFS =
+                java.util.prefs.Preferences.userRoot().node("atelier");
+        /** Retenue d'une session a l'autre (la meme dans toutes les salles). */
+        private static volatile String variable = PREFS.get("altitude.variable", null);
+        /** Vue marcher sur un mobi pendant cette session. */
+        private static volatile boolean confirmee = false;
         private static volatile int facteur = 100;
         private static volatile boolean branche = false, enCours = false;
+        /** L'essai a l'aveugle (-100..-140) a deja echoue : on ne le refait pas sur d'autres mobis. */
+        private static volatile boolean essaiRate = false;
         private static final List<Runnable> ecouteurs = new java.util.concurrent.CopyOnWriteArrayList<>();
 
         static boolean connue() { return variable != null; }
 
+        private static void retenir(String var) {
+            variable = var; facteur = 100; confirmee = true;
+            try { PREFS.put("altitude.variable", var); } catch (Throwable ignored) { }
+            prevenir();
+        }
+
+        /**
+         * Liste des variables envoyee par le jeu (WiredAllVariablesDiffs,
+         * internes comprises) : id -> nom. @altitude y est lue directement.
+         */
+        static void depuisListe(Map<String, String> idVersNom) {
+            for (Map.Entry<String, String> e : idVersNom.entrySet()) {
+                String n = e.getValue() == null ? "" : e.getValue().trim().toLowerCase(Locale.ROOT);
+                if (n.equals("@altitude") || n.equals("altitude")) {
+                    if (!e.getKey().equals(variable) || !confirmee) {
+                        Journal.debug("@altitude lue dans la liste : variable " + e.getKey());
+                        retenir(e.getKey());
+                    }
+                    return;
+                }
+            }
+        }
+
+        /** Demande la liste des variables au jeu et attend @altitude (au plus ~1,5 s). */
+        static boolean demanderListe() {
+            if (confirmee) return true;
+            Salle.envoyer(new HPacket("WiredGetAllVariablesDiffs", HMessage.Direction.TOSERVER, 0));
+            for (int i = 0; i < 25 && !confirmee; i++) Salle.sommeil(60);
+            return confirmee;
+        }
+
+        /**
+         * Donne l'altitude au mobi en s'assurant d'abord, une fois par session,
+         * que la variable retenue marche ; sinon la retrouve (liste du jeu, puis essais).
+         */
+        static void mettre(int idMobi, double z) {
+            if (!confirmee) demanderListe();
+            if (variable != null && confirmee) { ecrire(idMobi, z); return; }
+            if (variable != null) {
+                ecrire(idMobi, z);
+                for (int i = 0; i < 8; i++) {
+                    Salle.sommeil(60);
+                    HFloorItem it = Salle.sol(idMobi);
+                    if (it != null && Math.abs(it.getTile().getZ() - z) < 0.05) { confirmee = true; return; }
+                }
+                variable = null;                  // retenue mais fausse : on cherche
+            }
+            chercher(idMobi, z);
+        }
+
+        static String variable() { return variable; }
+
         /** Appele par OngletWired quand il a appris @altitude de son cote. */
         static void apprendre(String var, int fact) {
-            if (var == null || variable != null) return;
-            variable = var; facteur = fact;
-            prevenir();
+            if (var == null || confirmee) return;
+            retenir(var);                       // toujours en centiemes (voir OngletWired)
         }
 
         static String texte() {
@@ -367,6 +435,10 @@ public class OutilMiroir {
         static boolean chercher(int idMobi, double voulu) {
             HFloorItem it = Salle.sol(idMobi);
             if (it == null) return false;
+            if (demanderListe()) { ecrire(idMobi, voulu); return true; }
+            if (essaiRate) return false;
+            variable = null;
+            Journal.debug("@altitude absente de la liste du jeu : essai des variables -100 à -140 sur le mobi " + idMobi + ".");
             for (int v = -100; v >= -140 && variable == null; v--) {
                 String cand = String.valueOf(v);
                 Salle.envoyer(new HPacket("WiredSetObjectVariableValue", HMessage.Direction.TOSERVER,
@@ -374,12 +446,14 @@ public class OutilMiroir {
                 Salle.sommeil(260);
                 HFloorItem now = Salle.sol(idMobi);
                 if (now != null && Math.abs(now.getTile().getZ() - voulu) < 0.05) {
-                    variable = cand;
-                    facteur = 100;
-                    System.out.println("[Atelier] miroir : @altitude = variable " + cand);
-                    prevenir();
+                    Journal.debug("miroir : @altitude = variable " + cand);
+                    retenir(cand);
                     return true;
                 }
+            }
+            if (variable == null) {
+                essaiRate = true;
+                Journal.erreur("@altitude introuvable : règle-la une fois dans l'éditeur :wired, puis recommence.");
             }
             return variable != null;
         }
@@ -409,7 +483,7 @@ public class OutilMiroir {
 
         /** Forme (int 0, int idMobi, String "-nnn", int), rien apres. */
         private static void apprendre(HMessage m) {
-            if (variable != null) return;
+            if (confirmee) return;
             int taille = m.getPacket().getBytesLength();
             if (taille < 18 || taille > 40) return;
             FloorState s = Salle.etat();
@@ -423,10 +497,20 @@ public class OutilMiroir {
             if (p.getReadIndex() != p.getBytesLength()) return;
             if (var == null || !var.matches("-?\\d{1,6}")) return;
             if (s.furniFromId(id) == null) return;
-            variable = var;
-            facteur = valeur > 40 ? 100 : 1;
-            System.out.println("[Atelier] miroir : @altitude apprise, variable " + var);
-            prevenir();
+            // N'importe quelle variable numerique peut avoir cette forme : on ne
+            // la retient que si le mobi arrive vraiment a l'altitude valeur/100.
+            final double voulu = valeur / 100.0;
+            Salle.tache("altitude-verif", () -> {
+                for (int i = 0; i < 8 && !confirmee; i++) {
+                    Salle.sommeil(150);
+                    HFloorItem it = Salle.sol(id);
+                    if (it != null && Math.abs(it.getTile().getZ() - voulu) < 0.02) {
+                        Journal.debug("@altitude apprise : variable " + var + ".");
+                        retenir(var);
+                        return;
+                    }
+                }
+            });
         }
     }
 }

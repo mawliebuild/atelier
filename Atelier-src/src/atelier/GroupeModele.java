@@ -435,7 +435,10 @@ final class GroupeModele {
                 JSONObject j = a.optJSONObject(i);
                 if (j == null) continue;
                 String id = j.optString("id", "");
-                if (id.isEmpty() || ANCIEN0.equals(id) || estBase(id) || !ids.add(id)) id = "c" + (p.prochain++);
+                if (id.isEmpty() || ANCIEN0.equals(id) || estBase(id) || !ids.add(id)) {
+                    // id regenere : jamais un id deja lu, et retenu pour les suivants
+                    do id = "c" + (p.prochain++); while (!ids.add(id));
+                }
                 Calque c = new Calque(id, j.optString("nom", "Calque"));
                 JSONArray s = j.optJSONArray("sols"), m = j.optJSONArray("murs");
                 if (s != null) for (int k = 0; k < s.length(); k++) { int v = s.optInt(k, 0); if (v != 0 && vusS.add(v)) c.sols.add(v); }

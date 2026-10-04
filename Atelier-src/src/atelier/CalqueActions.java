@@ -43,10 +43,13 @@ final class CalqueActions {
         this.choisir = choisir;
     }
 
+    /** Miroir sur place en cours (il ne passe pas par Groupes : pas de Tache a arreter). */
+    private volatile boolean miroirEnCours = false;
+
     /** Une action tourne (dans une fenetre ou ailleurs). */
     boolean occupe() {
         Groupes.Tache t = tache;
-        return Groupes.occupe() || (t != null && t.enCours());
+        return miroirEnCours || Groupes.occupe() || (t != null && t.enCours());
     }
 
     /** Ferme la fenetre ouverte (changement de salle, panneau cache). */
@@ -63,10 +66,18 @@ final class CalqueActions {
         return f;
     }
 
-    /** Resultat d'une action : dans le jeu (et la console). */
+    /** Resultat d'une action : dans le jeu et la console (Journal), succes ou erreur selon le texte. */
     static void resultat(String s) {
         if (s == null || s.isBlank()) return;
-        InfoJeu.dire(Ui.majuscule(s));
+        String m = Ui.majuscule(s);
+        if (Journal.genre(m) == Journal.Genre.ERREUR) Journal.erreur(m); else Journal.succes(m);
+    }
+
+    /** Resultat d'une action de Groupes : erreur seulement si elle a echoue (pas si arretee). */
+    static void resultat(Groupes.Resultat r) {
+        if (r == null || r.message == null || r.message.isBlank()) return;
+        String m = Ui.majuscule(r.message);
+        if (r.ok || r.arrete) Journal.succes(m); else Journal.erreur(m);
     }
 
     /** Refus immediat (verrou, action en cours...) : dans le jeu tout de suite. */
@@ -257,7 +268,7 @@ final class CalqueActions {
             tache = Groupes.hauteur(i.id, relatif, n, progression(f, r -> {
                 for (Node b : boutons) b.setDisable(false);
                 arreter.setVisible(false);
-                f.dire("");
+                f.dire(r.ok ? "" : r.message);        // echec : la raison reste lisible
             }));
         };
         HBox rapides = new HBox(5);
@@ -311,8 +322,10 @@ final class CalqueActions {
                 String v = Groupes.refusVerrou(i.id);
                 if (v != null) { f.dire(v); return; }
             }
+            if (occupe()) { f.dire("Une action est déjà en cours."); return; }
             for (Node n : List.of(axeX, axeY, copie, place, ok, annuler)) n.setDisable(true);
-            arreter.setVisible(true);
+            // sur place : OutilMiroir ne sait pas s'arreter, pas de bouton Arreter trompeur
+            arreter.setVisible(enCopie);
             if (enCopie) {
                 f.dire("Pose de la copie miroir…");
                 tache = Groupes.dupliquerMiroir(i.id, surX, 1, source, progression(f, this::apresCopie));
@@ -327,9 +340,17 @@ final class CalqueActions {
     private void miroirSurPlace(CalqueFenetre f, String id, boolean surX) {
         List<HFloorItem> sols = new ArrayList<>();
         for (int s : Groupes.mobis(id).get(0)) { HFloorItem it = Salle.sol(s); if (it != null) sols.add(it); }
+        miroirEnCours = true;                  // les autres actions de calque sont refusees pendant ce temps
         Salle.tache("calques-miroir", () -> {
             final String[] dernier = {""};
-            OutilMiroir.surPlace(sols, surX, m -> { dernier[0] = m; Platform.runLater(() -> f.dire(m)); });
+            try {
+                OutilMiroir.surPlace(sols, surX, m -> { dernier[0] = m; Platform.runLater(() -> f.dire(m)); });
+            } catch (Throwable t) {
+                Platform.runLater(() -> Journal.erreur("Le miroir sur place a échoué", t));
+                dernier[0] = "";
+            } finally {
+                miroirEnCours = false;
+            }
             Platform.runLater(() -> { resultat(dernier[0]); f.fermer(); });
         });
     }
@@ -345,8 +366,8 @@ final class CalqueActions {
     // ================================================================ pivoter
 
     /**
-     * Pivoter : tout de suite (Ctrl+Z annule), d'un bloc ou chaque mobi sur sa
-     * case ; ou une copie pivotee posee a cote (nouveau calque, puis Deplacer).
+     * Pivoter : tout de suite (Cmd+Z annule), tout le calque d'un bloc (comme
+     * une voiture entiere) ; ou une copie pivotee posee a cote (nouveau calque, puis Deplacer).
      * La fenetre reste ouverte pour tourner encore.
      */
     void pivoter(Groupes.Info i) {
@@ -362,7 +383,7 @@ final class CalqueActions {
             tache = act.apply(progression(f, r -> {
                 for (Button b : tous) b.setDisable(false);
                 arreter.setVisible(false);
-                f.dire("");
+                f.dire(r.ok ? "" : r.message);        // echec : la raison reste lisible
             }));
         };
         Consumer<Function<Groupes.Progression, Groupes.Tache>> modifier = act -> {
@@ -374,19 +395,219 @@ final class CalqueActions {
                 () -> modifier.accept(p -> Groupes.pivoter(i.id, false, true, p)));
         Button blocH = petit("↻ Horaire", "Tout le calque d'un bloc, un quart de tour dans le sens horaire",
                 () -> modifier.accept(p -> Groupes.pivoter(i.id, true, true, p)));
-        Button chacunI = petit("↺ Inverse", "Chaque mobi tourne sur sa case, sens inverse",
-                () -> modifier.accept(p -> Groupes.pivoter(i.id, false, false, p)));
-        Button chacunH = petit("↻ Horaire", "Chaque mobi tourne sur sa case, sens horaire",
-                () -> modifier.accept(p -> Groupes.pivoter(i.id, true, false, p)));
         Button copieH = petit("↻ Horaire", "Copie tournée d'un quart de tour horaire, posée à côté", () -> copieTournee(f, i, 1, tous, arreter));
         Button copieI = petit("↺ Inverse", "Copie tournée d'un quart de tour inverse, posée à côté", () -> copieTournee(f, i, 3, tous, arreter));
         Button copieD = petit("Demi-tour", "Copie tournée d'un demi-tour, posée à côté", () -> copieTournee(f, i, 2, tous, arreter));
-        tous.addAll(List.of(blocI, blocH, chacunI, chacunH, copieH, copieI, copieD));
+        tous.addAll(List.of(blocI, blocH, copieH, copieI, copieD));
         f.contenu(Ui.bloc("Tout le calque d'un bloc", new HBox(5, blocI, blocH)),
-                Ui.bloc("Chaque mobi sur sa case", new HBox(5, chacunI, chacunH)),
                 Ui.bloc("Copie pivotée à côté", new HBox(5, copieH, copieI, copieD)));
-        f.dire("Tout de suite, sans confirmer : Ctrl+Z pour annuler.");
+        f.dire("Tout de suite, sans confirmer : Cmd+Z pour annuler.");
         f.boutons(CalqueFenetre.bouton("Fermer", false, f::fermer), arreter);
+        f.montrer();
+    }
+
+    // ================================================================ cases
+
+    /**
+     * Floor dans l'appart (bouton Floor) : la grille du jeu montre le plan en
+     * travail en permanence (cases fantomes autour) ; chaque clic dans le jeu
+     * applique l'outil (ModeCases). « Appliquer » envoie tout en un seul
+     * rechargement. Fermer la fenetre quitte le mode.
+     */
+    void cases() {
+        if (ModeCases.actif() && courante != null) { courante.montrer(); return; }
+        CalqueFenetre f = ouvrir("Floor");
+        boolean[] maj = {false};
+
+        // outils
+        ToggleGroup gOutils = new ToggleGroup();
+        javafx.scene.layout.FlowPane outils = new javafx.scene.layout.FlowPane(5, 5);
+        Label aideOutil = Ui.discret(ModeCases.outil().aide);
+        aideOutil.setWrapText(true);
+        for (ModeCases.Outil o : ModeCases.Outil.values()) {
+            ToggleButton b = new ToggleButton(o.libelle);
+            b.setToggleGroup(gOutils);
+            b.setUserData(o);
+            b.setFocusTraversable(false);
+            b.setTooltip(CalqueFenetre.bulle(o.aide));
+            if (o == ModeCases.outil()) b.setSelected(true);
+            outils.getChildren().add(b);
+        }
+        gOutils.selectedToggleProperty().addListener((ob, x, y) -> {
+            if (y == null) { if (x != null) x.setSelected(true); return; }
+            ModeCases.Outil o = (ModeCases.Outil) y.getUserData();
+            ModeCases.outil(o);
+            aideOutil.setText(o.aide);
+        });
+        Spinner<Integer> n = new Spinner<>(0, FloorModele.HAUTEUR_MAX, ModeCases.valeur());
+        n.setEditable(true);
+        n.setPrefWidth(75);
+        n.valueProperty().addListener((o, x, y) -> { if (y != null && !maj[0]) ModeCases.valeur(y); });
+        ToggleGroup gPinceau = new ToggleGroup();
+        HBox pinceaux = new HBox(4);
+        for (int i = 1; i <= 5; i++) {
+            final int k = i;
+            ToggleButton b = new ToggleButton(i + "×" + i);
+            b.setToggleGroup(gPinceau);
+            b.setFocusTraversable(false);
+            if (i == 1) b.setSelected(true);
+            b.setOnAction(e -> { if (!b.isSelected()) b.setSelected(true); ModeCases.pinceau(k); });
+            pinceaux.getChildren().add(b);
+        }
+        CheckBox rect = new CheckBox("Rectangle (deux clics)");
+        rect.selectedProperty().addListener((o, x, y) -> ModeCases.rectangle(y));
+        pinceaux.disableProperty().bind(rect.selectedProperty());
+
+        // murs et sol
+        Spinner<Integer> mur = new Spinner<>(-1, 15, -1);
+        mur.setEditable(true);
+        mur.setPrefWidth(75);
+        ComboBox<String> epMur = new ComboBox<>(), epSol = new ComboBox<>();
+        for (ComboBox<String> c : List.of(epMur, epSol)) {
+            c.getItems().addAll("Très fin (−2)", "Fin (−1)", "Normal (0)", "Épais (1)");
+            c.getSelectionModel().select(2);
+        }
+        Runnable murs = () -> {
+            if (maj[0] || mur.getValue() == null) return;
+            ModeCases.murs(mur.getValue(), epMur.getSelectionModel().getSelectedIndex() - 2,
+                    epSol.getSelectionModel().getSelectedIndex() - 2);
+        };
+        mur.valueProperty().addListener((o, x, y) -> murs.run());
+        epMur.valueProperty().addListener((o, x, y) -> murs.run());
+        epSol.valueProperty().addListener((o, x, y) -> murs.run());
+
+        // changements
+        Label compte = Ui.valeur("");
+        compte.setWrapText(true);
+        Button an = CalqueFenetre.bouton("↶ Annuler", false, ModeCases::annuler);
+        Button re = CalqueFenetre.bouton("↷ Rétablir", false, ModeCases::retablir);
+        Button effacer = CalqueFenetre.bouton("Tout effacer", false, ModeCases::effacer);
+        Button revenir = CalqueFenetre.bouton("Remettre le floor d'avant", false,
+                () -> Salle.tache("floor-revenir", ModeCases::revenir));
+        Button appliquer = CalqueFenetre.bouton("Appliquer", true, () -> Salle.tache("floor-appliquer", ModeCases::appliquer));
+
+        Runnable rafraichir = () -> Platform.runLater(() -> {
+            int[] c = ModeCases.changements();
+            int total = c[0] + c[1] + c[2] + c[3];
+            compte.setText(total == 0 ? "Aucun changement."
+                    : Ui.accorder(c[0] + " case(s) ajoutée(s), " + c[1] + " retirée(s), " + c[2] + " hauteur(s) changée(s)"
+                    + (c[3] > 0 ? ", porte ou murs changés" : "") + "."));
+            boolean libre = !ModeCases.occupe();
+            appliquer.setDisable(total == 0 || !libre);
+            effacer.setDisable(total == 0 || !libre);
+            an.setDisable(!ModeCases.peutAnnuler() || !libre);
+            re.setDisable(!ModeCases.peutRetablir() || !libre);
+            revenir.setDisable(!ModeCases.peutRevenir());
+            maj[0] = true;
+            try {
+                if (n.getValue() == null || n.getValue() != ModeCases.valeur()) n.getValueFactory().setValue(ModeCases.valeur());
+                FloorModele t = ModeCases.travail();
+                if (t != null) {
+                    mur.getValueFactory().setValue(t.hauteurMur);
+                    epMur.getSelectionModel().select(Math.max(0, Math.min(3, t.epMur + 2)));
+                    epSol.getSelectionModel().select(Math.max(0, Math.min(3, t.epSol + 2)));
+                }
+            } finally { maj[0] = false; }
+        });
+        ModeCases.surChangement(rafraichir);
+        f.surFermeture(() -> { ModeCases.arreter(); ModeCases.surChangement(null); });
+        f.contenu(
+                Ui.bloc("Outil", outils, aideOutil, Ui.ligne(new Label("N"), n),
+                        Ui.aide("Clique les cases dans l'appart : la grille montre le floor prévu "
+                                + "(vert : ajoutée, rouge : retirée, bleu : hauteur changée, orange : porte, "
+                                + "blanc pâle : case possible). Rien ne change avant « Appliquer » : "
+                                + "l'appart se recharge une seule fois.")),
+                Ui.bloc("Pinceau", pinceaux, rect),
+                Ui.bloc("Murs et sol",
+                        Ui.ligne(new Label("Hauteur des murs"), mur, Ui.discret("−1 = auto")),
+                        Ui.ligne(new Label("Épaisseur murs"), epMur),
+                        Ui.ligne(new Label("Épaisseur sol"), epSol)),
+                Ui.bloc("Changements", compte, Ui.ligne(an, re, effacer), revenir));
+        f.boutons(CalqueFenetre.bouton("Fermer", false, f::fermer), appliquer);
+        f.dire("Lecture du floor…");
+        f.montrer();
+        Salle.tache("floor-demarrer", () -> {
+            String err = ModeCases.demarrer();
+            Platform.runLater(() -> {
+                if (err != null) { Journal.erreur(err); f.fermer(); return; }
+                f.dire("");
+                rafraichir.run();
+            });
+        });
+    }
+
+    // ========================================================= etats d'une zone
+
+    private boolean zoneEtats = false, deuxiemeEtats = false, ecouteEtats = false;
+
+    /**
+     * Changer l'etat des mobis d'une zone : deux cases dans le jeu, puis une
+     * fenetre dont le bouton « utilise » (comme un double-clic) tous les mobis
+     * de sol qui touchent la zone, a chaque clic. Wired et dalles magiques
+     * laisses de cote.
+     */
+    void etatsZone() {
+        if (!ecouteEtats) { ecouteEtats = true; Zone.ecouter(() -> Platform.runLater(this::suivreZoneEtats)); }
+        zoneEtats = true;
+        deuxiemeEtats = false;
+        Zone.demarrerChoix();
+        InfoJeu.consigne("Choisis le premier point de la zone.");
+    }
+
+    private void suivreZoneEtats() {
+        if (!zoneEtats) return;
+        if (Zone.choixEnCours()) {
+            if (Zone.premierCoinChoisi() && !deuxiemeEtats) {
+                deuxiemeEtats = true;
+                InfoJeu.consigne("Choisis le deuxième point de la zone.");
+            }
+            return;
+        }
+        zoneEtats = false;
+        if (!Zone.definie()) return;
+        fenetreEtats();
+    }
+
+    private static List<HFloorItem> mobisAEtat() {
+        List<HFloorItem> r = new ArrayList<>();
+        for (HFloorItem it : Zone.mobisTouches()) {
+            String c = Salle.classe(it.getTypeId(), false);
+            if (c == null || Wired.estWired(c) || c.toLowerCase(java.util.Locale.ROOT).startsWith("tile_stackmagic")) continue;
+            r.add(it);
+        }
+        return r;
+    }
+
+    private void fenetreEtats() {
+        CalqueFenetre f = ouvrir("Changer l'état d'une zone");
+        Label quoi = Ui.valeur("");
+        Runnable maj = () -> quoi.setText(Ui.accorder("Zone " + Zone.largeur() + " × " + Zone.longueur()
+                + " : " + mobisAEtat().size() + " mobi(s)."));
+        maj.run();
+        boolean[] envoi = {false};
+        Button changer = CalqueFenetre.bouton("Changer l'état", true, () -> {
+            if (envoi[0]) return;
+            List<HFloorItem> l = mobisAEtat();
+            if (l.isEmpty()) { Journal.erreur("Aucun mobi dans la zone."); return; }
+            envoi[0] = true;
+            Salle.tache("etats-zone", () -> {
+                try {
+                    for (HFloorItem it : l) {
+                        Salle.envoyer(new gearth.protocol.HPacket("UseFurniture",
+                                gearth.protocol.HMessage.Direction.TOSERVER, it.getId(), 0));
+                        Salle.sommeil(40);
+                    }
+                } finally {
+                    envoi[0] = false;
+                    Platform.runLater(maj);
+                }
+            });
+        });
+        Button autre = CalqueFenetre.bouton("Nouvelle zone", false, () -> { f.fermer(); etatsZone(); });
+        f.contenu(Ui.bloc("Zone", quoi,
+                Ui.aide("Chaque clic sur « Changer l'état » fait comme un double-clic sur tous les mobis "
+                        + "de la zone (les wired et les dalles magiques ne sont pas touchés).")));
+        f.boutons(CalqueFenetre.bouton("Fermer", false, f::fermer), autre, changer);
         f.montrer();
     }
 
@@ -417,7 +638,7 @@ final class CalqueActions {
         CalqueFenetre f = ouvrir("Supprimer " + s.quoi() + " ?");
         Label l = new Label("Ses " + GroupePressePapier.mobis(s.mobis) + " vont être ramassés"
                 + (s.wired > 0 ? ", dont " + s.wired + " wired : leurs réglages seront perdus" : "")
-                + ". Ctrl+Z les repose ensuite. Pour garder les mobis, fusionne plutôt le calque.");
+                + ". Cmd+Z les repose ensuite. Pour garder les mobis, fusionne plutôt le calque.");
         l.setWrapText(true);
         l.setMaxWidth(280);
         f.contenu(l);
@@ -443,7 +664,7 @@ final class CalqueActions {
             }
             @Override public void fin(Groupes.Resultat r) {
                 dire.accept("");
-                resultat(r.message);
+                resultat(r);
                 if (apres != null) apres.run();
             }
         });
@@ -479,7 +700,7 @@ final class CalqueActions {
                 f.dire(total > 0 ? texte + " (" + fait + "/" + total + ")" : texte);
             }
             @Override public void fin(Groupes.Resultat r) {
-                resultat(r.message);
+                resultat(r);
                 if (!r.ok && !r.arrete && r.reussis == 0) f.dire(r.message);       // echec : reste lisible dans la fenetre
                 if (apres != null) apres.accept(r);
             }

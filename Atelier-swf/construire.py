@@ -188,12 +188,48 @@ assert len(MOTIFS) == 22
 # Collections (furnilines) et leur nom francais (pixelsemotion / habbotravel) :
 # le menu Categorie les liste, d'apres les mobis de l'inventaire.
 COLLECTIONS = json.load(open(os.path.join(ICI, "donnees", "collections_fr.json"), encoding="utf-8"))
-def famille_de(nom):
-    """« Habboween 2016 - Chasseurs de fantômes » -> « Habboween » : une entree par famille."""
+def _racine(nom):
+    """« Habboween 2016 - Chasseurs de fantômes » -> « Habboween » (avant l'annee, puis avant « - »)."""
     m = re.search(r"\b(19|20)\d{2}\b", nom)
     if m and m.start() > 0:
         nom = nom[:m.start()]
+    nom = re.split(r"\s+[-–]\s+", nom)[0]
     return re.sub(r"\s{2,}", " ", nom).strip(" -–")
+
+
+# Familles qui commencent comme une autre mais n'en sont pas une variante.
+FAMILLES_A_PART = {"hello kitty", "nouvel an chinois", "cadeaux hc", "habbo 15", "anciens cadeaux hc",
+                   "histoire d’habbo"}
+
+
+def _familles(noms):
+    """
+    Une seule entree par famille : meme racine sans tenir compte des majuscules
+    (« Furni-matic » = « Furni-Matic »), et variantes rangees sous la famille
+    dont le nom les commence (« Café des Délices Gothiques », « Iced foncé »,
+    « Pura Foncé » -> « Café des Délices », « Iced », « Pura »).
+    """
+    racines = {}
+    for n in noms:
+        racines.setdefault(_racine(n).lower(), []).append(_racine(n))
+    # forme affichee : la plus frequente, a egalite celle qui a le plus de majuscules
+    forme = {k: max(set(v), key=lambda x: (v.count(x), sum(c.isupper() for c in x))) for k, v in racines.items()}
+    def chef(k):
+        if k in FAMILLES_A_PART:
+            return k
+        meilleur = k
+        for autre in forme:
+            if autre != k and k.startswith(autre + " ") and len(autre) < len(meilleur):
+                meilleur = autre
+        return meilleur
+    return {n: forme[chef(_racine(n).lower())] for n in noms}
+
+
+_FAMILLE = _familles(set(COLLECTIONS.values()))
+
+
+def famille_de(nom):
+    return _FAMILLE.get(nom) or _racine(nom)
 
 
 TABLE = "|" + "|".join("%s=%s" % (k, famille_de(v)) for k, v in sorted(COLLECTIONS.items())) + "|"
@@ -829,6 +865,34 @@ GRILLE_COULEUR = 0x000000
 GRILLE_REMONTE = 2      # pixels, au zoom 1 (case de 64 px)
 
 
+TFMT = 'QName(PackageNamespace("flash.text"),"TextFormat")'
+TFLD = 'QName(PackageNamespace("flash.text"),"TextField")'
+
+
+def numero(reg_valeur, *args):
+    """Un numero (registre reg_valeur) pose au point de la piece (x, y, hauteur) donne par
+    les instructions args (x puis y), centre ; registres 21 champ, 22 format, 23 point."""
+    *pos, et = args
+    PUB = 'PackageNamespace("")'
+    V3 = 'QName(PackageNamespace("com.sulake.room.utils"),"Vector3d")'
+    GEOM = 'getlex QName(PrivateNamespace("com.sulake.room.renderer:RoomSpriteCanvas"),"_geometry")'
+    def pose(nom, *val):
+        return ['getlocal 21'] + list(val) + ['setproperty QName(%s,"%s")' % (PUB, nom)]
+    return ([GEOM, 'findpropstrict ' + V3] + list(pos) + ['getlocal 17', 'constructprop %s, 3' % V3,
+             'callproperty QName(%s,"getScreenPoint"), 1' % PUB, 'coerce_a', 'setlocal 23',
+             'getlocal 23', 'iffalse atl_n%s_fin' % et,
+             'findpropstrict ' + TFLD, 'constructprop %s, 0' % TFLD, 'coerce_a', 'setlocal 21']
+            + pose('defaultTextFormat', 'getlocal 22') + pose('selectable', 'pushfalse')
+            + pose('mouseEnabled', 'pushfalse') + pose('autoSize', 'pushstring "left"')
+            + pose('text', 'getlocal %d' % reg_valeur, 'convert_s')
+            + pose('x', 'getlocal 23', 'getproperty QName(%s,"x")' % PUB, 'getlocal 21',
+                   'getproperty QName(%s,"width")' % PUB, 'pushbyte 2', 'divide', 'subtract')
+            + pose('y', 'getlocal 23', 'getproperty QName(%s,"y")' % PUB, 'getlocal 21',
+                   'getproperty QName(%s,"height")' % PUB, 'pushbyte 2', 'divide', 'subtract')
+            + ['getlocal 11', 'getlocal 21', 'callpropvoid QName(%s,"addChild"), 1' % PUB,
+               'atl_n%s_fin:' % et])
+
+
 def rendu_grille():
     """
     RoomSpriteCanvas.render (fin) : si le canevas porte la grille de l'Atelier
@@ -846,7 +910,7 @@ def rendu_grille():
     DISP = 'getlex QName(%s,"_display")' % RSC
     u = list(pcode_origine("com.sulake.room.renderer.§_-b2M§", "render"))
     im, il = u.index("maxstack 7"), u.index("localcount 11")
-    u[im] = "maxstack 16"; u[il] = "localcount 20"
+    u[im] = "maxstack 16"; u[il] = "localcount 26"
     c = ['getlex QName(%s,"_-Tr")' % RSC, 'pushstring "atelier_grille"',
          'callproperty QName(%s,"getChildByName"), 1' % PUB, 'coerce_a', 'setlocal 11',
          'getlocal 11', 'iffalse atl_g_fin']
@@ -869,10 +933,25 @@ def rendu_grille():
           'getlocal 11', GEOM, 'getproperty QName(%s,"updateId")' % PUB, 'setproperty QName(%s,"atl_u")' % PUB,
           'getlocal 11', 'getproperty QName(%s,"graphics")' % PUB, 'coerce_a', 'setlocal 12',
           'getlocal 12', 'callpropvoid QName(%s,"clear"), 0' % PUB,
+          # numeros des colonnes / lignes : effaces puis refaits avec les traits
+          'getlocal 11', 'callpropvoid QName(%s,"removeChildren"), 0' % PUB,
+          'newobject 0', 'setlocal 19', 'newobject 0', 'setlocal 20',
+          'findpropstrict ' + TFMT, 'pushstring "Verdana"', 'pushbyte 10', 'pushint 0', 'pushtrue',
+          'constructprop %s, 4' % TFMT, 'coerce_a', 'setlocal 22',
           'getlocal 12', 'pushbyte 1', 'pushint %d' % GRILLE_COULEUR, 'pushbyte 1', 'pushtrue', 'pushstring "none"',
           'callpropvoid QName(%s,"lineStyle"), 5' % PUB,
-          'getlocal 11', 'getproperty QName(%s,"atl_d")' % PUB, 'coerce_s', 'pushstring "/"',
+          # « plan|marques » : marques (meme forme que le plan) a = ajout (vert),
+          # r = retrait (rouge), h = hauteur changee (bleu), p = porte (orange),
+          # g = case fantome (blanc pale) ; mode Cases de l'Atelier
+          'getlocal 11', 'getproperty QName(%s,"atl_d")' % PUB, 'coerce_s', 'pushstring "|"',
+          'callproperty QName(%s,"split"), 1' % AS3, 'coerce_a', 'setlocal 25',
+          'getlocal 25', 'pushbyte 0', MULTI_L, 'coerce_s', 'pushstring "/"',
           'callproperty QName(%s,"split"), 1' % AS3, 'coerce_a', 'setlocal 13',
+          'pushnull', 'setlocal 23',
+          'getlocal 25', LENGTH, 'pushbyte 1', 'ifle atl_gm_sans',
+          'getlocal 25', 'pushbyte 1', MULTI_L, 'coerce_s', 'pushstring "/"',
+          'callproperty QName(%s,"split"), 1' % AS3, 'coerce_a', 'setlocal 23',
+          'atl_gm_sans:',
           'pushbyte 0', 'setlocal 14',
           'atl_gy:', 'label',
           'getlocal 14', 'getlocal 13', LENGTH, 'ifge atl_g_fin',
@@ -885,6 +964,27 @@ def rendu_grille():
           'findpropstrict QName(PackageNamespace(""),"parseInt")', 'getlocal 18', 'pushbyte 36',
           'callproperty QName(PackageNamespace(""),"parseInt"), 2', 'convert_d', 'setlocal 17',
           'getlocal 17', 'getlocal 17', 'ifne atl_gx_next']          # NaN : pas une case
+    # premiere case de la colonne x (lignes lues de haut en bas) : son numero au-dela du bord ;
+    # premiere case de la ligne y : son numero au-dela de l'autre bord
+    c += ['getlocal 19', 'getlocal 16', MULTI_L, 'iftrue atl_gn_y',
+          'getlocal 19', 'getlocal 16', 'pushtrue', 'setproperty ' + MULTI_L[len('getproperty '):]]
+    c += numero(16, 'getlocal 16', 'convert_d', 'getlocal 14', 'convert_d', 'pushdouble 1.0', 'subtract', 'gx')
+    c += ['atl_gn_y:',
+          'getlocal 20', 'getlocal 14', MULTI_L, 'iftrue atl_gn_f',
+          'getlocal 20', 'getlocal 14', 'pushtrue', 'setproperty ' + MULTI_L[len('getproperty '):]]
+    c += numero(14, 'getlocal 16', 'convert_d', 'pushdouble 1.0', 'subtract', 'getlocal 14', 'convert_d', 'gy')
+    c += ['atl_gn_f:']
+    c += ['getlocal 23', 'iffalse atl_gm_fin',
+          'getlocal 23', 'getlocal 14', MULTI_L, 'coerce_s', 'getlocal 16',
+          'callproperty QName(%s,"charAt"), 1' % AS3, 'coerce_s', 'setlocal 24']
+    for lettre, couleur, alpha, suite in (("a", 0x2ECC40, 0.6, "atl_gm_r"), ("r", 0xE74C3C, 0.65, "atl_gm_h"),
+                                          ("h", 0x3498DB, 0.55, "atl_gm_p"), ("p", 0xF39C12, 0.75, "atl_gm_g"),
+                                          ("g", 0xFFFFFF, 0.3, "atl_gm_fin")):
+        c += ['getlocal 24', 'pushstring "%s"' % lettre, 'ifne ' + suite,
+              'getlocal 12', 'pushint %d' % couleur, 'pushdouble %s' % alpha,
+              'callpropvoid QName(%s,"beginFill"), 2' % PUB, 'jump atl_gm_fin', suite + ':']
+    c = c[:-1]          # le dernier « suite » est atl_gm_fin lui-meme
+    c += ['atl_gm_fin:']
     coins = [('subtract', 'subtract', 'moveTo'), ('add', 'subtract', 'lineTo'), ('add', 'add', 'lineTo'),
              ('subtract', 'add', 'lineTo'), ('subtract', 'subtract', 'lineTo')]
     for ox, oy, trait in coins:
@@ -896,13 +996,114 @@ def rendu_grille():
               'getlocal 18', 'iffalse atl_gx_next',
               'getlocal 12', 'getlocal 18', 'getproperty QName(%s,"x")' % PUB,
               'getlocal 18', 'getproperty QName(%s,"y")' % PUB, 'callpropvoid QName(%s,"%s"), 2' % (PUB, trait)]
-    c += ['atl_gx_next:', 'inclocal_i 16', 'jump atl_gx',
+    c += ['atl_gx_next:', 'getlocal 12', 'callpropvoid QName(%s,"endFill"), 0' % PUB, 'inclocal_i 16', 'jump atl_gx',
           'atl_gy_next:', 'inclocal_i 14', 'jump atl_gy',
           'atl_g_fin:']
     k = len(u) - 1 - u[::-1].index("returnvoid")
     u = u[:k] + c + u[k:]
     chemin = os.path.join(TRAVAIL, "render.pcode")
     open(chemin, "w", encoding="utf-8").write("\n".join(u))
+    return chemin
+
+
+def cases_salle(CEH):
+    """
+    « atelier:cases=1:<h> » / « atelier:cases=0 » : mode Cases de l'Atelier
+    (ajouter / retirer des cases du sol). Drapeau « atl_c » et hauteur « atl_h »
+    portes par la grille ; clic_cases (checkMouseHits) s'en sert.
+    Registres : 11 conteneur, 12 grille.
+    """
+    PUB = 'PackageNamespace("")'
+    MC = 'QName(PackageNamespace("flash.display"),"MovieClip")'
+    def pose(nom, val):
+        return ['getlocal 12', val, 'setproperty QName(%s,"%s")' % (PUB, nom)]
+    return (['getlocal 6', 'pushstring "atelier:cases="', INDEXOF, 'pushbyte 0', 'ifne atl_pas_cases']
+        + trouver_canevas(CEH, 'ca')
+        + ['getlocal 10', 'getproperty QName(%s,"displayObject")' % PUB, 'coerce_a', 'setlocal 11',
+           'getlocal 11', 'pushstring "atelier_grille"', 'callproperty QName(%s,"getChildByName"), 1' % PUB,
+           'coerce_a', 'setlocal 12',
+           'getlocal 12', 'iftrue atl_ca_a',
+           'findpropstrict ' + MC, 'constructprop %s, 0' % MC, 'coerce_a', 'setlocal 12']
+        + pose('name', 'pushstring "atelier_grille"') + pose('mouseEnabled', 'pushfalse')
+        + pose('mouseChildren', 'pushfalse') + pose('alpha', 'pushdouble 0.55')
+        + pose('atl_d', 'pushstring ""') + pose('atl_u', 'pushbyte -1')
+        + ['getlocal 11', 'getlocal 12', 'callpropvoid QName(%s,"addChild"), 1' % PUB,
+           'atl_ca_a:',
+           'getlocal 12', 'getlocal 6', 'pushstring "atelier:cases=1"', INDEXOF, 'pushbyte 0', 'equals',
+           'setproperty QName(%s,"atl_c")' % PUB,
+           'getlocal 12',
+           'findpropstrict QName(PackageNamespace(""),"parseFloat")',
+           'getlocal 6', 'pushbyte 16', 'callproperty QName(%s,"substr"), 1' % AS3,
+           'callproperty QName(PackageNamespace(""),"parseFloat"), 1', 'convert_d',
+           'setproperty QName(%s,"atl_h")' % PUB,
+           'atl_ca_fin:', 'returnvoid', 'atl_pas_cases:'])
+
+
+CASE_FICHIER = ".atelier-case.txt"   # dans le dossier personnel : « n:x,y » de la derniere case cliquee
+
+
+def clic_cases():
+    """
+    RoomSpriteCanvas.checkMouseHits (debut) : en mode Cases (grille.atl_c),
+    un clic ne va plus au jeu (pas de marche, pas de mobi) : la case visee,
+    meme dans le vide, est calculee avec la projection du jeu
+    (getPlanePosition sur le plan du sol a la hauteur atl_h) et ecrite dans
+    CASE_FICHIER (« n:x,y », n croissant) ou l'Atelier la lit. mouseDown et
+    doubleClick sont avales aussi. Registres ajoutes : 19 a 24.
+    """
+    PUB = 'PackageNamespace("")'
+    RSC = 'PrivateNamespace("com.sulake.room.renderer:RoomSpriteCanvas")'
+    V3 = 'QName(PackageNamespace("com.sulake.room.utils"),"Vector3d")'
+    PT = 'QName(PackageNamespace("flash.geom"),"Point")'
+    FILE = 'QName(PackageNamespace("flash.filesystem"),"File")'
+    FS = 'QName(PackageNamespace("flash.filesystem"),"FileStream")'
+    MATH = 'QName(PackageNamespace(""),"Math")'
+    u = list(pcode_origine(RSC_C, "checkMouseHits"))
+    im = next(i for i, x in enumerate(u) if x.startswith("maxstack "))
+    il = next(i for i, x in enumerate(u) if x.startswith("localcount "))
+    u[im] = "maxstack %d" % max(20, int(u[im].split()[1]))
+    u[il] = "localcount %d" % max(25, int(u[il].split()[1]))
+    def vec(a, b, c):
+        return ['findpropstrict ' + V3] + a + b + c + ['constructprop %s, 3' % V3]
+    p = ['getlex QName(%s,"_-Tr")' % RSC, 'pushstring "atelier_grille"',
+         'callproperty QName(%s,"getChildByName"), 1' % PUB, 'coerce_a', 'setlocal 19',
+         'getlocal 19', 'iffalse atl_k_non',
+         'getlocal 19', 'getproperty QName(%s,"atl_c")' % PUB, 'iffalse atl_k_non',
+         'getlocal3', 'pushstring "click"', 'ifeq atl_k_clic',
+         'getlocal3', 'pushstring "mouseDown"', 'ifeq atl_k_avale',
+         'getlocal3', 'pushstring "doubleClick"', 'ifeq atl_k_avale',
+         'jump atl_k_non',
+         'atl_k_clic:',
+         'findpropstrict ' + PT,
+         'getlocal1', 'getlex QName(%s,"_-Yd")' % RSC, 'pushbyte 2', 'divide', 'convert_i', 'subtract',
+         'getlocal2', 'getlex QName(%s,"_-E1E")' % RSC, 'pushbyte 2', 'divide', 'convert_i', 'subtract',
+         'constructprop %s, 2' % PT, 'coerce_a', 'setlocal 20',
+         'getlex QName(%s,"_geometry")' % RSC, 'getlocal 20']
+    p += vec(['pushbyte 0'], ['pushbyte 0'], ['getlocal 19', 'getproperty QName(%s,"atl_h")' % PUB, 'convert_d'])
+    p += vec(['pushbyte 1'], ['pushbyte 0'], ['pushbyte 0'])
+    p += vec(['pushbyte 0'], ['pushbyte 1'], ['pushbyte 0'])
+    p += ['callproperty QName(%s,"getPlanePosition"), 4' % PUB, 'coerce_a', 'setlocal 21',
+          'getlocal 21', 'iffalse atl_k_avale',
+          'getlocal 19', 'getlocal 19', 'getproperty QName(%s,"atl_n")' % PUB, 'convert_i', 'increment_i',
+          'setproperty QName(%s,"atl_n")' % PUB,
+          'getlocal 19', 'getproperty QName(%s,"atl_n")' % PUB, 'pushstring ":"', 'add',
+          'getlex ' + MATH, 'getlocal 21', 'getproperty QName(%s,"x")' % PUB, 'pushdouble 0.5', 'add',
+          'callproperty QName(%s,"floor"), 1' % PUB, 'add',
+          'pushstring ","', 'add',
+          'getlex ' + MATH, 'getlocal 21', 'getproperty QName(%s,"y")' % PUB, 'pushdouble 0.5', 'add',
+          'callproperty QName(%s,"floor"), 1' % PUB, 'add',
+          'coerce_s', 'setlocal 22',
+          'getlex ' + FILE, 'getproperty QName(%s,"userDirectory")' % PUB,
+          'pushstring "%s"' % CASE_FICHIER, 'callproperty QName(%s,"resolvePath"), 1' % PUB, 'coerce_a', 'setlocal 23',
+          'findpropstrict ' + FS, 'constructprop %s, 0' % FS, 'coerce_a', 'setlocal 24',
+          'getlocal 24', 'getlocal 23', 'pushstring "write"', 'callpropvoid QName(%s,"open"), 2' % PUB,
+          'getlocal 24', 'getlocal 22', 'callpropvoid QName(%s,"writeUTFBytes"), 1' % PUB,
+          'getlocal 24', 'callpropvoid QName(%s,"close"), 0' % PUB,
+          'atl_k_avale:', 'pushtrue', 'returnvalue',
+          'atl_k_non:']
+    i = u.index("pushscope")
+    chemin = os.path.join(TRAVAIL, "clic-cases.pcode")
+    open(chemin, "w", encoding="utf-8").write("\n".join(u[:i + 1] + p + u[i + 1:]))
     return chemin
 
 
@@ -984,44 +1185,46 @@ def dalles_salle(CEH):
 
 def clic_sol():
     """
-    Sprite de la salle (§_-s9§).hitTestPoint : si la grille de l'Atelier porte
+    Sprite de la salle (§_-s9§).hitTest(x, y) : si la grille de l'Atelier porte
     atl_z (choix d'une zone en cours), seuls les plans (sol, murs : etiquette
     « plane... ») repondent au clic ; les mobis et avatars laissent passer.
+    Si elle porte atl_t (« ,12,34, » : dalles magiques, atelier:dalles=1), ces
+    dalles laissent passer le clic au mobi pose dessus.
+    C'est hitTest qu'on modifie (pas hitTestPoint) : le canevas appelle hitTest
+    directement pour les mobis a clic immediat (blocs...), et hitTestPoint
+    le rappelle pour tous les autres. Le reste est le code d'origine.
     Le sprite est dans le calque des mobis, lui-meme dans le conteneur du
     canevas qui porte la grille : parent.parent.
     """
     PUB = 'PackageNamespace("")'
-    return "\n".join([
-        'method', 'name "hitTestPoint"', 'flag HAS_OPTIONAL',
-        'param QName(PackageNamespace(""),"Number")', 'param QName(PackageNamespace(""),"Number")',
-        'param QName(PackageNamespace(""),"Boolean")', 'optional False()',
-        'returns QName(PackageNamespace(""),"Boolean")', '',
-        'body', 'maxstack 10', 'localcount 7', 'initscopedepth 0', 'maxscopedepth 1', '',
-        'code', 'getlocal0', 'pushscope',
-        'getlocal0', 'getproperty QName(%s,"tag")' % PUB, 'coerce_s', 'setlocal 4',
-        'getlocal 4', 'iffalse atl_h_z',
-        'getlocal 4', 'pushstring "plane"', INDEXOF, 'pushbyte 0', 'ifeq atl_h_ok',
-        'atl_h_z:',
-        'getlocal0', 'getproperty QName(%s,"parent")' % PUB, 'coerce_a', 'setlocal 5',
-        'getlocal 5', 'iffalse atl_h_ok',
-        'getlocal 5', 'getproperty QName(%s,"parent")' % PUB, 'coerce_a', 'setlocal 5',
-        'getlocal 5', 'iffalse atl_h_ok',
-        'getlocal 5', 'pushstring "atelier_grille"', 'callproperty QName(%s,"getChildByName"), 1' % PUB,
-        'coerce_a', 'setlocal 6',
-        'getlocal 6', 'iffalse atl_h_ok',
-        'getlocal 6', 'getproperty QName(%s,"atl_z")' % PUB, 'iffalse atl_h_t',
-        'pushfalse', 'returnvalue',
-        # dalles magiques (atelier:dalles=1) : le clic passe au mobi pose dessus
-        'atl_h_t:',
-        'getlocal 6', 'getproperty QName(%s,"atl_t")' % PUB, 'coerce_s', 'setlocal 4',
-        'getlocal 4', 'iffalse atl_h_ok',
-        'getlocal 4', 'pushstring ","', 'getlocal0', 'getproperty QName(%s,"identifier")' % PUB, 'add',
-        'pushstring ","', 'add', INDEXOF, 'pushbyte 0', 'iflt atl_h_ok',
-        'pushfalse', 'returnvalue',
-        'atl_h_ok:',
-        'findpropstrict QName(PackageNamespace(""),"hitTest")', 'getlocal1', 'getlocal2',
-        'callproperty QName(PackageNamespace(""),"hitTest"), 2', 'returnvalue',
-        'end ; code', 'end ; body', 'end ; method'])
+    p = ['getlocal0', 'getproperty QName(%s,"tag")' % PUB, 'coerce_s', 'setlocal 4',
+         'getlocal 4', 'iffalse atl_h_z',
+         'getlocal 4', 'pushstring "plane"', INDEXOF, 'pushbyte 0', 'ifeq atl_h_ok',
+         'atl_h_z:',
+         'getlocal0', 'getproperty QName(%s,"parent")' % PUB, 'coerce_a', 'setlocal 5',
+         'getlocal 5', 'iffalse atl_h_ok',
+         'getlocal 5', 'getproperty QName(%s,"parent")' % PUB, 'coerce_a', 'setlocal 5',
+         'getlocal 5', 'iffalse atl_h_ok',
+         'getlocal 5', 'pushstring "atelier_grille"', 'callproperty QName(%s,"getChildByName"), 1' % PUB,
+         'coerce_a', 'setlocal 6',
+         'getlocal 6', 'iffalse atl_h_ok',
+         'getlocal 6', 'getproperty QName(%s,"atl_z")' % PUB, 'iffalse atl_h_t',
+         'pushfalse', 'returnvalue',
+         # dalles magiques (atelier:dalles=1) : le clic passe au mobi pose dessus
+         'atl_h_t:',
+         'getlocal 6', 'getproperty QName(%s,"atl_t")' % PUB, 'coerce_s', 'setlocal 4',
+         'getlocal 4', 'iffalse atl_h_ok',
+         'getlocal 4', 'pushstring ","', 'getlocal0', 'getproperty QName(%s,"identifier")' % PUB, 'add',
+         'pushstring ","', 'add', INDEXOF, 'pushbyte 0', 'iflt atl_h_ok',
+         'pushfalse', 'returnvalue',
+         'atl_h_ok:']
+    c = list(pcode_origine(S9_C, "hitTest"))
+    im = next(i for i, x in enumerate(c) if x.startswith("maxstack "))
+    il = next(i for i, x in enumerate(c) if x.startswith("localcount "))
+    c[im] = "maxstack %d" % max(10, int(c[im].split()[1]))
+    c[il] = "localcount %d" % max(7, int(c[il].split()[1]))
+    i = c.index("pushscope")
+    return "\n".join(c[:i + 1] + p + c[i + 1:])
 
 
 def ecrire_clic_sol():
@@ -1053,6 +1256,7 @@ def chat_salle():
     if GRILLE:
         p += grille_salle(CEH)
         p += zone_salle(CEH)
+        p += cases_salle(CEH)
         p += dalles_salle(CEH)
     p += ['getlocal 6', 'pushstring "atelier:surligner="', INDEXOF, 'pushbyte 0', 'ifne atl_normal',
          'getlex QName(%s,"_-017")' % CEH, 'getproperty QName(PackageNamespace(""),"roomEngine")', 'coerce_a', 'setlocal 7',
@@ -1083,6 +1287,15 @@ def chat_salle():
          'getlocal 11', LENGTH, 'pushbyte 0', 'ifle atl_fin',
          'getlocal 11', 'callproperty QName(%s,"shift"), 0' % AS3, 'coerce_s', 'setlocal 12',
          'pushbyte 10', 'setlocal 9',
+         # « p12 » : un animal (monster plant...) d'index 12 : la fleche de selection du jeu
+         'getlocal 12', 'pushbyte 0', 'callproperty QName(%s,"charAt"), 1' % AS3, 'pushstring "p"', 'ifne atl_pas_animal',
+         'getlocal 7', 'getlocal 8',
+         'findpropstrict QName(PackageNamespace(""),"parseInt")',
+         'getlocal 12', 'pushbyte 1', 'callproperty QName(%s,"substr"), 1' % AS3,
+         'callproperty QName(PackageNamespace(""),"parseInt"), 1', 'convert_i',
+         'callpropvoid QName(%s,"selectAvatar"), 2' % RE,
+         'jump atl_tok',
+         'atl_pas_animal:',
          'getlocal 12', 'pushbyte 0', 'callproperty QName(%s,"charAt"), 1' % AS3, 'pushstring "m"', 'ifne atl_sol',
          'pushbyte 20', 'setlocal 9',
          'atl_sol:',
@@ -1538,7 +1751,8 @@ def main():
         rempl += [CEH_C, chat_salle(), corps(CEH_C, "onRoomChat")]
     if GRILLE:
         rempl += [RSC_C, rendu_grille(), corps(RSC_C, "render")]
-        rempl += [S9_C, ecrire_clic_sol(), corps(S9_C, "hitTestPoint")]
+        rempl += [RSC_C, clic_cases(), corps(RSC_C, "checkMouseHits")]
+        rempl += [S9_C, ecrire_clic_sol(), corps(S9_C, "hitTest")]
     if SURLIGNAGE:
         rempl += [FVIS_C, filtres_couche(), corps(FVIS_C, "updateSpriteFilters")]
         rempl += [FVIS_C, contour(), corps(FVIS_C, "updateSprites")]

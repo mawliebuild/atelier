@@ -55,14 +55,17 @@ public final class Reproduction {
         for (int i = 0; i < n; i++) v[i] = p.readInteger(6 + 4 * i);
         long now = System.currentTimeMillis();
         if (now - dernierVu > 60_000) vus.clear();      // nouvelle reproduction
+        // un autre couple dans la minute : nouvelle reproduction aussi (sinon ses
+        // identifiants resteraient en dur dans le modele et seraient rejoues)
+        else if (nouveauCouple(vus, v, PlanteSuivi.plantes())) vus.clear();
         dernierVu = now;
         vus.add(v);
-        System.out.println("[Atelier] BreedPets observe : " + Arrays.toString(v));
+        Journal.debug("BreedPets observe : " + Arrays.toString(v));
         List<Etape> m = deduire(vus, PlanteSuivi.plantes());
         if (!m.isEmpty()) {
             modele = m;
             prefs.put("reproduction.modele", ecrire(m));
-            System.out.println("[Atelier] reproduction apprise : " + m);
+            Journal.debug("reproduction apprise : " + m);
         }
     }
 
@@ -71,16 +74,9 @@ public final class Reproduction {
      * plantes connues qui y apparaissent deviennent A et B. Logique pure.
      */
     static List<Etape> deduire(List<int[]> paquets, Collection<PlanteSuivi.Plante> plantes) {
-        Set<Integer> ids = new HashSet<>();
-        for (PlanteSuivi.Plante p : plantes) ids.add(p.id);
-        Integer a = null, b = null;
-        for (int[] v : paquets)
-            for (int x : v)
-                if (ids.contains(x)) {
-                    if (a == null) a = x;
-                    else if (b == null && x != a) b = x;
-                }
-        if (a == null || b == null) return List.of();
+        int[] c = couple(paquets, ids(plantes));
+        if (c == null) return List.of();
+        int a = c[0], b = c[1];
         List<Etape> r = new ArrayList<>();
         for (int[] v : paquets) {
             String[] s = new String[v.length];
@@ -89,6 +85,36 @@ public final class Reproduction {
             r.add(new Etape(s));
         }
         return r;
+    }
+
+    private static Set<Integer> ids(Collection<PlanteSuivi.Plante> plantes) {
+        Set<Integer> ids = new HashSet<>();
+        for (PlanteSuivi.Plante p : plantes) ids.add(p.id);
+        return ids;
+    }
+
+    /** Les deux premieres plantes connues (differentes) de la suite, ou null. Logique pure. */
+    static int[] couple(List<int[]> paquets, Set<Integer> ids) {
+        Integer a = null, b = null;
+        for (int[] v : paquets)
+            for (int x : v)
+                if (ids.contains(x)) {
+                    if (a == null) a = x;
+                    else if (b == null && x != a) b = x;
+                }
+        return a == null || b == null ? null : new int[]{a, b};
+    }
+
+    /**
+     * Le paquet v parle-t-il d'une plante qui n'est pas du couple deja vu dans
+     * la suite ? Alors c'est une autre reproduction. Logique pure.
+     */
+    static boolean nouveauCouple(List<int[]> paquets, int[] v, Collection<PlanteSuivi.Plante> plantes) {
+        Set<Integer> ids = ids(plantes);
+        int[] c = couple(paquets, ids);
+        if (c == null) return false;
+        for (int x : v) if (ids.contains(x) && x != c[0] && x != c[1]) return true;
+        return false;
     }
 
     static String ecrire(List<Etape> m) {

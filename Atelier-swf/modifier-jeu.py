@@ -21,8 +21,17 @@ WIN = os.name == "nt"
 ETAT = os.path.join(ICI, "etat-jeu.json")
 
 
+JOURNAL = os.path.join(ICI, "modifier-jeu.log")
+
+
 def dire(m):
     print(m, flush=True)
+    try:
+        import time
+        with open(JOURNAL, "a", encoding="utf-8") as j:
+            j.write(time.strftime("%Y-%m-%d %H:%M:%S ") + m + "\n")
+    except Exception:
+        pass
 
 
 def empreinte(f):
@@ -89,7 +98,10 @@ def signer(app):
 
 
 def modifier():
+    dire("--- %s, Python %s" % ("Windows" if WIN else "Mac", sys.version.split()[0]))
     l = clients()
+    for swf, _ in l:
+        dire("    client trouvé : %s" % swf)
     if not l:
         dire("! Habbo introuvable : ouvre le Habbo Launcher, lance Habbo une fois, ferme-le, puis relance.")
         return 1
@@ -137,9 +149,14 @@ def modifier():
             if r.returncode != 0 or not os.path.isfile(sortie):
                 dire("! Les modifs n'ont pas pu être adaptées à cette version de Habbo : ton jeu reste normal, "
                      "l'Atelier marche quand même.")
-                fin = (r.stdout + r.stderr).strip().splitlines()[-3:]
-                for x in fin:
-                    dire("    " + x)
+                fin = (r.stdout + r.stderr).strip().splitlines()
+                for x in fin[-3:]:
+                    print("    " + x, flush=True)
+                try:
+                    with open(JOURNAL, "a", encoding="utf-8") as j:
+                        j.write("\n".join(fin[-60:]) + "\n")
+                except Exception:
+                    pass
                 code = 1
                 continue
         try:

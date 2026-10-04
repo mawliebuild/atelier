@@ -128,7 +128,7 @@ public final class Ecarts {
                         prefs.getInt(cle(t, "droite"), -1), prefs.getInt(cle(t, "haut"), -1)));
             }
         } catch (Throwable t) {
-            System.out.println("[Atelier] Écarts : préférences illisibles : " + t);
+            Journal.debug("Écarts : préférences illisibles : " + t);
         }
         List<Ecart> l = new ArrayList<>(r.values());
         l.removeIf(Ecart::vide);
@@ -160,7 +160,7 @@ public final class Ecarts {
     static int typeDe(String classe) {
         if (classe == null || !Salle.furnidataPrete()) return -1;
         try {
-            Integer t = AtelierLauncher.gpresets().getFurniDataTools().getWallTypeId(classe);
+            Integer t = AtelierLauncher.moteur().getFurniDataTools().getWallTypeId(classe);
             return t == null ? -1 : t;
         } catch (Throwable t) { return -1; }
     }

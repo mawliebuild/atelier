@@ -25,7 +25,8 @@ import java.util.*;
  * Le client Flash sait rendre TOUTE la salle en image avec la commande chat
  * « :screenshot », quelle que soit la taille de l'ecran — sur fond transparent,
  * sans la couleur de decor (le toner). L'Atelier ne dessine rien : il fait
- * taper la commande dans le jeu (declencher, AppleScript), recupere l'image que
+ * taper la commande dans le jeu (declencher : AppleScript sur Mac, SendInput
+ * sous Windows, voir CaptureWindows), recupere l'image que
  * le jeu vient d'ecrire sur le disque, puis :
  *
  *   1. repere l'arriere-plan (deja transparent, ou un aplat uni) ;
@@ -37,7 +38,7 @@ import java.util.*;
  *   5. enregistre en PNG, JPG (fond uni) ou GIF (image seule ou animation).
  *
  * Tout le traitement d'image travaille sur des tableaux ARGB : il se teste hors
- * de l'appli (aucune dependance a JavaFX ni a G-Earth dans cette partie).
+ * de l'appli (aucune dependance a JavaFX ni au proxy dans cette partie).
  * Aucun appel a java.awt.Toolkit : BufferedImage et ImageIO suffisent.
  */
 public final class Capture {
@@ -131,7 +132,7 @@ public final class Capture {
 
     /**
      * Le toner de la salle (mobi roombg_color), lu dans FloorState de
-     * G-Presets — qui suit ObjectUpdate / ObjectDataUpdate. Le stuffdata est un
+     * le moteur de l'Atelier — qui suit ObjectUpdate / ObjectDataUpdate. Le stuffdata est un
      * IntArrayStuffData : [etat, teinte, saturation, luminosite]. Prefere un
      * toner allume s'il y en a plusieurs. null si aucun ou illisible.
      */
@@ -337,7 +338,7 @@ public final class Capture {
                     if (x < x0) x0 = x; if (x > x1) x1 = x;
                     if (y < y0) y0 = y; if (y > y1) y1 = y;
                 }
-        if (x1 < 0) throw new IllegalStateException("aucune salle trouvée dans l'image (rien que le fond)");
+        if (x1 < 0) throw new IllegalStateException("Aucune salle trouvée dans l'image (rien que le fond).");
 
         if (!r.garderFond) {
             boolean[] ext = exterieur(salle, w, h);
@@ -587,24 +588,23 @@ public final class Capture {
         return System.getProperty("user.name");
     }
 
-    /** Dossier personnel de l'utilisateur reel (pas /var/root sous sudo). */
+    /** Sous Windows : capture par user32 / gdi32 (CaptureWindows) au lieu d'AppleScript. */
+    static final boolean WINDOWS = Dossiers.WINDOWS;
+
+    /** Dossier personnel de l'utilisateur reel (pas /var/root sous sudo ; user.home sous Windows). */
     public static File maisonReelle() {
-        String s = System.getenv("SUDO_USER");
-        if (s != null && !s.isBlank() && !"root".equals(s)) {
-            File f = new File("/Users/" + s);
-            if (f.isDirectory()) return f;
-        }
-        return new File(System.getProperty("user.home"));
+        return Dossiers.maison();
     }
 
     private static boolean sousSudo() {
+        if (WINDOWS) return false;
         String s = System.getenv("SUDO_USER");
         return s != null && !s.isBlank() && "root".equals(System.getProperty("user.name"));
     }
 
-    /** ~/Pictures/Atelier de l'utilisateur reel, cree au besoin. */
+    /** Images › Atelier de l'utilisateur reel (~/Pictures/Atelier ; Windows : dossier Images du compte), cree au besoin. */
     public static File dossierSortie() {
-        File d = new File(new File(maisonReelle(), "Pictures"), "Atelier");
+        File d = new File(Dossiers.images(), "Atelier");
         if (!d.isDirectory() && d.mkdirs()) rendre(d);
         return d;
     }
@@ -634,15 +634,15 @@ public final class Capture {
 
     /**
      * Dossiers surveilles par defaut, chez l'utilisateur reel : Bureau,
-     * Images, Telechargements, Documents, le dossier personnel lui-meme, et
-     * leurs sous-dossiers (un niveau) dont le nom contient « habbo ».
+     * Images, Telechargements, Documents (sous Windows, aussi ceux de
+     * OneDrive), le dossier personnel lui-meme, et leurs sous-dossiers (un
+     * niveau) dont le nom contient « habbo ».
      */
     public static List<File> dossiersParDefaut() {
         File m = maisonReelle();
         List<File> l = new ArrayList<>();
-        for (String n : new String[]{"Desktop", "Pictures", "Downloads", "Documents"}) {
-            File d = new File(m, n);
-            if (!d.isDirectory()) continue;
+        for (File d : Dossiers.habituels()) {
+            if (l.contains(d)) continue;
             l.add(d);
             File[] sous = d.listFiles(File::isDirectory);
             if (sous != null)
@@ -685,6 +685,7 @@ public final class Capture {
      * @return null si c'est parti, sinon un message clair en francais.
      */
     public static String declencher(boolean coller) {
+        if (WINDOWS) return CaptureWindows.declencher(coller);
         long pid = ProcessHandle.current().pid();
         List<String> l = new ArrayList<>();
         l.add("tell application \"System Events\"");
@@ -730,16 +731,40 @@ public final class Capture {
         cmd.add("/usr/bin/osascript");
         for (String s : lignes) { cmd.add("-e"); cmd.add(s); }
         try {
-            Process p = new ProcessBuilder(cmd).redirectErrorStream(true).start();
-            String sortie = new String(p.getInputStream().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
-            if (!p.waitFor(20, java.util.concurrent.TimeUnit.SECONDS)) {
-                p.destroyForcibly();
-                return new String[]{"osascript ne répond pas (une fenêtre d'autorisation macOS attend peut-être une réponse).", ""};
-            }
-            if (p.exitValue() == 0) return new String[]{null, sortie.trim()};
-            return new String[]{expliquer(sortie), sortie};
+            Sortie r = executer(new ProcessBuilder(cmd), 20);
+            if (r == null)
+                return new String[]{"Osascript ne répond pas (une fenêtre d'autorisation macOS attend peut-être une réponse).", ""};
+            if (r.code == 0) return new String[]{null, r.texte.trim()};
+            return new String[]{expliquer(r.texte), r.texte};
         } catch (Throwable t) {
             return new String[]{"Impossible de lancer osascript : " + t.getMessage(), ""};
+        }
+    }
+
+    /** Sortie d'un processus termine. */
+    static final class Sortie {
+        final int code; final String texte;
+        Sortie(int code, String texte) { this.code = code; this.texte = texte; }
+    }
+
+    /**
+     * Lance un processus et attend au plus « secondes ». La sortie (erreurs
+     * comprises) va dans un fichier temporaire : un processus bloque (fenetre
+     * d'autorisation macOS) ne bloque donc pas la lecture, et le delai sert.
+     * null si le delai est depasse (le processus est alors tue).
+     */
+    static Sortie executer(ProcessBuilder pb, long secondes) throws IOException, InterruptedException {
+        File tmp = File.createTempFile("atelier-proc-", ".txt");
+        try {
+            Process p = pb.redirectErrorStream(true).redirectOutput(tmp).start();
+            if (!p.waitFor(secondes, java.util.concurrent.TimeUnit.SECONDS)) {
+                p.destroyForcibly();
+                return null;
+            }
+            return new Sortie(p.exitValue(), new String(java.nio.file.Files.readAllBytes(tmp.toPath()),
+                    java.nio.charset.StandardCharsets.UTF_8));
+        } finally {
+            tmp.delete();
         }
     }
 
@@ -782,17 +807,17 @@ public final class Capture {
      * hors fichiers caches). Liste vide si Spotlight ne repond pas.
      */
     public static List<File> imagesRecentesSpotlight(long depuisMs) {
+        if (WINDOWS) return imagesRecentesParcours(maisonReelle(), depuisMs, dossierSortie(), 4, 1500);
         List<File> out = new ArrayList<>();
         long secondes = Math.max(10, (System.currentTimeMillis() - depuisMs) / 1000 + 5);
         File maison = maisonReelle();
         String requete = "kMDItemFSCreationDate >= $time.now(-" + secondes + ")"
                 + " && kMDItemContentTypeTree == \"public.image\"";
         try {
-            Process p = new ProcessBuilder("/usr/bin/mdfind", "-onlyin", maison.getAbsolutePath(), requete)
-                    .redirectErrorStream(true).start();
-            String sortie = new String(p.getInputStream().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
-            if (!p.waitFor(8, java.util.concurrent.TimeUnit.SECONDS)) { p.destroyForcibly(); return out; }
-            String exclu = new File(new File(maison, "Pictures"), "Atelier").getAbsolutePath() + "/";
+            Sortie r = executer(new ProcessBuilder("/usr/bin/mdfind", "-onlyin", maison.getAbsolutePath(), requete), 8);
+            if (r == null) return out;
+            String sortie = r.texte;
+            String exclu = dossierSortie().getAbsolutePath() + "/";
             String lib = new File(maison, "Library").getAbsolutePath() + "/";
             for (String ligne : sortie.split("\n")) {
                 String chemin = ligne.trim();
@@ -805,6 +830,42 @@ public final class Capture {
         return out;
     }
 
+    /**
+     * Sans Spotlight (Windows) : parcours du dossier personnel, « profondeur »
+     * niveaux au plus et « budgetMs » au plus, a la recherche des images
+     * modifiees depuis « depuisMs ». Saute AppData, les dossiers caches
+     * (« . », « $ »), les liens et le dossier « exclu » (nos propres photos).
+     * On ne lit les fichiers que des dossiers modifies depuis (un fichier cree
+     * change la date de son dossier), mais on descend partout.
+     */
+    static List<File> imagesRecentesParcours(File racine, long depuisMs, File exclu, int profondeur, long budgetMs) {
+        List<File> out = new ArrayList<>();
+        long fin = System.currentTimeMillis() + budgetMs;
+        ArrayDeque<Object[]> file = new ArrayDeque<>();
+        file.add(new Object[]{racine, 0});
+        String sansCa = exclu == null ? null : exclu.getAbsolutePath();
+        while (!file.isEmpty() && System.currentTimeMillis() < fin) {
+            Object[] e = file.poll();
+            File d = (File) e[0];
+            int niveau = (Integer) e[1];
+            File[] l = d.listFiles();
+            if (l == null) continue;
+            boolean recent = d.lastModified() >= depuisMs - 2000;
+            for (File f : l) {
+                String n = f.getName();
+                if (n.startsWith(".") || n.startsWith("$")) continue;
+                if (f.isDirectory()) {
+                    if (niveau >= profondeur || n.equalsIgnoreCase("AppData") || n.equalsIgnoreCase("Library")
+                            || n.equalsIgnoreCase("node_modules") || f.getAbsolutePath().equals(sansCa)) continue;
+                    try { if (java.nio.file.Files.isSymbolicLink(f.toPath())) continue; } catch (Throwable ignored) { }
+                    file.add(new Object[]{f, niveau + 1});
+                } else if (recent && estImage(f) && f.lastModified() >= depuisMs) {
+                    out.add(f);
+                }
+            }
+        }
+        return out;
+    }
 
     // =================================================================
     //  Mode experimental : fenetre Habbo agrandie, capturee seule
@@ -871,6 +932,7 @@ public final class Capture {
 
     /** Lit le cadre de la fenetre du jeu. */
     public static Ou<Cadre> lireCadreHabbo() {
+        if (WINDOWS) return CaptureWindows.lireCadre();
         String[] r = osascript(versHabbo("get (position of window 1) & (size of window 1)"));
         if (r[0] != null) return new Ou<>(null, r[0]);
         Cadre c = lireCadreTexte(r[1]);
@@ -891,6 +953,7 @@ public final class Capture {
 
     /** Place la fenetre (position puis taille, puis position a nouveau). null si OK. */
     public static String reglerCadreHabbo(Integer x, Integer y, int l, int h) {
+        if (WINDOWS) return CaptureWindows.reglerCadre(x, y, l, h);
         List<String> c = new ArrayList<>();
         if (x != null) c.add("set position of window 1 to {" + x + ", " + y + "}");
         c.add("set size of window 1 to {" + l + ", " + h + "}");
@@ -1000,6 +1063,7 @@ public final class Capture {
      * fenetre de 3000×2000 reste a 24 Mo). Retire la barre de titre (titrePt).
      */
     public static Ou<Photo> capturerFenetreHabbo(int titrePt) {
+        if (WINDOWS) return CaptureWindows.capturer();      // zone client : pas de barre a retirer
         try {
             double[] f = fenetreHabboCg();
             if (f == null) return new Ou<>(null, "Fenêtre Habbo introuvable : l'appli doit être ouverte, pas réduite.");
@@ -1022,12 +1086,15 @@ public final class Capture {
         }
     }
 
-    public static final String AUTORISATION_ECRAN =
-            "Image vide : macOS refuse la capture. Réglages Système › Confidentialité et sécurité › "
-            + "Enregistrement de l'écran (et audio système) : active Terminal (ou java), puis relance l'Atelier.";
+    public static final String AUTORISATION_ECRAN = WINDOWS
+            ? "Image vide : Windows n'a pas pu photographier la fenêtre Habbo. Laisse-la ouverte (pas réduite) "
+              + "et visible à l'écran, puis réessaie, ou reviens à :screenshot."
+            : "Image vide : macOS refuse la capture. Réglages Système › Confidentialité et sécurité › "
+              + "Enregistrement de l'écran (et audio système) : active Terminal (ou java), puis relance l'Atelier.";
 
     /** Demande l'autorisation d'enregistrement de l'ecran si elle manque. true si accordee. */
     public static boolean autorisationEcran() {
+        if (WINDOWS) return true;                            // aucune autorisation sous Windows
         try {
             chargerCg();
             if (cg.CGPreflightScreenCaptureAccess() != 0) return true;

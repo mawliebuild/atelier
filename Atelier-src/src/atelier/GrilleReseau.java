@@ -116,8 +116,8 @@ final class GrilleReseau {
     /** Ce qui est affiche chez le client : id -> marqueur. */
     static final Map<Integer, GrilleCalcul.Marqueur> affiches = new ConcurrentHashMap<>();
     static volatile int salle = -1;
-    /** Vrai si G-Presets a vu nos ObjectAdd (ils apparaitraient dans « la salle » des autres outils). */
-    static volatile boolean vusParGPresets = false;
+    /** Vrai si le moteur de l'Atelier a vu nos ObjectAdd (ils apparaitraient dans « la salle » des autres outils). */
+    static volatile boolean vusParMoteur = false;
     static volatile String evenement = null;
 
     private static final List<Runnable> ecouteurs = new CopyOnWriteArrayList<>();
@@ -145,8 +145,16 @@ final class GrilleReseau {
 
     /** Un vrai mobi de la salle porte-t-il un identifiant de notre plage ? */
     static boolean collision() {
-        for (HFloorItem it : Salle.sols())
-            if (GrilleCalcul.estFictif(it.getId()) && !affiches.containsKey(it.getId())) return true;
+        // Pas Salle.sols() : elle retire justement les ids de notre plage.
+        game.FloorState s = Salle.etat();
+        if (s == null) return false;
+        List<HFloorItem> tous;
+        try { tous = s.getItems(); } catch (Throwable t) { return false; }
+        if (tous == null) return false;
+        try {
+            for (HFloorItem it : new ArrayList<>(tous))
+                if (it != null && GrilleCalcul.estFictif(it.getId()) && !affiches.containsKey(it.getId())) return true;
+        } catch (Throwable ignored) { }
         return false;
     }
 
@@ -218,10 +226,10 @@ final class GrilleReseau {
             if (++n % PAR_LOT == 0) { progres.accept(n); Salle.sommeil(PAUSE); }
         }
         progres.accept(n);
-        // G-Presets voit-il nos envois ? Alors ils sont dans Salle.sols() pour les autres outils.
+        // Le moteur de l'Atelier voit-il nos envois ? Alors ils sont dans Salle.sols() pour les autres outils.
         if (!d.ajouter.isEmpty()) {
             Salle.sommeil(300);
-            try { if (Salle.sol(d.ajouter.get(0).id) != null) vusParGPresets = true; } catch (Throwable ignored) { }
+            try { if (Salle.sol(d.ajouter.get(0).id) != null) vusParMoteur = true; } catch (Throwable ignored) { }
         }
         prevenir();
         return ok;
@@ -247,7 +255,7 @@ final class GrilleReseau {
         HMessage.Direction C = HMessage.Direction.TOCLIENT, S = HMessage.Direction.TOSERVER;
         for (String nom : new String[]{"RoomReady", "Objects", "FloorHeightMap"}) {
             try { gp.intercept(C, nom, m -> { if (!affiches.isEmpty()) oublier("La salle a été rechargée : la grille a disparu."); }); }
-            catch (Throwable t) { System.err.println("[Atelier] grille : ecoute " + nom + " indisponible : " + t); }
+            catch (Throwable t) { Journal.debug("grille : ecoute " + nom + " indisponible : " + t); }
         }
         try {
             gp.intercept(C, "ObjectAdd", m -> {
@@ -269,7 +277,7 @@ final class GrilleReseau {
                     if (affiches.isEmpty() || m.getPacket().getBytesLength() < 10) return;
                     try { if (GrilleCalcul.estFictif(m.getPacket().readInteger(6))) m.setBlocked(true); } catch (Throwable ignored) { }
                 });
-            } catch (Throwable t) { System.err.println("[Atelier] grille : ecoute " + nom + " indisponible : " + t); }
+            } catch (Throwable t) { Journal.debug("grille : ecoute " + nom + " indisponible : " + t); }
         }
         // PickupObject(int categorie, int id) : bloque, et le marqueur disparait chez toi seulement.
         try {
@@ -287,6 +295,6 @@ final class GrilleReseau {
                 } catch (Throwable ignored) { }
             });
         } catch (Throwable ignored) { }
-        System.out.println("[Atelier] grille dans le jeu : ecoutes actives.");
+        Journal.debug("grille dans le jeu : ecoutes actives.");
     }
 }

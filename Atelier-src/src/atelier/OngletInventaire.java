@@ -31,7 +31,7 @@ import java.util.*;
  * Vitesse (25 000 mobis) : le cache garde les fragments BRUTS du serveur et
  * chaque mobi en octets bruts (InventaireCache). « Tout afficher » renvoie les
  * fragments du serveur tels quels ; une liste filtree se construit en recollant
- * des octets, puis reste en memoire pour ce filtre. constructPackets de G-Earth
+ * des octets, puis reste en memoire pour ce filtre. constructPackets de la connexion
  * (plusieurs secondes, voire minutes, sur un gros inventaire) n'est plus utilise.
  * Les mobis poses / ramasses en jeu sont reportes dans le cache au passage.
  */
@@ -44,7 +44,7 @@ public class OngletInventaire {
     /**
      * Toutes les lignes de furnidata vues passer, AVANT filtrage.
      *
-     * Indispensable : le filtre appauvrit aussi l'inventaire que voit G-Presets,
+     * Indispensable : le filtre appauvrit aussi l'inventaire que voit le moteur de l'Atelier,
      * donc y puiser la liste des annees la vidait, et la selection sautait —
      * « Noël 2024 » retombait sur « toutes les années » au premier rechargement.
      */
@@ -176,11 +176,11 @@ public class OngletInventaire {
      * plus besoin de la fermer et de la rouvrir.
      */
     private void rafraichirJeu() {
-        System.out.println("[Atelier] inventaire : changement de filtre.");
+        Journal.debug("inventaire : changement de filtre.");
         // Tout de suite : la liste filtree depuis le cache, s'il y en a un.
-        Thread vite = new Thread(this::envoyerDepuisCache, "atelier-inventaire-cache");
-        vite.setDaemon(true);
-        vite.start();
+        // Un seul fil, dans l'ordre : deux changements rapides ne se croisent
+        // plus (le jeu finit toujours sur le dernier filtre choisi).
+        travail.execute(this::envoyerDepuisCache);
         // Sans cache (ou cache vieux), on redemande l'inventaire au serveur.
         verifier(false);
     }
@@ -211,7 +211,7 @@ public class OngletInventaire {
                     attendu = derniereDemande;
                     Thread.sleep(400);
                 } while (derniereDemande != attendu);
-                GPresets gp = AtelierLauncher.gpresets();
+                GPresets gp = AtelierLauncher.moteur();
                 if (gp != null) {
                     verifDemandeeLe = System.currentTimeMillis();
                     gp.getInventory().requestInventory();
@@ -259,7 +259,7 @@ public class OngletInventaire {
             int vu = -1;
             while (true) {
                 try {
-                    GPresets gp = AtelierLauncher.gpresets();
+                    GPresets gp = AtelierLauncher.moteur();
                     int n = -1;
                     if (gp != null) {
                         try { n = gp.getInventory().getInventoryItems().size(); }
@@ -287,7 +287,7 @@ public class OngletInventaire {
      */
     private void majAnnees() {
         Set<String> trouvees = new TreeSet<>(Comparator.reverseOrder());
-        GPresets gp = AtelierLauncher.gpresets();
+        GPresets gp = AtelierLauncher.moteur();
         if (gp != null) {
             for (HInventoryItem it : inventaireConnu(gp)) {
                 Fiche f = Fiche.de(gp, it);
@@ -322,7 +322,7 @@ public class OngletInventaire {
      * « annee=tout ». Les menus de l'Atelier suivent.
      */
     private void ordreDuJeu(String ordre) {
-        System.out.println("[Atelier] inventaire du jeu : " + ordre);
+        Journal.debug("inventaire du jeu : " + ordre);
         Platform.runLater(() -> {
             try {
                 if (ordre.startsWith("categorie=")) {
@@ -357,7 +357,7 @@ public class OngletInventaire {
                     majApercu(); rafraichirJeu();
                 }
             } catch (Throwable t) {
-                System.out.println("[Atelier] ordre de l'inventaire du jeu illisible : " + ordre + " (" + t + ")");
+                Journal.debug("ordre de l'inventaire du jeu illisible : " + ordre + " (" + t + ")");
             }
         });
     }
@@ -369,8 +369,8 @@ public class OngletInventaire {
     private void majApercu() { majApercu(-1); }
 
     private void majApercu(int connus) {
-        GPresets gp = AtelierLauncher.gpresets();
-        if (gp == null) { apercu.setText("G-Presets pas encore prêt"); return; }
+        GPresets gp = AtelierLauncher.moteur();
+        if (gp == null) { apercu.setText("L'Atelier n'est pas encore prêt"); return; }
 
         boolean fd = false;
         try { fd = gp.getFurniDataTools() != null && gp.getFurniDataTools().isReady(); }
@@ -413,7 +413,7 @@ public class OngletInventaire {
         Thread t = new Thread(() -> {
             for (int i = 0; i < 600 && !installe; i++) {
                 brancher();
-                if (installe) { System.out.println("[Atelier] filtre d'inventaire actif."); return; }
+                if (installe) { Journal.debug("filtre d'inventaire actif."); return; }
                 try { Thread.sleep(1000); } catch (InterruptedException e) { return; }
             }
         }, "atelier-inventaire");
@@ -423,7 +423,7 @@ public class OngletInventaire {
 
     private synchronized void brancher() {
         if (installe) return;
-        GPresets gp = AtelierLauncher.gpresets();
+        GPresets gp = AtelierLauncher.moteur();
         if (gp == null) return;
         try {
             // Reconnaissance par CONTENU, pas par nom : un intercept par nom
@@ -449,7 +449,7 @@ public class OngletInventaire {
             });
             // Changements de l'inventaire en cours de jeu (mobi pose, ramasse,
             // achete), pour garder le cache juste sans tout redemander. Par NOM,
-            // comme G-Presets : si un nom ne se resout pas, on perd seulement ce
+            // comme le moteur de l'Atelier : si un nom ne se resout pas, on perd seulement ce
             // raccourci (le cache est alors rafraichi par la serie suivante).
             try {
                 gp.intercept(HMessage.Direction.TOCLIENT, "FurniListRemove", m -> {
@@ -462,7 +462,7 @@ public class OngletInventaire {
                     try { inventairePerime(); } catch (Throwable ignored) { }
                 });
             } catch (Throwable t) {
-                System.out.println("[Atelier] inventaire : suivi des mobis posés/ramassés indisponible (" + t + ")");
+                Journal.debug("inventaire : suivi des mobis posés/ramassés indisponible (" + t + ")");
             }
             installe = true;
             // L'inventaire a pu arriver avant que l'ecoute soit en place : sans
@@ -515,6 +515,10 @@ public class OngletInventaire {
             if (items == null) return;
         }
         lectureNs += System.nanoTime() - tLecture;
+        // En-tete encore inconnu : un paquet etranger de forme (1, 0, 0 mobi)
+        // passerait pour un inventaire vide et fixerait un faux en-tete.
+        // Une serie ne compte comme inventaire que si elle contient un mobi.
+        if (entete < 0 && total == 1 && items.length == 0) return;
 
         boolean filtreActif = filtre().actif();
         Serie serie, avant;
@@ -534,13 +538,13 @@ public class OngletInventaire {
             }
             notre = serieNotre;
             accumules.addAll(Arrays.asList(items));
-            // Copie : G-Earth peut reutiliser le paquet d'origine.
+            // Copie : la connexion peut reutiliser le paquet d'origine.
             accumulesBruts.add(brut.toBytes().clone());
             if (accumulesMobis != null) {
                 if (morceaux != null && morceaux.size() == items.length) accumulesMobis.addAll(morceaux);
                 else {
                     accumulesMobis = null;       // un fragment non decoupable : ancienne methode
-                    System.out.println("[Atelier] inventaire : fragment " + numero
+                    Journal.debug("inventaire : fragment " + numero
                             + " non découpable en octets bruts, reconstruction classique pour cette série.");
                 }
             }
@@ -553,19 +557,31 @@ public class OngletInventaire {
             // pas de mise en cache. Le jeu recoit l'ancien cache filtre s'il
             // existe, sinon ce qu'on a recu, filtre — jamais rien.
             if (fragmentsVus != total || totalSerie != total) {
-                System.err.println("[Atelier] inventaire : serie incomplete ("
+                Journal.debug("inventaire : serie incomplete ("
                         + fragmentsVus + "/" + total + "), cache conserve.");
                 Serie secours = (this.serie != null) ? this.serie
                         : new Serie(brut.headerId(), null, accumulesMobis, new ArrayList<>(accumules));
                 accumules.clear(); accumulesBruts.clear(); accumulesMobis = null;
-                if (filtreActif) envoyerFiltre(gp, secours);
-                else if (notre) envoyerComplet(gp, secours, "série incomplète");
+                // Hors de l'intercepteur et hors verrou : construire et renvoyer
+                // un gros inventaire figerait le jeu.
+                final boolean bloque = filtreActif || notre;
+                travail.execute(() -> {
+                    try {
+                        if (filtre().actif()) envoyerFiltre(gp, secours);
+                        else if (bloque) envoyerComplet(gp, secours, "série incomplète", false);
+                    } catch (Throwable t) { System.err.println("[Atelier] inventaire : " + t); }
+                });
+                return;
+            }
+            if (entete < 0 && accumules.isEmpty()) {
+                // Pas d'inventaire reconnu (aucun mobi) : ni cache, ni en-tete.
+                accumules.clear(); accumulesBruts.clear(); accumulesMobis = null;
                 return;
             }
             serie = new Serie(brut.headerId(), new ArrayList<>(accumulesBruts), accumulesMobis,
                     new ArrayList<>(accumules));
             accumules.clear(); accumulesBruts.clear(); accumulesMobis = null;
-            System.out.println("[Atelier] inventaire reçu du serveur : " + serie.items.size() + " mobis en "
+            Journal.debug("inventaire reçu du serveur : " + serie.items.size() + " mobis en "
                     + total + " morceau(x), " + (System.currentTimeMillis() - debutSerie) + " ms"
                     + (serieNotre ? " (vérification de l'Atelier)" : " (demandé par le jeu)")
                     + ", lecture " + (lectureNs / 1_000_000) + " ms"
@@ -576,6 +592,19 @@ public class OngletInventaire {
             dernierInventaire = serie.items;
             entete = brut.headerId();
         }
+        // Le reste (fiches de 25 000 mobis, renvoi au jeu) se fait HORS de
+        // l'intercepteur, sur le fil d'envoi : les fragments sont deja bloques
+        // si besoin, et aucun autre paquet n'attend pendant ce temps.
+        final Serie recue = serie, ancienne = avant;
+        final boolean notreSerie = notre, bloque = filtreActif || notre;
+        travail.execute(() -> {
+            try { apresSerie(gp, recue, ancienne, notreSerie, bloque); }
+            catch (Throwable t) { System.err.println("[Atelier] inventaire : " + t); }
+        });
+    }
+
+    /** Fiches, puis renvoi au jeu si besoin. Fil d'envoi (travail), jamais l'intercepteur. */
+    private void apresSerie(GPresets gp, Serie serie, Serie avant, boolean notre, boolean bloque) {
         // Fiche de chaque mobi, une fois pour toutes (le filtrage ne fait plus
         // que la relire).
         long t0 = System.currentTimeMillis();
@@ -590,19 +619,26 @@ public class OngletInventaire {
                 if (l != null) lignesVues.add(l);
             }
         }
-        System.out.println("[Atelier] inventaire : fiches calculées en " + (System.currentTimeMillis() - t0) + " ms.");
-        // Notre propre verification : le jeu a deja la bonne liste, sauf si
-        // l'inventaire a change entre-temps.
-        boolean change = !notre || avant == null || !memesMobis(avant.items, serie.items);
-        if (change) {
-            if (filtreActif) envoyerFiltre(gp, serie);
-            else if (notre) envoyerComplet(gp, serie, "vérification");
-            else jeuFiltre = false;     // la serie du serveur est passee telle quelle
-        } else {
-            System.out.println("[Atelier] inventaire : vérification, rien n'a changé, rien renvoyé au jeu.");
-        }
+        Journal.debug("inventaire : fiches calculées en " + (System.currentTimeMillis() - t0) + " ms.");
+        boolean actif = filtre().actif();       // le choix le plus recent
+        if (!bloque) {
+            // la serie du serveur est passee telle quelle
+            if (actif) envoyerFiltre(gp, serie); else jeuFiltre = false;
+        } else if (notre && avant != null && memesMobis(avant.items, serie.items)) {
+            // Notre propre verification : le jeu a deja la bonne liste.
+            Journal.debug("inventaire : vérification, rien n'a changé, rien renvoyé au jeu.");
+        } else if (actif) envoyerFiltre(gp, serie);
+        else envoyerComplet(gp, serie, notre ? "vérification" : "filtre retiré", false);
         demanderMajAnnees();
     }
+
+    /** Un seul fil pour construire et renvoyer les listes, dans l'ordre des demandes. */
+    private final java.util.concurrent.ExecutorService travail =
+            java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+                Thread t = new Thread(r, "atelier-inventaire-envoi");
+                t.setDaemon(true);
+                return t;
+            });
 
     private boolean serieNotre = false;
     private long debutSerie = 0;
@@ -618,7 +654,7 @@ public class OngletInventaire {
         return true;
     }
 
-    /** L'inventaire complet le plus recent : le cache s'il existe, sinon celui de G-Presets. */
+    /** L'inventaire complet le plus recent : le cache s'il existe, sinon celui du moteur de l'Atelier. */
     private List<HInventoryItem> inventaireConnu(GPresets gp) {
         Serie s = serie;
         if (s != null) return s.items;
@@ -628,18 +664,18 @@ public class OngletInventaire {
 
     /** Renvoie au jeu, depuis le cache, la liste correspondant au choix actuel. */
     private void envoyerDepuisCache() {
-        GPresets gp = AtelierLauncher.gpresets();
+        GPresets gp = AtelierLauncher.moteur();
         Serie s = serie;
         if (gp == null) return;
         if (s == null) {
             // Rien en memoire : on redemande au serveur, et sa reponse passe
             // (filtree ou non) jusqu'au jeu.
-            System.out.println("[Atelier] inventaire : pas encore en mémoire, demandé au serveur.");
+            Journal.debug("inventaire : pas encore en mémoire, demandé au serveur.");
             dire("Inventaire pas encore en mémoire : je le demande au jeu…");
             verifier(true);
             return;
         }
-        if (!filtre().actif()) envoyerComplet(gp, s, "tout afficher");
+        if (!filtre().actif()) envoyerComplet(gp, s, "tout afficher", true);
         else envoyerFiltre(gp, s);
     }
 
@@ -648,7 +684,11 @@ public class OngletInventaire {
      * n'a pas bouge depuis, sinon une serie recollee depuis les octets bruts,
      * et seulement en dernier recours les mobis reecrits un par un.
      */
-    private void envoyerComplet(GPresets gp, Serie s, String raison) {
+    /**
+     * @param parler dire la reussite (action de l'utilisatrice) ; un echec est toujours dit
+     * @return vrai si le jeu a recu l'inventaire complet
+     */
+    private boolean envoyerComplet(GPresets gp, Serie s, String raison, boolean parler) {
         long t0 = System.nanoTime();
         List<byte[]> fragments;
         String source;
@@ -658,14 +698,18 @@ public class OngletInventaire {
         long t1 = System.nanoTime();
         boolean ok = fragments != null && envoyer(gp, fragments);
         long t2 = System.nanoTime();
-        System.out.println("[Atelier] inventaire complet rétabli (" + raison + ") : " + s.items.size() + " mobis, "
+        Journal.debug("inventaire complet rétabli (" + raison + ") : " + s.items.size() + " mobis, "
                 + (fragments == null ? 0 : fragments.size()) + " fragment(s) "
                 + (fragments == null ? 0 : InventaireCache.octets(fragments) / 1024) + " Ko via " + source
                 + ", préparation " + ms(t0, t1) + " ms, envoi " + ms(t1, t2) + " ms" + (ok ? "" : " (ÉCHEC)"));
         if (ok) jeuFiltre = false;
-        dire(ok ? "Inventaire complet rétabli (" + s.items.size() + " mobis). Le jeu peut mettre un moment à tout réafficher."
-                : "Le jeu n'a pas reçu l'inventaire complet : ferme et rouvre ton inventaire.");
+        if (!ok) dire(ECHEC_COMPLET);
+        else if (parler) dire("Inventaire complet rétabli (" + s.items.size() + " mobis). Le jeu peut mettre un moment à tout réafficher.");
+        return ok;
     }
+
+    private static final String ECHEC_COMPLET =
+            "Échec : le jeu n'a pas reçu l'inventaire complet. Ferme et rouvre ton inventaire.";
 
     private void envoyerFiltre(GPresets gp, Serie s) {
         long t0 = System.nanoTime();
@@ -708,11 +752,17 @@ public class OngletInventaire {
                 s.gardesParFiltre.put(f, gardes);
             }
         }
+        // Le filtre a change pendant la construction : la demande suivante
+        // (deja en file) enverra le bon ; celle-ci est abandonnee.
+        if (!f.equals(filtre())) {
+            Journal.debug("inventaire : filtre changé entre-temps, envoi abandonné.");
+            return;
+        }
         boolean ok = fragments != null && envoyer(gp, fragments);
         long t3 = System.nanoTime();
         if (ok) {
             jeuFiltre = true;
-            System.out.println("[Atelier] inventaire filtré : " + gardes + "/" + s.items.size() + " mobis"
+            Journal.debug("inventaire filtré : " + gardes + "/" + s.items.size() + " mobis"
                     + (depuisCache ? " (liste déjà prête en cache)"
                        : " (tri " + ms(t0, t1) + " ms, fragments " + ms(t1, t2) + " ms"
                          + (s.mobis != null ? " par octets bruts" : " par réécriture des mobis (secours)") + ")")
@@ -722,8 +772,9 @@ public class OngletInventaire {
         } else {
             // Echec : l'inventaire complet plutot qu'un inventaire vide.
             System.err.println("[Atelier] inventaire : filtre impossible, envoi de l'inventaire complet.");
-            envoyerComplet(gp, s, "filtre impossible");
-            dire("Filtre impossible, inventaire complet affiché.");
+            if (envoyerComplet(gp, s, "filtre impossible", false))
+                dire("Filtre impossible, inventaire complet affiché.");
+            // sinon envoyerComplet a deja dit l'echec
         }
     }
 
@@ -735,7 +786,7 @@ public class OngletInventaire {
             try {
                 for (byte[] b : fragments)
                     if (!gp.sendToClient(new HPacket(b))) {
-                        System.err.println("[Atelier] inventaire : G-Earth a refusé un fragment.");
+                        System.err.println("[Atelier] inventaire : la connexion a refusé un fragment.");
                         return false;
                     }
                 return true;
@@ -748,20 +799,20 @@ public class OngletInventaire {
 
     /**
      * Secours quand le decoupage en octets bruts n'est pas sur : chaque mobi est
-     * reecrit par G-Earth (appendToPacket), un par un, puis recolle.
+     * reecrit par la connexion (appendToPacket), un par un, puis recolle.
      *
      * Plus de constructPackets : il recopie tout le paquet a chaque champ ecrit
-     * et, bogue de G-Earth, met dans le fragment n TOUS les mobis de n*600 a la
+     * et, bogue de la connexion, met dans le fragment n TOUS les mobis de n*600 a la
      * fin (le fragment 0 contenait les 25 000 mobis). D'ou les 7 s et plus.
      */
     private static List<byte[]> construireClassique(List<HInventoryItem> liste, int h) {
         try {
-            // G-Earth ne connait pas les types speciaux recents : le champ reste
+            // La connexion ne connait pas les types speciaux recents : le champ reste
             // vide a la lecture et la reecriture plantait (NullPointerException),
             // laissant l'inventaire du jeu vide. Type « Default » a la place.
             int inconnus = typesSpeciauxParDefaut(liste);
             if (inconnus > 0)
-                System.out.println("[Atelier] inventaire : " + inconnus + " mobi(s) au type spécial inconnu, envoyés en type par défaut.");
+                Journal.debug("inventaire : " + inconnus + " mobi(s) au type spécial inconnu, envoyés en type par défaut.");
             return InventaireCache.construire(InventaireCache.depuisItems(liste), h);
         } catch (Throwable t) {
             System.err.println("[Atelier] inventaire : reconstruction impossible : " + t);
@@ -785,7 +836,7 @@ public class OngletInventaire {
                     n++;
                 }
         } catch (Throwable t) {
-            System.err.println("[Atelier] inventaire : type spécial non corrigé (" + t + ")");
+            Journal.debug("inventaire : type spécial non corrigé (" + t + ")");
         }
         return n;
     }
@@ -816,7 +867,7 @@ public class OngletInventaire {
             if (!trouve) return;
             remplacer(new Serie(s.entete, null, mobis, items));
         }
-        System.out.println("[Atelier] inventaire : mobi retiré (posé, vendu…), cache mis à jour sans le redemander.");
+        Journal.debug("inventaire : mobi retiré (posé, vendu…), cache mis à jour sans le redemander.");
         demanderMajAnnees();
     }
 
@@ -833,7 +884,7 @@ public class OngletInventaire {
             if (s == null) return;
             if (nouveaux == null || s.mobis == null) {
                 completLe = 0;
-                System.out.println("[Atelier] inventaire : mobis ajoutés, cache à revérifier auprès du serveur.");
+                Journal.debug("inventaire : mobis ajoutés, cache à revérifier auprès du serveur.");
                 return;
             }
             List<InventaireCache.Mobi> mobis = new ArrayList<>(s.mobis);
@@ -849,7 +900,7 @@ public class OngletInventaire {
             for (InventaireCache.Mobi mo : mobis) items.add(mo.item);
             remplacer(new Serie(s.entete, null, mobis, items));
         }
-        System.out.println("[Atelier] inventaire : " + nouveaux.size() + " mobi(s) ajouté(s) ou modifié(s), cache mis à jour.");
+        Journal.debug("inventaire : " + nouveaux.size() + " mobi(s) ajouté(s) ou modifié(s), cache mis à jour.");
         demanderMajAnnees();
     }
 
@@ -857,7 +908,7 @@ public class OngletInventaire {
     private void inventairePerime() {
         if (serie == null) return;
         completLe = 0;
-        System.out.println("[Atelier] inventaire : le serveur signale un changement, cache à revérifier.");
+        Journal.debug("inventaire : le serveur signale un changement, cache à revérifier.");
     }
 
     /** Remplace le cache par une version modifiee localement (appele sous verrou). */

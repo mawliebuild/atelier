@@ -33,7 +33,7 @@ final class FenetreOptions {
     static void ouvrir(String css, String titre, String action, java.util.function.Supplier<String> valider, Node... contenu) {
         Platform.runLater(() -> {
             try { new FenetreOptions(css, titre, action, valider, contenu); }
-            catch (Throwable t) { t.printStackTrace(); InfoJeu.consigne("La fenêtre n'a pas pu s'ouvrir : " + t); }
+            catch (Throwable t) { Journal.erreur("La fenêtre « " + titre + " » n'a pas pu s'ouvrir", t); }
         });
     }
 
@@ -42,7 +42,14 @@ final class FenetreOptions {
         stage.setAlwaysOnTop(true);
         stage.setTitle(titre);
 
-        Label etat = Ui.etat();
+        // Erreur de saisie : elle reste DANS la fenetre (encore ouverte), pas dans le jeu.
+        // Pas Ui.etat() : elle enverrait l'erreur au jeu et se cacherait.
+        Label etat = new Label("");
+        etat.setWrapText(true);
+        etat.setMaxWidth(Double.MAX_VALUE);
+        etat.getStyleClass().add("etat-ligne");
+        etat.visibleProperty().bind(etat.textProperty().isNotEmpty());
+        etat.managedProperty().bind(etat.visibleProperty());
         Button ok = new Button(action);
         ok.getStyleClass().add("primaire");
         ok.setDefaultButton(true);
@@ -50,7 +57,7 @@ final class FenetreOptions {
         annuler.setOnAction(e -> stage.close());
         ok.setOnAction(e -> {
             String err = valider == null ? null : valider.get();
-            if (err != null) etat.setText(Ui.majuscule(err));
+            if (err != null) { etat.setText(Ui.majuscule(Ui.accorder(err))); Journal.info(err); }
             else stage.close();
         });
 

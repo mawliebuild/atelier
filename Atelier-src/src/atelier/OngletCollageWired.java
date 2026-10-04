@@ -48,6 +48,13 @@ public class OngletCollageWired {
             WiredCollage.copier(ids, fenetre());
             plusTard();
         });
+        // survol : ce qui va etre copie s'allume dans le jeu
+        MiseEnValeur.auSurvol(copierTout, () -> MiseEnValeur.solsOu(it -> Wired.estWired(Salle.classe(it.getTypeId(), false))));
+        MiseEnValeur.auSurvol(copierSel, () -> {
+            List<String> j = new ArrayList<>();
+            for (int s : Groupes.selection().sols) j.add("s" + s);
+            return j;
+        });
         Button coller = new Button("Coller la config");
         coller.setMaxWidth(Double.MAX_VALUE);
         coller.setOnAction(e -> {

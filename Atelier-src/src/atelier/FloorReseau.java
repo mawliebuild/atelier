@@ -12,7 +12,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 /**
  * Paquets de l'editeur de floor.
  *
- * Noms verifies dans le cache Sulek de G-Earth (Documents/G-Earth/Cache, client
+ * Noms verifies dans le cache Sulek du proxy (dossier Cache du proxy dans Documents, client
  * MAC63 de septembre 2026, tous marques "confident") :
  *   TOSERVER  UpdateFloorProperties (3182), GetRoomEntryTile (2814), GetOccupiedTiles (238)
  *   TOCLIENT  RoomEntryTile (3902), RoomOccupiedTiles (2847), RoomVisualizationSettings (815),
@@ -33,7 +33,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
  *   NotificationDialog String type, int n, n x (String cle, String valeur) ; une erreur de
  *                    l'editeur arrive avec un type "floorplan_editor.error" (SUPPOSE).
  *
- * Toutes les ecoutes copient le paquet avant lecture : G-Presets lit les memes.
+ * Toutes les ecoutes copient le paquet avant lecture : le moteur de l'Atelier lit les memes.
  */
 final class FloorReseau {
 
@@ -85,7 +85,7 @@ final class FloorReseau {
                     try {
                         brancher(gp);
                         branche = true;
-                        System.out.println("[Atelier] ecoute de l'editeur de floor active.");
+                        Journal.debug("ecoute de l'editeur de floor active.");
                         return;
                     } catch (Throwable ignored) { }
                 }

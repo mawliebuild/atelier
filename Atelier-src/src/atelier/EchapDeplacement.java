@@ -1,7 +1,8 @@
 package atelier;
 
 /**
- * Echap dans le jeu annule un deplacement commence par Option + clic : le
+ * Echap dans le jeu annule un deplacement commence par Option + clic (Alt + clic
+ * sous Windows) : le
  * mobi est relache et reste a sa place (sinon, cliquer ailleurs le posait la,
  * parfois en hauteur sur d'autres mobis).
  *
@@ -9,6 +10,10 @@ package atelier;
  * seulement l'etat de la touche (ToucheOption.echap), et quand Habbo est
  * devant, on demande au client modifie de tout annuler (« atelier:annuler »,
  * cancelRoomObjectInsert : le jeu remet le mobi a sa place).
+ *
+ * Meme code sous Mac et Windows : ToucheOption.echap lit CGEventSourceKeyState
+ * (Mac) ou GetAsyncKeyState(VK_ESCAPE) (Windows), et Devant.app donne l'appli
+ * au premier plan sur les deux.
  */
 final class EchapDeplacement {
 

@@ -158,7 +158,7 @@ final class HauteurLogique {
                         boolean atelierOccupe, boolean dejaTraite) {
         if (dejaTraite) return "déjà traité";
         if (dalle) return "dalle magique";
-        if (importEnCours) return "collage ou import G-Presets en cours";
+        if (importEnCours) return "collage ou import en cours";
         if (historiqueOccupe) return "annulation en cours";
         if (atelierOccupe) return "l'Atelier pose des dalles";
         return null;

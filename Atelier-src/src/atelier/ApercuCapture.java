@@ -38,10 +38,7 @@ final class ApercuCapture {
     static void ouvrir(String css, Capture.Planche planche, Capture.Reglages r, Runnable reglages) {
         Platform.runLater(() -> {
             try { new ApercuCapture(css, planche, r, reglages); }
-            catch (Throwable t) {
-                t.printStackTrace();
-                InfoJeu.consigne("L'aperçu de la photo n'a pas pu s'ouvrir : " + t);
-            }
+            catch (Throwable t) { Journal.erreur("L'aperçu de la photo n'a pas pu s'ouvrir", t); }
         });
     }
 
@@ -179,13 +176,11 @@ final class ApercuCapture {
             File sortie = Capture.nomDeFichier(salle, Capture.Format.PNG);
             Capture.ecrirePng(Capture.cadrer(planche, rr), sortie);
             Capture.rendre(sortie);
-            InfoJeu.consigne("Capture enregistrée (Images › Atelier).");
-            Platform.runLater(() -> {
-                etat.setText("Enregistré : " + sortie.getName() + ".");
-                bouton.setDisable(false);
-            });
+            Ui.succes(etat, "Photo enregistrée : " + sortie.getName() + " (Images › Atelier).");
+            Platform.runLater(() -> bouton.setDisable(false));
         } catch (Throwable t) {
-            Platform.runLater(() -> { etat.setText("Échec de l'enregistrement : " + t); bouton.setDisable(false); });
+            Ui.erreur(etat, "Échec de l'enregistrement de la photo", t);
+            Platform.runLater(() -> bouton.setDisable(false));
         }
     }
 

@@ -8,7 +8,7 @@ import java.util.*;
 /**
  * L'inventaire du jeu garde en OCTETS BRUTS, mobi par mobi.
  *
- * Format d'un fragment d'inventaire (lu dans HInventoryItem de G-Earth) :
+ * Format d'un fragment d'inventaire (lu dans HInventoryItem, bibliotheque du proxy) :
  *   taille (int) | en-tete (short) | total (int) | numero (int) | nombre (int) | mobis...
  * Chaque mobi est ecrit a la suite, sans separateur. On le decoupe en lisant
  * chaque mobi avec HInventoryItem et en notant la position de lecture avant et
@@ -16,9 +16,9 @@ import java.util.*;
  *
  * Interet :
  *  - reconstruire une liste filtree = recoller des octets, aucune reecriture
- *    (constructPackets de G-Earth agrandit le paquet octet par octet a chaque
+ *    (constructPackets de la bibliotheque agrandit le paquet octet par octet a chaque
  *    champ : plusieurs secondes pour 25 000 mobis) ;
- *  - rien n'est perdu : un type special ou des donnees que G-Earth ne connait
+ *  - rien n'est perdu : un type special ou des donnees que la bibliotheque ne connait
  *    pas repartent tels quels.
  *
  * Le decoupage n'est retenu que s'il est sur : la lecture doit tomber pile sur
@@ -30,7 +30,7 @@ final class InventaireCache {
 
     private InventaireCache() { }
 
-    /** Mobis par fragment quand on reconstruit une serie (comme G-Earth). */
+    /** Mobis par fragment quand on reconstruit une serie (comme la bibliotheque du proxy). */
     static final int PAR_FRAGMENT = 600;
 
     /** Debut du premier mobi : taille(4) en-tete(2) total(4) numero(4) nombre(4). */
@@ -149,7 +149,7 @@ final class InventaireCache {
 
     /**
      * Secours quand les octets bruts manquent : chaque mobi est reecrit seul
-     * (appendToPacket de G-Earth, sur un petit paquet), puis recolle par
+     * (appendToPacket de la bibliotheque, sur un petit paquet), puis recolle par
      * construire(). Bien plus rapide et plus juste que constructPackets, qui
      * recopie le paquet entier a chaque champ ET met dans le fragment n tous les
      * mobis de n*600 jusqu'a la fin (25 000 mobis -> des centaines de milliers

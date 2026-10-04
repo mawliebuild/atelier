@@ -57,7 +57,7 @@ public final class PrixPerso {
             Files.write(tmp.toPath(), new JSONObject(new TreeMap<>(prix)).toString(1).getBytes(StandardCharsets.UTF_8));
             Files.move(tmp.toPath(), FICHIER.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
         } catch (Throwable t) {
-            System.err.println("[Atelier] prix perso : sauvegarde impossible : " + t);
+            Journal.erreur("Prix pas enregistré : il sera perdu au prochain lancement", t);
         }
     }
 }

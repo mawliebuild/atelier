@@ -31,7 +31,7 @@ import java.util.concurrent.ConcurrentHashMap;
  *     seulement chez toi ;
  *   - si le serveur annonce un vrai mobi avec un de nos ids, on le lui laisse.
  *
- * Paquets (javap de G-Earth) :
+ * Paquets (verifies au javap de la bibliotheque du proxy) :
  *   ObjectAdd    HFloorItem.appendToPacket puis String nomProprio
  *   ObjectUpdate HFloorItem.appendToPacket (sans nom)
  *   ItemAdd      HWallItem.appendToPacket  puis String nomProprio
@@ -168,7 +168,7 @@ final class GroupeFantomes {
     private static final Map<String, Integer> attribues = new ConcurrentHashMap<>();
     private static int compteur = 0;
     private static volatile int salle = -1;
-    static volatile boolean vusParGPresets = false;
+    static volatile boolean vusParMoteur = false;
 
     static synchronized int idPour(int original, boolean mural) {
         String k = (mural ? "m" : "s") + original;
@@ -249,7 +249,7 @@ final class GroupeFantomes {
             Fantome f = d.ajouter.get(0);
             Salle.sommeil(200);
             try {
-                if (f.mural ? Salle.mur(f.idFantome) != null : Salle.sol(f.idFantome) != null) vusParGPresets = true;
+                if (f.mural ? Salle.mur(f.idFantome) != null : Salle.sol(f.idFantome) != null) vusParMoteur = true;
             } catch (Throwable ignored) { }
         }
         return ko;
@@ -303,7 +303,7 @@ final class GroupeFantomes {
 
     static boolean branche() { return branche; }
 
-    /** A appeler regulierement : ne branche qu'une fois, des que G-Presets est la. */
+    /** A appeler regulierement : ne branche qu'une fois, des que le moteur de l'Atelier est la. */
     static synchronized void brancher() {
         if (branche) return;
         GPresets gp = Salle.gp();
@@ -312,7 +312,7 @@ final class GroupeFantomes {
         HMessage.Direction C = HMessage.Direction.TOCLIENT, S = HMessage.Direction.TOSERVER;
         for (String nom : new String[]{"RoomReady", "Objects", "FloorHeightMap"}) {
             try { gp.intercept(C, nom, m -> { if (!affiches.isEmpty()) { oublier(); Groupes.apercuPerdu(); } }); }
-            catch (Throwable t) { System.err.println("[Atelier] calques : ecoute " + nom + " indisponible : " + t); }
+            catch (Throwable t) { Journal.debug("calques : ecoute " + nom + " indisponible : " + t); }
         }
         for (String nom : new String[]{"ObjectAdd", "ItemAdd"}) {
             try {
@@ -322,7 +322,7 @@ final class GroupeFantomes {
                         HPacket p = m.getPacket();
                         int id = nom.equals("ObjectAdd") ? p.readInteger(6) : entier(new HPacket(p).readString());
                         if (estFantome(id) && !nosEnvois(m, id) && affiches.remove(id) != null)
-                            System.out.println("[Atelier] calques : un vrai mobi porte l'id fantome " + id + ", laisse tel quel.");
+                            Journal.debug("calques : un vrai mobi porte l'id fantome " + id + ", laisse tel quel.");
                     } catch (Throwable ignored) { }
                 });
             } catch (Throwable ignored) { }
@@ -334,7 +334,7 @@ final class GroupeFantomes {
                     if (affiches.isEmpty() || m.getPacket().getBytesLength() < 10) return;
                     try { if (estFantome(m.getPacket().readInteger(6))) m.setBlocked(true); } catch (Throwable ignored) { }
                 });
-            } catch (Throwable t) { System.err.println("[Atelier] calques : ecoute " + nom + " indisponible : " + t); }
+            } catch (Throwable t) { Journal.debug("calques : ecoute " + nom + " indisponible : " + t); }
         }
         // PickupObject(int categorie, int id) : bloque, le fantome disparait chez toi seulement
         try {
@@ -361,7 +361,7 @@ final class GroupeFantomes {
                 try { if (porteFantome(m.getPacket())) m.setBlocked(true); } catch (Throwable ignored) { }
             });
         } catch (Throwable ignored) { }
-        System.out.println("[Atelier] calques : ecoutes de l'apercu actives.");
+        Journal.debug("calques : ecoutes de l'apercu actives.");
     }
 
     /** Un id fantome affiche, en entier (n'importe quel decalage) ou en texte. */

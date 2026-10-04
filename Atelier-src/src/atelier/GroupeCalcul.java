@@ -219,16 +219,16 @@ final class GroupeCalcul {
         for (Element e : elements) if (!e.mural) cur.add(e);
         if (cur.isEmpty()) return new ArrayList<>();
         int[] centre = centrePivot(cur);
-        List<Cible> r = null;
+        List<Element> base = cur;                    // pivot() garde l'ordre : base.get(i) = mobi d'origine
         for (int k = 0; k < q; k++) {
-            r = pivot(cur, true, true, null, centre);
+            List<Cible> r = pivot(cur, true, true, null, centre);
             List<Element> suivant = new ArrayList<>();
             for (Cible c : r) suivant.add(Element.sol(c.e.id, c.x, c.y, c.e.z, c.e.ey, c.e.ex, c.rot, c.e.solDessous));
             cur = suivant;
         }
         List<Cible> l = new ArrayList<>();
         for (int i = 0; i < cur.size(); i++) {
-            Element e = cur.get(i), orig = r.get(i).e;
+            Element e = cur.get(i), orig = base.get(i);
             int nx = e.x + dx, ny = e.y + dy;
             boolean h = false;
             for (int a = 0; a < e.ex && !h; a++)
@@ -253,12 +253,11 @@ final class GroupeCalcul {
         for (Element e : elements) if (!e.mural) sols.add(e);
         if (sols.isEmpty()) return new ArrayList<>();
         int[] cadre = cadre(sols);
-        List<Cible> r = null;
         List<Element> cur = sols;
         int n = ((quarts % 4) + 4) % 4;
         if (n == 0) n = 4;
         for (int k = 0; k < n; k++) {
-            r = pivot(cur, true, true, null, null);
+            List<Cible> r = pivot(cur, true, true, null, null);
             List<Element> suivant = new ArrayList<>();
             for (Cible c : r) suivant.add(Element.sol(c.e.id, c.x, c.y, c.e.z, c.e.ey, c.e.ex, c.rot, c.e.solDessous));
             cur = suivant;
@@ -283,7 +282,7 @@ final class GroupeCalcul {
                     for (int b = 0; b < e.ey && !h; b++)
                         if (sol != null && sol.hauteur(nx + a, ny + b) < 0) h = true;
                 hors |= h;
-                Element orig = r.get(i).e;
+                Element orig = sols.get(i);
                 int hs = sol == null ? Math.max(0, orig.solDessous) : sol.hauteur(nx, ny);
                 l.add(new Cible(orig, nx, ny, altitude(orig.z, orig.solDessous, hs), null, h, e.rot));
             }

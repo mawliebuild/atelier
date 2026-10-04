@@ -24,6 +24,20 @@ final class GrilleVue {
 
     static boolean voulue() { return voulue; }
 
+    /**
+     * Plan impose par le mode Cases : « plan|marques » (voir ModeCases), envoye
+     * a la place du plan de la salle, meme si la grille n'est pas voulue.
+     * null = plan de la salle (et grille seulement si voulue).
+     */
+    private static volatile String impose = null;
+
+    static void imposer(String planEtMarques) {
+        impose = planEtMarques;
+        demarrer();
+        if (planEtMarques == null) { if (!voulue) envoyer(""); else { envoye = null; envoyerSiBesoin(); } }
+        else { envoye = null; envoyerSiBesoin(); }
+    }
+
     private static final java.util.List<Runnable> ecouteurs = new java.util.concurrent.CopyOnWriteArrayList<>();
 
     /** Prevenu (fil JavaFX) quand la grille est montree ou cachee. */
@@ -32,14 +46,18 @@ final class GrilleVue {
     /** Montre ou cache la grille ; false (message dit) si le client ne sait pas la dessiner. */
     static boolean montrer(boolean oui) {
         if (oui && !ClientModifie.saitGrille()) {
-            InfoJeu.consigne("Le client du jeu ne sait pas dessiner la grille : installe le client modifié "
-                    + "(Paramètres › Inventaire), puis relance Habbo.");
+            Journal.erreur("Grille impossible : le client du jeu ne sait pas la dessiner. Installe le client "
+                    + "modifié (Paramètres › Inventaire), puis relance Habbo.");
             return false;
         }
         voulue = oui;
-        javafx.application.Platform.runLater(() -> { for (Runnable r : ecouteurs) r.run(); });
+        javafx.application.Platform.runLater(() -> {
+            for (Runnable r : ecouteurs) {
+                try { r.run(); } catch (Throwable t) { System.err.println("[Atelier] grille : écouteur : " + t); }
+            }
+        });
         demarrer();
-        if (!oui) envoyer("");
+        if (!oui && impose == null) envoyer("");
         else { envoye = null; envoyerSiBesoin(); }
         return true;
     }
@@ -50,7 +68,7 @@ final class GrilleVue {
         Thread t = new Thread(() -> {
             while (true) {
                 Salle.sommeil(1000);
-                try { if (voulue) envoyerSiBesoin(); } catch (Throwable ignored) { }
+                try { if (voulue || impose != null) envoyerSiBesoin(); } catch (Throwable ignored) { }
             }
         }, "atelier-grille-vue");
         t.setDaemon(true);
@@ -71,7 +89,7 @@ final class GrilleVue {
     }
 
     private static void envoyerSiBesoin() {
-        String plan = plan();
+        String plan = impose != null && Salle.dansUneSalle() ? impose : plan();
         if (plan == null) { envoye = null; return; }       // hors salle : on renverra en entrant
         if (!Salle.installeeDepuis(3000)) return;          // le jeu charge encore la salle
         if (plan.equals(envoye) && System.currentTimeMillis() - envoyeA < RAPPEL_MS) return;

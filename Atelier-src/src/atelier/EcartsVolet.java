@@ -142,7 +142,7 @@ public final class EcartsVolet {
                 supprimer.setText(l.defaut != null ? "Revenir au défaut" : "Supprimer");
                 supprimer.setOnAction(x -> {
                     Ecarts.oublier(l.enregistre.type);
-                    etat.setText(l.defaut != null ? "« " + e.nom + " » reprend l'écart livré avec le programme."
+                    etat.setText(l.defaut != null ? "« " + e.nom + " » remis à l'écart livré avec le programme."
                             : "Écart de « " + e.nom + " » supprimé.");
                 });
                 supprimer.setVisible(true); supprimer.setManaged(true);
@@ -178,7 +178,7 @@ public final class EcartsVolet {
         Image i = vignettes.get(classe);
         if (i != null) return i.isError() ? null : i;
         try {
-            furnidata.details.WallItemDetails d = AtelierLauncher.gpresets().getFurniDataTools().getWallItemDetails(classe);
+            furnidata.details.WallItemDetails d = AtelierLauncher.moteur().getFurniDataTools().getWallItemDetails(classe);
             if (d == null || d.revision <= 0) return null;
             String c = classe.contains("*") ? classe.substring(0, classe.indexOf('*')) : classe;
             i = new Image("https://images.habbo.com/dcr/hof_furni/" + d.revision + "/" + c + "_icon.png",
@@ -246,7 +246,7 @@ public final class EcartsVolet {
             etat.setText(relus + " écart(s) exporté(s) dans " + f.getName() + "."
                     + (sansClasse > 0 ? " " + sansClasse + " sans nom technique : ouvre une salle pour les compléter, puis réexporte." : ""));
         } catch (Throwable t) {
-            etat.setText("Export impossible : " + t.getMessage());
+            etat.setText("Export impossible : " + (t.getMessage() == null ? t.getClass().getSimpleName() : t.getMessage()));
         }
     }
 

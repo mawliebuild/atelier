@@ -41,7 +41,7 @@ import java.util.prefs.Preferences;
  *   - la barre du bas, comme Photoshop : verrouiller, masquer, fusionner,
  *     nouveau calque, dupliquer, supprimer ; sur TOUS les calques choisis.
  *
- * Supprimer un calque RAMASSE ses mobis (Ctrl+Z les repose) ; pour les
+ * Supprimer un calque RAMASSE ses mobis (Cmd+Z les repose) ; pour les
  * garder, on fusionne. Les resultats des actions sont dits dans le jeu.
  * Ctrl/Cmd+C copie le calque vise, Ctrl/Cmd+V le colle (GroupePressePapier).
  *
@@ -139,7 +139,7 @@ public class PanneauCalques implements Ancrage.Ancrable {
         CalqueStyle.appliquer(scene);
         stage.setScene(scene);
         stage.setWidth(LARGEUR);
-        // Cmd/Ctrl+Z (annuler), Cmd/Ctrl+C et V (copier / coller un calque) quand
+        // Cmd/Cmd+Z (annuler), Cmd/Ctrl+C et V (copier / coller un calque) quand
         // le panneau a le focus ; dans le jeu, c'est RaccourcisGlobaux.
         OutilHistorique.installerRaccourcis(scene);
         RaccourcisGlobaux.surCalques(this::copierCalque, this::collerCalque);
@@ -193,12 +193,19 @@ public class PanneauCalques implements Ancrage.Ancrable {
 
         Button deplacer = icone(Icones.DEPLACER, "Déplacer le calque choisi (flèches, pivot, fantômes dans le jeu)",
                 () -> surCible(actions::deplacerDepuisPanneau));
-        Button pivoter = icone(Icones.PIVOTER, "Pivoter le calque choisi : d'un bloc, chaque mobi, ou une copie pivotée",
+        Button pivoter = icone(Icones.PIVOTER, "Pivoter le calque choisi d'un bloc (le tout tourne ensemble), ou une copie pivotée à côté",
                 () -> surCible(actions::pivoter));
         Button miroir = icone(Icones.MIROIR, "Miroir du calque choisi : retourné sur place, ou copie miroir à côté",
                 () -> surCible(actions::miroir));
         Button hauteur = icone(Icones.HAUTEUR, "Hauteur des mobis du calque choisi (+1, -0,5 ou une valeur)",
                 () -> surCible(actions::hauteur));
+
+        Button remplir = icone(Icones.REMPLIR, "Remplir une zone avec un mobi : choisis la zone (deux cases), puis pose "
+                + "le mobi depuis ton inventaire, il couvre toute la zone (re-clique pour annuler)",
+                RemplirZone::lancer);
+
+        Button etats = icone(Icones.ETAT, "Changer l'état des mobis d'une zone : choisis la zone (deux cases), "
+                + "puis chaque clic sur le bouton de la fenêtre les change tous", actions::etatsZone);
 
         regle = icone(Icones.REGLE, "Mesurer : clique deux cases dans le jeu", () -> {
             Runnable r = surMesure;
@@ -229,11 +236,14 @@ public class PanneauCalques implements Ancrage.Ancrable {
         // (les familles s'ouvrent dans leur fenetre).
         VBox l = new VBox(4,
                 rangee("Sélection", modeSel, zone, vider),
-                rangee("Actions", deplacer, pivoter, miroir, hauteur),
+                rangee("Actions", deplacer, pivoter, miroir, hauteur, remplir, etats),
                 rangee("Composants", escalier, regle, grille),
                 rangee("Masquer", fam));
         return l;
     }
+
+    /** Bouton Floor (barre du bas) : l'appart passe en edition du floor, fenetre d'outils a cote. */
+    void ouvrirFloor() { actions.cases(); }
 
     /** Une rangee d'icones avec son intitule a gauche. */
     private static Node rangee(String titre, Node... icones) {
@@ -305,12 +315,12 @@ public class PanneauCalques implements Ancrage.Ancrable {
 
         bVerrou = icone(Icones.CADENAS, "Verrouiller ou déverrouiller les calques choisis", this::verrouillerChoisis);
         bOeil = icone(Icones.OEIL, "Masquer ou afficher les calques choisis (chez toi seulement)", this::basculerVisibiliteChoisis);
-        bFusion = icone(Icones.FUSIONNER, "Fusionner : plusieurs calques dans le plus haut ; un seul avec celui du dessous (Cmd/Ctrl + E)",
+        bFusion = icone(Icones.FUSIONNER, "Fusionner : plusieurs calques dans le plus haut ; un seul avec celui du dessous (Cmd + E)",
                 this::fusionnerChoisis);
         bNouveau = icone(Icones.CALQUE_NOUVEAU, "Nouveau calque : les mobis sélectionnés y passent (vide sans sélection)", this::nouveauCalque);
         bDupliquer = icone(Icones.DUPLIQUER, "Dupliquer le calque choisi : la copie devient un nouveau calque, puis tu la déplaces",
                 () -> surCible(actions::dupliquer));
-        bSupprimer = icone(Icones.CORBEILLE, "Supprimer les calques choisis : leurs mobis sont ramassés (Ctrl+Z les repose). Pour les garder, fusionne.",
+        bSupprimer = icone(Icones.CORBEILLE, "Supprimer les calques choisis : leurs mobis sont ramassés (Cmd+Z les repose). Pour les garder, fusionne.",
                 this::supprimerChoisis);
         Region espace = new Region();
         HBox.setHgrow(espace, Priority.ALWAYS);
@@ -349,6 +359,16 @@ public class PanneauCalques implements Ancrage.Ancrable {
             HBox.setHgrow(corpsLigne, Priority.ALWAYS);
             ligne = new HBox(2, oeil, cadenas, corpsLigne);
             ligne.setAlignment(Pos.CENTER_LEFT);
+            // survol d'un calque : ses mobis s'allument dans le jeu
+            MiseEnValeur.auSurvol(this, () -> {
+                Groupes.Info i = getItem();
+                if (i == null || i.decor) return List.of();
+                List<String> j = new ArrayList<>();
+                List<java.util.Set<Integer>> m = Groupes.mobis(i.id);
+                for (int s : m.get(0)) j.add("s" + s);
+                for (int w : m.get(1)) j.add("m" + w);
+                return j;
+            });
 
             oeil.setOnAction(e -> { Groupes.Info i = getItem(); if (i != null) basculerVisibilite(List.of(i)); });
             cadenas.setOnAction(e -> {
@@ -610,7 +630,7 @@ public class PanneauCalques implements Ancrage.Ancrable {
         int n = Groupes.verrouiller(ids, v);
         if (n == 0) return;
         String quoi = n == 1 ? "« " + nomDe(ids.get(0)) + " »" : n + " calques";
-        CalqueActions.resultat(quoi + (v ? (n == 1 ? " verrouillé." : " verrouillés.") : (n == 1 ? " déverrouillé." : " déverrouillés.")));
+        Journal.succes(quoi + (v ? (n == 1 ? " verrouillé." : " verrouillés.") : (n == 1 ? " déverrouillé." : " déverrouillés.")));
     }
 
     private void basculerVisibiliteChoisis() {
@@ -634,10 +654,10 @@ public class PanneauCalques implements Ancrage.Ancrable {
                 @Override public void fin(Groupes.Resultat r) {
                     if (!r.ok && r.reussis == 0) echecs.add(r.message);
                     if (--reste[0] > 0) return;
-                    if (!echecs.isEmpty()) CalqueActions.resultat(echecs.get(0));
-                    else if (faire.size() == 1) CalqueActions.resultat(r.message.startsWith("Murs") ? r.message
+                    if (!echecs.isEmpty()) Journal.erreur(echecs.get(0));
+                    else if (faire.size() == 1) Journal.succes(r.message.startsWith("Murs") ? r.message
                             : "« " + x.nom + " » " + (masquer ? "masqué" : "affiché") + " : " + r.message);
-                    else CalqueActions.resultat(faire.size() + " calques " + (masquer ? "masqués chez toi." : "réaffichés."));
+                    else Journal.succes(faire.size() + " calques " + (masquer ? "masqués chez toi." : "réaffichés."));
                 }
             };
             if (masquer) Groupes.masquer(x.id, p); else Groupes.afficher(x.id, p);
@@ -646,7 +666,7 @@ public class PanneauCalques implements Ancrage.Ancrable {
 
     private void fusionnerChoisis() {
         List<Groupes.Info> l = calquesChoisis();
-        if (l.isEmpty()) { dire("Choisis d'abord un calque (Cmd ou Ctrl + clic pour plusieurs)."); return; }
+        if (l.isEmpty()) { dire("Choisis d'abord un calque (Cmd + clic pour plusieurs)."); return; }
         fusionner(l);
     }
 
@@ -663,8 +683,8 @@ public class PanneauCalques implements Ancrage.Ancrable {
         if (f.sources.size() == 1) {
             String s = null;
             for (Groupes.Info x : l) if (x.id.equals(f.sources.get(0))) s = x.nom;
-            CalqueActions.resultat(GroupePressePapier.messageFusion(s == null ? "?" : s, nomCible, f.mobis));
-        } else CalqueActions.resultat(f.sources.size() + " calques fusionnés dans « " + nomCible + " » ("
+            Journal.succes(GroupePressePapier.messageFusion(s == null ? "?" : s, nomCible, f.mobis));
+        } else Journal.succes(f.sources.size() + " calques fusionnés dans « " + nomCible + " » ("
                 + GroupePressePapier.mobis(f.mobis) + ").");
     }
 
@@ -675,7 +695,7 @@ public class PanneauCalques implements Ancrage.Ancrable {
         int n = Groupes.fusionner(source.id, cible.id);
         if (n < 0) { refus("Fusion impossible."); return; }
         choisirCalque(cible.id);
-        CalqueActions.resultat(GroupePressePapier.messageFusion(source.nom, cible.nom, n));
+        Journal.succes(GroupePressePapier.messageFusion(source.nom, cible.nom, n));
     }
 
     /**
@@ -688,7 +708,7 @@ public class PanneauCalques implements Ancrage.Ancrable {
         if (s.vide()) {
             Groupes.Info c = liste.getSelectionModel().getSelectedItem();
             String id = Groupes.creer(null, List.of(), List.of(), c != null && c.normal() ? c.id : null);
-            if (id != null) { choisirCalque(id); CalqueActions.resultat("Calque « " + nomCree(id) + " » créé (vide). Clic droit, puis « Ajouter la sélection ».");  }
+            if (id != null) { choisirCalque(id); Journal.succes("Calque « " + nomCree(id) + " » créé (vide). Clic droit, puis « Ajouter la sélection ».");  }
             return;
         }
         String refus = Groupes.refusAjout(null, s.sols, s.murs);
@@ -697,7 +717,7 @@ public class PanneauCalques implements Ancrage.Ancrable {
         String id = Groupes.creerDepuisSelection(null);
         if (id == null) { dire("Entre dans un appart."); return; }
         choisirCalque(id);
-        CalqueActions.resultat("Calque « " + nomCree(id) + " » créé avec " + GroupePressePapier.mobis(n) + ".");
+        Journal.succes("Calque « " + nomCree(id) + " » créé avec " + GroupePressePapier.mobis(n) + ".");
     }
 
     private static String nomCree(String id) {
@@ -712,7 +732,7 @@ public class PanneauCalques implements Ancrage.Ancrable {
         if (refus != null) { refus(refus); return; }
         if (!Groupes.ajouter(i.id, s.sols, s.murs)) { refus("Ajout impossible."); return; }
         Groupes.viderSelection();
-        CalqueActions.resultat(GroupePressePapier.mobis(s.nombre()) + " passé(s) dans « " + i.nom + " ».");
+        Journal.succes(GroupePressePapier.mobis(s.nombre()) + " passé(s) dans « " + i.nom + " ».");
     }
 
     private void supprimerChoisis() {
@@ -722,7 +742,7 @@ public class PanneauCalques implements Ancrage.Ancrable {
     }
 
     /**
-     * Supprimer = ramasser leurs mobis, tout de suite (Ctrl+Z les repose).
+     * Supprimer = ramasser leurs mobis, tout de suite (Cmd+Z les repose).
      * Confirmation courte seulement s'il y a des wired ou beaucoup de mobis.
      */
     private void supprimer(List<Groupes.Info> l) {
@@ -733,9 +753,10 @@ public class PanneauCalques implements Ancrage.Ancrable {
         else actions.supprimer(s, this::dire, null);
     }
 
+    /** Refus : dans le panneau, et au Journal (console + jeu), une seule fois. */
     private void refus(String s) {
         dire(s);
-        CalqueActions.refus(s);
+        Journal.erreur(s);
     }
 
     /** Active / desactive les icones du bas selon les calques choisis. */
@@ -767,14 +788,14 @@ public class PanneauCalques implements Ancrage.Ancrable {
     private void copierCalque() {
         if (!Salle.dansUneSalle()) { direAussiJeu("Entre dans un appart pour copier un calque."); return; }
         Groupes.Info i = cible();
-        if (i == null || i.decor) { direAussiJeu("Choisis un calque dans la liste, ou sélectionne des mobis, puis Ctrl+C."); return; }
+        if (i == null || i.decor) { direAussiJeu("Choisis un calque dans la liste, ou sélectionne des mobis, puis Option + Maj + C."); return; }
         List<java.util.Set<Integer>> ids = Groupes.mobis(i.id);
         int n = ids.get(0).size() + ids.get(1).size();
         if (n == 0) { direAussiJeu("Le calque « " + i.nom + " » est vide : rien à copier."); return; }
         GroupePressePapier.Copie c = new GroupePressePapier.Copie(Groupes.salle(), i.id, i.nom, ids.get(0), ids.get(1));
         GroupePressePapier.retenir(c);
         RaccourcisGlobaux.collagePossible(true);
-        CalqueActions.resultat(GroupePressePapier.messageCopie(i.nom, n));
+        Journal.succes(GroupePressePapier.messageCopie(i.nom, n));
         // Pour coller dans un autre appart : positions relatives et reglage des
         // wired, lus maintenant (on ne pourra plus les lire une fois parti).
         Salle.tache("calques-copie", () -> {
@@ -790,13 +811,13 @@ public class PanneauCalques implements Ancrage.Ancrable {
         });
     }
 
-    /** Ctrl+V : meme appart = copie posee sur place puis Deplacer ; autre appart = pose par G-Presets. */
+    /** Ctrl+V : meme appart = copie posee sur place puis Deplacer ; autre appart = pose par le moteur de pose. */
     private void collerCalque() {
         GroupePressePapier.Copie c = GroupePressePapier.copie();
         int salle = Salle.dansUneSalle() ? Groupes.salle() : -1;
         switch (GroupePressePapier.choisir(salle)) {
             case RIEN:
-                direAussiJeu("Rien à coller : copie d'abord un calque (Ctrl+C).");
+                direAussiJeu("Rien à coller : copie d'abord un calque (Option + Maj + C).");
                 return;
             case HORS_SALLE:
                 direAussiJeu("Entre dans un appart pour coller.");
@@ -816,16 +837,17 @@ public class PanneauCalques implements Ancrage.Ancrable {
         }
     }
 
-    /** Autre appart : G-Presets pose la copie (clic sur la case du coin haut-gauche), puis nouveau calque. */
+    /** Autre appart : le moteur de pose place la copie (clic sur la case du coin haut-gauche), puis nouveau calque. */
     private void collerAilleurs(GroupePressePapier.Copie c) {
         int murs = c.murs.size();
-        direAussiJeu("Clique dans le jeu la case du coin haut-gauche où coller « " + c.nom + " ».");
+        // panneau seulement : WiredCollage donne la consigne dans le jeu au moment d'attendre le clic
+        dire("Clique dans le jeu la case du coin haut-gauche où coller « " + c.nom + " ».");
         WiredCollage.collerCalque(c.portable, "Coller le calque « " + c.nom + " »", stage, poses -> {
             if (poses.isEmpty()) return;
             String id = Groupes.creer(null, poses, List.of());
             Platform.runLater(() -> {
                 choisirCalque(id);
-                CalqueActions.resultat("Calque « " + (id == null ? "nouveau" : nomCree(id)) + " » créé avec les " + GroupePressePapier.mobis(poses.size())
+                Journal.succes("Calque « " + (id == null ? "nouveau" : nomCree(id)) + " » créé avec les " + GroupePressePapier.mobis(poses.size())
                         + " collés." + (murs > 0 ? " " + murs + " mobi(s) mural(aux) pas collé(s) : seulement dans l'appart d'origine." : ""));
             });
         });
@@ -838,6 +860,8 @@ public class PanneauCalques implements Ancrage.Ancrable {
     }
 
     // ============================================================ rafraichir
+
+    private String erreurVue = null;
 
     private void rafraichir() {
         // lu hors du fil JavaFX quand c'est possible : la 1re fois decompresse le SWF
@@ -854,7 +878,10 @@ public class PanneauCalques implements Ancrage.Ancrable {
             try {
                 liste.getItems().setAll(l);
                 liste.getSelectionModel().clearSelection();
-                String err = Groupes.erreur(); if (err != null) dire(err);
+                // Groupes.signaler l'a deja mise au Journal : ici seulement quand elle change
+                String err = Groupes.erreur();
+                if (err != null && !err.equals(erreurVue)) dire(err);
+                erreurVue = err;
                 String voulu = aChoisir != null ? aChoisir : choisi == null ? null : choisi.id;
                 // d'abord les autres, puis le calque principal : getSelectedItem() reste lui
                 if (aChoisir == null)
@@ -939,7 +966,7 @@ public class PanneauCalques implements Ancrage.Ancrable {
         String coins = "(" + Zone.minX() + "," + Zone.minY() + ") → (" + Zone.maxX() + "," + Zone.maxY() + ")";
         dire("");
         if (sols.isEmpty() && murs.isEmpty()) {
-            InfoJeu.consigne("Zone " + coins + " : aucun mobi.");
+            Journal.erreur("Aucun mobi dans la zone " + coins + " : pas de calque créé.");
             return;
         }
         String refus = Groupes.refusAjout(null, sols, murs);
@@ -947,7 +974,7 @@ public class PanneauCalques implements Ancrage.Ancrable {
         String id = Groupes.creer(null, sols, murs);
         if (id == null) { dire("Entre dans un appart."); return; }
         int n = sols.size() + murs.size();
-        InfoJeu.consigne("Zone " + coins + " : calque « " + nomCree(id) + " » créé (" + GroupePressePapier.mobis(n) + ").");
+        Journal.succes("Calque « " + nomCree(id) + " » créé avec la zone " + coins + " (" + GroupePressePapier.mobis(n) + ").");
         choisirCalque(id);
     }
 
@@ -978,7 +1005,7 @@ public class PanneauCalques implements Ancrage.Ancrable {
 
     /** Etat du panneau (progression, consigne) ; vide = rien. Il s'efface tout seul. */
     private void dire(String s) {
-        String t = Ui.majuscule(s);
+        String t = WindowsClavier.texte(Ui.majuscule(s));
         Runnable r = () -> {
             etat.setText(t == null ? "" : t);
             effacer.stop();

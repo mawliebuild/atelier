@@ -37,31 +37,18 @@ final class GroupeStockage {
 
     /** Le dossier de l'utilisatrice reelle (sous sudo : celui de SUDO_USER). */
     static String maison() {
-        String os = System.getProperty("os.name", "").toLowerCase();
-        String sudo = utilisatriceSudo();
-        if (sudo != null) return os.contains("mac") ? "/Users/" + sudo : "/home/" + sudo;
-        return System.getProperty("user.home");
+        return Dossiers.maison().getPath();
     }
 
     private static String utilisatriceSudo() {
-        String sudo = System.getenv("SUDO_USER");
-        return (sudo != null && !sudo.isBlank() && !"root".equals(sudo)) ? sudo : null;
+        return Dossiers.WINDOWS ? null : Dossiers.utilisatriceSudo(Dossiers.sudoUser());
     }
 
     /** Le dossier des calques (absolu). */
     static File dossier() {
         String force = System.getProperty("atelier.calques.dossier");
         if (force != null && !force.isBlank()) return new File(force).getAbsoluteFile();
-        String os = System.getProperty("os.name", "").toLowerCase();
-        String home = maison();
-        File d;
-        if (os.contains("win")) {
-            String ad = System.getenv("APPDATA");
-            d = new File(ad != null ? ad : home + "/AppData/Roaming", "Atelier");
-        } else if (os.contains("mac")) {
-            d = new File(home, "Library/Application Support/Atelier");
-        } else d = new File(home, ".atelier");
-        return new File(d, "calques").getAbsoluteFile();
+        return new File(Dossiers.donneesAtelier(), "calques").getAbsoluteFile();
     }
 
     /** Les anciens emplacements (relatifs au lancement) a recopier une fois. */
@@ -131,7 +118,7 @@ final class GroupeStockage {
             UserPrincipal u = p.getFileSystem().getUserPrincipalLookupService().lookupPrincipalByName(sudo);
             if (!u.equals(Files.getOwner(p))) Files.setOwner(p, u);
         } catch (Throwable t) {
-            System.err.println("[Atelier] calques : proprietaire de " + p + " non change : " + t);
+            Journal.debug("calques : proprietaire de " + p + " non change : " + t);
         }
     }
 

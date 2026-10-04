@@ -37,11 +37,18 @@ public class OngletGalerie {
     private static final double VIGNETTE = 140;
     /** Fichier de l'ordre choisi (glisser-deposer), un nom par ligne. */
     private static final String ORDRE = "ordre.txt";
+    /** Tags de chaque photo : « nom du fichier = Noël, Loft ». */
+    private static final String TAGS = "tags.properties";
+    /** Tags choisis pour filtrer : une photo s'affiche si elle les a tous. */
+    private final Set<String> filtre = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
+    private final FlowPane barreTags = new FlowPane(6, 6);
 
     private final String css;
     private final TilePane grille = new TilePane(10, 10);
     /** Messages : dans le jeu (message du personnage), pas dans la fenetre. */
     private static void dire(String m) { InfoJeu.dire(Ui.majuscule(m)); }
+    private static void succes(String m) { Journal.succes(Ui.majuscule(m)); }
+    private static void erreur(String m) { Journal.erreur(Ui.majuscule(m)); }
 
     public OngletGalerie(String css) { this.css = css; }
 
@@ -68,8 +75,9 @@ public class OngletGalerie {
                         Ui.aide("Ajoute des captures de tes apparts ou d'autres apparts. Clique une photo pour "
                                 + "l'ouvrir à côté du jeu : molette pour zoomer, glisser pour se déplacer, "
                                 + "double-clic pour l'ajuster. Tu peux aussi glisser des images ici. "
-                                + "Glisse une photo sur une autre pour changer l'ordre.")),
-                grille);
+                                + "Glisse une photo sur une autre pour changer l'ordre. Clic droit, « Tags… » "
+                                + "pour lui mettre des tags (Noël, Loft, Villa…) et filtrer avec les boutons.")),
+                barreTags, grille);
         v.setPadding(new Insets(12, 14, 14, 14));
         v.setFillWidth(true);
 
@@ -100,8 +108,9 @@ public class OngletGalerie {
         FileChooser fc = new FileChooser();
         fc.setTitle("Ajouter des photos à la galerie");
         fc.getExtensionFilters().add(new FileChooser.ExtensionFilter("Images", "*.png", "*.jpg", "*.jpeg", "*.gif", "*.bmp"));
-        File bureau = new File(Capture.maisonReelle(), "Desktop");
-        if (bureau.isDirectory()) fc.setInitialDirectory(bureau);
+        // Bureau (OneDrive compris sous Windows), sinon le premier dossier habituel
+        for (File d : Dossiers.habituels()) if (d.getName().matches("(?i)desktop|bureau")) { fc.setInitialDirectory(d); break; }
+        if (fc.getInitialDirectory() == null && !Dossiers.habituels().isEmpty()) fc.setInitialDirectory(Dossiers.habituels().get(0));
         List<File> l = fc.showOpenMultipleDialog(grille.getScene() == null ? null : grille.getScene().getWindow());
         if (l != null) importer(l);
     }
@@ -120,15 +129,16 @@ public class OngletGalerie {
             for (int y = 0; y < h; y++) for (int x = 0; x < w; x++) bi.setRGB(x, y, pr.getArgb(x, y));
             javax.imageio.ImageIO.write(bi, "png", f);
             Capture.rendre(f);
-            dire("Image ajoutée.");
+            succes("Image ajoutée.");
             rafraichir();
         } catch (Throwable t) {
-            dire("Image impossible à enregistrer : " + t.getMessage());
+            Journal.erreur("Image impossible à enregistrer", t);
         }
     }
 
     private void importer(List<File> fichiers) {
-        int n = 0, ignores = 0;
+        int n = 0, ignores = 0, rates = 0;
+        String raison = null;
         for (File f : fichiers) {
             if (!f.isFile() || !EXTENSIONS.contains(extension(f))) { ignores++; continue; }
             try {
@@ -137,11 +147,21 @@ public class OngletGalerie {
                 Capture.rendre(dest);
                 n++;
             } catch (Throwable t) {
-                ignores++;
+                rates++;
+                if (raison == null) raison = t.getMessage() == null ? t.getClass().getSimpleName() : t.getMessage();
                 System.err.println("[Atelier] galerie : " + f + " : " + t);
             }
         }
-        dire(n + " photo(s) ajoutée(s)" + (ignores > 0 ? ", " + ignores + " ignorée(s) (pas une image PNG, JPG, GIF ou BMP)" : "") + ".");
+        String ign = ignores > 0 ? ignores + " ignorée(s) (pas une image PNG, JPG, GIF ou BMP)" : "";
+        String rat = rates > 0 ? rates + " photo(s) n'ont pas pu être copiée(s) : " + raison : "";
+        if (n > 0) {
+            String m = n + " photo(s) ajoutée(s)" + (ign.isEmpty() ? "" : ", " + ign) + ".";
+            if (rates > 0) erreur(m + " " + Ui.majuscule(rat) + "."); else succes(m);
+        } else if (rates > 0) {
+            erreur("Aucune photo ajoutée. " + Ui.majuscule(rat) + (ign.isEmpty() ? "" : " ; " + ign) + ".");
+        } else {
+            erreur("Aucune photo ajoutée : pas une image PNG, JPG, GIF ou BMP.");
+        }
         rafraichir();
     }
 
@@ -170,13 +190,93 @@ public class OngletGalerie {
         List<String> ordre = lireOrdre();
         photos.sort(Comparator.comparingInt((File f) -> { int i = ordre.indexOf(f.getName()); return i < 0 ? -1 : i; })
                 .thenComparing(Comparator.comparingLong(File::lastModified).reversed()));
-        affichees = photos;
+        toutes = photos;
+        Properties tags = lireTags();
+        // les tags qui n'existent plus ne filtrent plus
+        Set<String> existants = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
+        for (File f : photos) existants.addAll(tagsDe(tags, f));
+        filtre.retainAll(existants);
+        construireBarreTags(existants);
+        List<File> visibles = new ArrayList<>();
+        for (File f : photos) {
+            Set<String> t = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
+            t.addAll(tagsDe(tags, f));
+            if (t.containsAll(filtre)) visibles.add(f);
+        }
         grille.getChildren().clear();
-        for (File f : photos) grille.getChildren().add(vignette(f));
+        for (File f : visibles) grille.getChildren().add(vignette(f, tagsDe(tags, f)));
         if (photos.isEmpty()) grille.getChildren().add(Ui.discret("Aucune photo pour l'instant."));
+        else if (visibles.isEmpty()) grille.getChildren().add(Ui.discret("Aucune photo n'a tous ces tags."));
     }
 
-    private List<File> affichees = new ArrayList<>();
+    /** Toutes les photos dans l'ordre (filtre ou non : l'ordre reste complet). */
+    private List<File> toutes = new ArrayList<>();
+
+    private void construireBarreTags(Set<String> existants) {
+        barreTags.getChildren().clear();
+        if (existants.isEmpty()) return;
+        ToggleButton tous = new ToggleButton("Toutes");
+        tous.setSelected(filtre.isEmpty());
+        tous.setOnAction(e -> { filtre.clear(); rafraichir(); });
+        barreTags.getChildren().add(tous);
+        for (String t : existants) {
+            ToggleButton b = new ToggleButton(t);
+            b.setSelected(filtre.contains(t));
+            b.setOnAction(e -> { if (b.isSelected()) filtre.add(t); else filtre.remove(t); rafraichir(); });
+            barreTags.getChildren().add(b);
+        }
+    }
+
+    private static Properties lireTags() {
+        Properties p = new Properties();
+        File f = new File(dossier(), TAGS);
+        if (f.isFile()) try (java.io.Reader r = Files.newBufferedReader(f.toPath(), java.nio.charset.StandardCharsets.UTF_8)) {
+            p.load(r);
+        } catch (Throwable ignored) { }
+        return p;
+    }
+
+    private static void ecrireTags(Properties p) {
+        File f = new File(dossier(), TAGS);
+        try (java.io.Writer w = Files.newBufferedWriter(f.toPath(), java.nio.charset.StandardCharsets.UTF_8)) {
+            p.store(w, "Tags de la galerie");
+        } catch (Throwable t) { Journal.erreur("Les tags de la galerie n'ont pas pu être enregistrés", t); }
+        Capture.rendre(f);
+    }
+
+    static List<String> tagsDe(Properties p, File f) {
+        List<String> l = new ArrayList<>();
+        for (String t : p.getProperty(f.getName(), "").split(",")) {
+            t = t.trim();
+            if (!t.isEmpty() && l.stream().noneMatch(t::equalsIgnoreCase)) l.add(Ui.majuscule(t));
+        }
+        return l;
+    }
+
+    private void editerTags(File f) {
+        Properties p = lireTags();
+        Set<String> connus = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
+        for (File x : toutes) connus.addAll(tagsDe(p, x));
+        TextInputDialog d = new TextInputDialog(String.join(", ", tagsDe(p, f)));
+        d.setTitle("Tags");
+        d.setHeaderText(null);
+        d.setContentText(connus.isEmpty() ? "Tags (séparés par des virgules) :"
+                : "Tags (séparés par des virgules)\nDéjà utilisés : " + String.join(", ", connus) + "\n");
+        d.showAndWait().ifPresent(n -> {
+            List<String> l = new ArrayList<>();
+            for (String t : n.split(",")) {
+                t = t.replaceAll("[=:\\p{Cntrl}]", "").trim();
+                if (t.isEmpty()) continue;
+                // meme ecriture qu'un tag deja utilise (« noel » -> « Noël » si deja la)
+                String tt = t;
+                String k = connus.stream().filter(c -> c.equalsIgnoreCase(tt)).findFirst().orElse(Ui.majuscule(t));
+                if (l.stream().noneMatch(k::equalsIgnoreCase)) l.add(k);
+            }
+            if (l.isEmpty()) p.remove(f.getName()); else p.setProperty(f.getName(), String.join(", ", l));
+            ecrireTags(p);
+            rafraichir();
+        });
+    }
 
     private static List<String> lireOrdre() {
         try {
@@ -187,18 +287,32 @@ public class OngletGalerie {
     }
 
     private static void ecrireOrdre(List<File> l) {
+        List<String> noms = new ArrayList<>();
+        for (File x : l) noms.add(x.getName());
+        ecrireOrdreNoms(noms);
+    }
+
+    private static void ecrireOrdreNoms(List<String> noms) {
+        File f = new File(dossier(), ORDRE);
+        java.nio.file.Path tmp = f.toPath().resolveSibling(ORDRE + ".tmp");
         try {
-            File f = new File(dossier(), ORDRE);
-            List<String> noms = new ArrayList<>();
-            for (File x : l) noms.add(x.getName());
-            Files.write(f.toPath(), noms);
+            // fichier temporaire puis remplacement : jamais d'ordre.txt a moitie ecrit
+            Files.write(tmp, noms);
+            try {
+                Files.move(tmp, f.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            } catch (java.nio.file.AtomicMoveNotSupportedException e) {
+                Files.move(tmp, f.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            }
             Capture.rendre(f);
-        } catch (Throwable t) { System.err.println("[Atelier] galerie, ordre : " + t); }
+        } catch (Throwable t) {
+            try { Files.deleteIfExists(tmp); } catch (Throwable ignored) { }
+            Journal.erreur("L'ordre de la galerie n'a pas pu être enregistré", t);
+        }
     }
 
     /** Glisser la photo « source » sur « cible » : elle prend sa place. */
     private void deplacer(File source, File cible) {
-        List<File> l = new ArrayList<>(affichees);
+        List<File> l = new ArrayList<>(toutes);
         int i = l.indexOf(source), j = l.indexOf(cible);
         if (i < 0 || j < 0 || i == j) return;
         l.remove(i);
@@ -207,7 +321,7 @@ public class OngletGalerie {
         rafraichir();
     }
 
-    private VBox vignette(File f) {
+    private VBox vignette(File f, List<String> sesTags) {
         // chargee en 3x : nette sur un ecran Retina (avant : floue)
         ImageView iv = new ImageView(new Image(f.toURI().toString(), VIGNETTE * 3, VIGNETTE * 3, true, true, true));
         iv.setFitWidth(VIGNETTE);
@@ -220,6 +334,12 @@ public class OngletGalerie {
         nom.setMaxWidth(VIGNETTE + 8);
         nom.setStyle("-fx-font-size: 11px;");
         VBox b = new VBox(4, cadre, nom);
+        if (!sesTags.isEmpty()) {
+            Label t = new Label(String.join(" · ", sesTags));
+            t.setMaxWidth(VIGNETTE + 8);
+            t.setStyle("-fx-font-size: 10px; -fx-text-fill: #7C776C;");
+            b.getChildren().add(t);
+        }
         b.setAlignment(Pos.TOP_CENTER);
         b.setCursor(Cursor.HAND);
         b.setOnMouseClicked(e -> {
@@ -254,6 +374,8 @@ public class OngletGalerie {
 
         MenuItem ouvrir = new MenuItem("Ouvrir");
         ouvrir.setOnAction(e -> Visionneuse.ouvrir(css, f));
+        MenuItem tagsItem = new MenuItem("Tags…");
+        tagsItem.setOnAction(e -> editerTags(f));
         MenuItem renommer = new MenuItem("Renommer…");
         renommer.setOnAction(e -> renommer(f));
         MenuItem suppr = new MenuItem("Retirer de la galerie");
@@ -263,11 +385,12 @@ public class OngletGalerie {
                     ButtonType.OK, ButtonType.CANCEL);
             a.setHeaderText(null);
             if (a.showAndWait().orElse(ButtonType.CANCEL) == ButtonType.OK) {
-                if (!f.delete()) dire("Impossible de retirer « " + f.getName() + " ».");
+                if (!f.delete()) erreur("Impossible de retirer « " + f.getName() + " ».");
+                else { Properties p = lireTags(); if (p.remove(f.getName()) != null) ecrireTags(p); }
                 rafraichir();
             }
         });
-        ContextMenu cm = new ContextMenu(ouvrir, renommer, suppr);
+        ContextMenu cm = new ContextMenu(ouvrir, tagsItem, renommer, suppr);
         b.setOnContextMenuRequested(e -> cm.show(b, e.getScreenX(), e.getScreenY()));
         return b;
     }
@@ -282,8 +405,17 @@ public class OngletGalerie {
             n = n.replaceAll("[\\\\/:*?\"<>|\\p{Cntrl}]", "").trim();
             if (n.isEmpty()) return;
             File dest = new File(f.getParentFile(), Ui.majuscule(n) + ext);
-            if (dest.exists()) { dire("Une photo porte déjà ce nom."); return; }
-            if (!f.renameTo(dest)) dire("Impossible de renommer.");
+            if (dest.exists()) { erreur("Renommage impossible : une photo porte déjà ce nom."); return; }
+            if (!f.renameTo(dest)) erreur("Impossible de renommer.");
+            else {
+                // les tags et la place dans l'ordre suivent la photo
+                Properties p = lireTags();
+                String t = (String) p.remove(f.getName());
+                if (t != null) { p.setProperty(dest.getName(), t); ecrireTags(p); }
+                List<String> o = lireOrdre();
+                int i = o.indexOf(f.getName());
+                if (i >= 0) { o.set(i, dest.getName()); ecrireOrdreNoms(o); }
+            }
             rafraichir();
         });
     }
@@ -306,13 +438,19 @@ public class OngletGalerie {
 
         static void ouvrir(String css, File f) {
             Platform.runLater(() -> {
-                try { new Visionneuse(css, f); }
-                catch (Throwable t) { t.printStackTrace(); InfoJeu.consigne("La photo n'a pas pu s'ouvrir : " + t); }
+                try {
+                    Image img = new Image(f.toURI().toString());
+                    if (img.isError() || img.getWidth() <= 0 || img.getHeight() <= 0) {
+                        Journal.erreur("Photo illisible : « " + f.getName() + " ».");
+                        return;
+                    }
+                    new Visionneuse(css, f, img);
+                }
+                catch (Throwable t) { Journal.erreur("La photo n'a pas pu s'ouvrir", t); }
             });
         }
 
-        private Visionneuse(String css, File f) {
-            Image img = new Image(f.toURI().toString());
+        private Visionneuse(String css, File f, Image img) {
             vue = new ImageView(img);
             vue.setPreserveRatio(true);
             vue.setSmooth(true);

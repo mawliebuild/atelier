@@ -66,7 +66,7 @@ public final class NomsMobis {
                 return List.of();
             }
             tous = Collections.unmodifiableList(new ArrayList<>(parNom.values()));
-            System.out.println("[Atelier] " + tous.size() + " noms de mobis connus.");
+            Journal.debug(tous.size() + " noms de mobis connus.");
             return tous;
         }
     }

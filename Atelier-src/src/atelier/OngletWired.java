@@ -67,6 +67,12 @@ public class OngletWired {
     private volatile boolean enRangement = false;
     /** Relire la case au prochain tour du suivi (fin de remise en ordre). */
     private volatile boolean caseRelue = false;
+    /** Un seul rangement a la fois (double-clic sur le bouton). */
+    private final java.util.concurrent.atomic.AtomicBoolean rangementPris = new java.util.concurrent.atomic.AtomicBoolean(false);
+    /** Id du wired choisi dans le tableau : lu hors fil JavaFX par MiseEnValeur. */
+    private volatile int idChoisi = 0;
+    /** Variable qui n'a pas range la pile : pas reprise telle quelle d'OutilMiroir. */
+    private volatile String variableRatee = null;
 
     // ------------------------------------------------------------------ UI
 
@@ -74,10 +80,11 @@ public class OngletWired {
         TabPane volets = new TabPane();
         volets.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
 
-        Tab dalle = new Tab("Dalle magique", defiler(voletDalle()));
+        // Seul le volet « Ordre » est monte par la Navigation : plus de volet
+        // Dalle magique (son fil interrogeait la salle chaque seconde pour rien).
         Tab ordre = new Tab("Ordre", defiler(voletOrdre()));
-        dalle.setClosable(false); ordre.setClosable(false);
-        volets.getTabs().addAll(dalle, ordre);
+        ordre.setClosable(false);
+        volets.getTabs().add(ordre);
         volets.setMinHeight(200);
         VBox.setVgrow(volets, Priority.ALWAYS);
 
@@ -97,49 +104,6 @@ public class OngletWired {
         return sp;
     }
 
-    // ----------------------------------------------------------- dalle magique
-
-    private Pane voletDalle() {
-        Label info = Ui.aide("La dalle magique sert à poser un mobi à une hauteur "
-                + "précise. G-Presets s'en sert pendant l'import.");
-        Label trouvee = Ui.valeur("—");
-
-        // Plus de bouton « Chercher » : la dalle est cherchee toute seule, chaque
-        // seconde, et le texte ne change que si le resultat change.
-        Thread suivi = new Thread(() -> {
-            String vu = null;
-            while (true) {
-                String txt;
-                GPresets gp = AtelierLauncher.gpresets();
-                if (gp == null) txt = "G-Presets pas encore prêt";
-                else if (!Salle.dansUneSalle()) txt = "Pas dans une salle";
-                else {
-                    try {
-                        HFloorItem d = gp.stackTile();
-                        txt = d == null ? "Aucune dalle magique dans la salle"
-                                : "Trouvée — id " + d.getId() + "  case ("
-                                  + d.getTile().getX() + "," + d.getTile().getY() + ")";
-                    } catch (Throwable t) { txt = "Erreur : " + t; }
-                }
-                if (!txt.equals(vu)) {
-                    vu = txt;
-                    final String f = txt;
-                    Platform.runLater(() -> trouvee.setText(f));
-                }
-                try { Thread.sleep(1000); } catch (InterruptedException e) { return; }
-            }
-        }, "atelier-dalle-suivi");
-        suivi.setDaemon(true);
-        suivi.start();
-
-        VBox v = new VBox(12,
-                Ui.bloc("Dalle magique", trouvee),
-                info);
-        v.setFillWidth(true);
-        v.setPadding(new Insets(12, 14, 14, 14));
-        return v;
-    }
-
     // ------------------------------------------------------------------ ordre
 
     private Pane voletOrdre() {
@@ -148,6 +112,12 @@ public class OngletWired {
 
         table = new TableView<>();
         table.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
+        // fenetre Wired ouverte : le wired choisi dans le tableau est mis en valeur dans le jeu
+        table.getSelectionModel().selectedItemProperty().addListener((o, av, ap) -> idChoisi = ap == null ? 0 : ap.id);
+        MiseEnValeur.fournir("wired", () -> {
+            int id = idChoisi;
+            return id == 0 ? java.util.List.<String>of() : java.util.List.of("s" + id);
+        });
         TableColumn<LigneWired, Integer> cr = new TableColumn<>("#");
         cr.setCellValueFactory(new PropertyValueFactory<>("rang"));
         cr.setMaxWidth(500); cr.setPrefWidth(32);
@@ -172,11 +142,21 @@ public class OngletWired {
         remettre.getStyleClass().add("primaire");
         remettre.setMaxWidth(Double.MAX_VALUE);
         remettre.setDisable(true);
-        remettre.setOnAction(e -> new Thread(() -> {
+        remettre.setOnAction(e -> {
+            if (!rangementPris.compareAndSet(false, true)) return;     // deja en cours
+            remettre.setDisable(true);
             enRangement = true;
-            try { remettreEnOrdre(); }
-            finally { enRangement = false; caseRelue = true; }
-        }, "atelier-wired").start());
+            Salle.tache("wired", () -> {
+                try { remettreEnOrdre(); }
+                catch (Throwable t) { dire(""); Journal.erreur("Rangement des wired interrompu", t); }
+                finally {
+                    enRangement = false;
+                    caseRelue = true;
+                    rangementPris.set(false);
+                    Platform.runLater(() -> remettre.setDisable(piles.size() < 2));
+                }
+            });
+        });
 
         Label aide = Ui.aide("Clique un wired dans le jeu : toute la pile de sa case "
                 + "est lue. L'ordre visé, du bas vers le haut : déclencheur, sélecteur, "
@@ -211,7 +191,7 @@ public class OngletWired {
             while (true) {
                 try {
                     HPoint c = caseChoisie;
-                    GPresets gp = AtelierLauncher.gpresets();
+                    GPresets gp = AtelierLauncher.moteur();
                     FloorState s = gp == null ? null : gp.getFloorState();
                     if (c != null && s != null && s.inRoom()) {
                         StringBuilder b = new StringBuilder();
@@ -243,7 +223,7 @@ public class OngletWired {
      * quand il ne se resout plus.
      */
     /**
-     * L'onglet est construit AVANT que G-Presets soit embarque : un seul essai
+     * L'onglet est construit AVANT que le moteur de l'Atelier soit demarre : un seul essai
      * echouait donc en silence, et rien ne reessayait. On insiste jusqu'a ce
      * qu'il soit la.
      */
@@ -252,11 +232,14 @@ public class OngletWired {
             for (int i = 0; i < 600 && !ecouteInstallee; i++) {
                 brancher();
                 if (ecouteInstallee) {
-                    System.out.println("[Atelier] ecoute des piles wired active.");
+                    Journal.debug("ecoute des piles wired active.");
                     return;
                 }
                 try { Thread.sleep(1000); } catch (InterruptedException e) { return; }
             }
+            // un seul message, a la fin des essais (pas un par seconde)
+            if (!ecouteInstallee)
+                Journal.erreur("Écoute des clics des wired impossible" + (erreurEcoute == null ? "." : " : " + erreurEcoute));
         }, "atelier-wired-ecoute");
         t.setDaemon(true);
         t.start();
@@ -264,7 +247,7 @@ public class OngletWired {
 
     private synchronized void brancher() {
         if (ecouteInstallee) return;
-        GPresets gp = AtelierLauncher.gpresets();
+        GPresets gp = AtelierLauncher.moteur();
         if (gp == null) return;
         try {
             gp.intercept(HMessage.Direction.TOSERVER, m -> {
@@ -272,27 +255,30 @@ public class OngletWired {
             });
             ecouteInstallee = true;
         } catch (Throwable t) {
-            dire("Écoute des clics indisponible : " + t);
+            erreurEcoute = String.valueOf(t);
         }
     }
 
+    private volatile String erreurEcoute = null;
+
     private void examiner(GPresets gp, HMessage m) {
-        // Appele pour chaque paquet envoye : taille d'abord, sans copie.
+        // Appele pour chaque paquet envoye : tests bon marche d'abord, copie ensuite.
         int taille = m.getPacket().getBytesLength();
-        if (taille > 40) return;
-        HPacket p = new HPacket(m.getPacket());
+        if (taille > 40 || taille < 10) return;
+        if (!WiredLecteur.actif() || enRangement) return;     // fenetre Wired fermee : rien
 
         FloorState s = gp.getFloorState();
         if (s == null || !s.inRoom()) return;
 
-        apprendreAltitude(gp, p, taille);
+        HPacket p = new HPacket(m.getPacket());
+        apprendreAltitude(gp, p, taille, s);
 
         // Tous les offsets, pas seulement les multiples de 4.
         for (int off = 6; off + 4 <= taille; off++) {
             int v;
             try { v = p.readInteger(off); } catch (Throwable e) { break; }
             HFloorItem it = s.furniFromId(v);
-            if (it != null) { lireCase(gp, it.getTile()); return; }
+            if (it != null && Wired.estWired(classe(gp, it.getTypeId()))) { choisir(gp, it.getTile()); return; }
         }
         // Et la forme texte, que le client Flash utilise pour certains
         // identifiants : seulement les suites de chiffres du paquet, plutot que
@@ -308,7 +294,7 @@ public class OngletWired {
                         java.nio.charset.StandardCharsets.ISO_8859_1));
                 if (v <= 0 || v > Integer.MAX_VALUE) continue;
                 HFloorItem it = s.furniFromId((int) v);
-                if (it != null) { lireCase(gp, it.getTile()); return; }
+                if (it != null && Wired.estWired(classe(gp, it.getTypeId()))) { choisir(gp, it.getTile()); return; }
             } catch (Throwable ignored) { }
         }
     }
@@ -324,6 +310,12 @@ public class OngletWired {
             if (a >= 0 && a < 200 && b >= 0 && b < 200) return new HPoint(a, b);
         } catch (Throwable ignored) { }
         return null;
+    }
+
+    /** Un wired touche dans le jeu : sa case est lue hors du fil des paquets. */
+    private void choisir(GPresets gp, HPoint c) {
+        if (c == null) return;
+        Salle.tache("wired-case", () -> lireCase(gp, c));
     }
 
     /** Lit toute la pile d'une case et la classe. */
@@ -361,7 +353,7 @@ public class OngletWired {
                 pareil = table.getItems().get(i).id == pile.get(i).id
                         && table.getItems().get(i).getAltitude().equals(pile.get(i).getAltitude());
             if (!pareil) table.setItems(FXCollections.observableArrayList(pile));
-            remettre.setDisable(pile.size() < 2);
+            remettre.setDisable(pile.size() < 2 || rangementPris.get());
             dire(pile.size() < 2
                     ? "Il faut au moins deux wired sur la case pour les réordonner."
                     : verdict());
@@ -395,19 +387,34 @@ public class OngletWired {
      * mobi, ni poser de dalle.
      */
     private void remettreEnOrdre() {
-        GPresets gp = AtelierLauncher.gpresets();
+        GPresets gp = AtelierLauncher.moteur();
         HPoint c = caseChoisie;
         if (gp == null || c == null) { dire("Aucune case choisie."); return; }
+        if (idVariable == null && OutilMiroir.Altitude.connue()
+                && !Objects.equals(OutilMiroir.Altitude.variable(), variableRatee)) {
+            idVariable = OutilMiroir.Altitude.variable();
+            facteurAlt = 100;
+        }
         if (idVariable == null) {
             dire("Recherche de @altitude...");
-            if (!trouverAltitude(gp, c)) {
-                dire("@altitude introuvable — le serveur n'a accepté aucun identifiant.");
+            // d'abord la liste des variables du jeu (sure) ; tatonner en dernier
+            if (OutilMiroir.Altitude.demanderListe() && OutilMiroir.Altitude.variable() != null) {
+                idVariable = OutilMiroir.Altitude.variable();
+                facteurAlt = 100;
+            } else if (!trouverAltitude(gp, c)) {
+                dire("");
+                Journal.erreur("@altitude introuvable : règle-la une fois dans l'éditeur :wired, puis recommence.");
                 return;
             }
         }
 
         List<LigneWired> ordre = new ArrayList<>(piles);
         ordre.sort(Comparator.comparingInt(LigneWired::getRang));
+        // la pile repart de la ou elle est (sol sureleve, posee sur un mobi...), pas de 0
+        double base = Double.MAX_VALUE;
+        for (LigneWired l : ordre) { double z = altitudeDe(gp, l.id); if (z >= 0) base = Math.min(base, z); }
+        if (base == Double.MAX_VALUE) base = Math.max(0, Salle.hauteurSol(c.getX(), c.getY()));
+        final double depart = base;
 
         // Jusqu'a trois passes : la premiere laisse parfois un wired de travers,
         // le temps que le serveur applique les altitudes precedentes.
@@ -415,25 +422,34 @@ public class OngletWired {
         while (passe < 3) {
             passe++;
             dire("Passe " + passe + " : réglage de " + ordre.size() + " wired...");
-            double cumul = 0;
+            double cumul = depart;
             for (LigneWired l : ordre) {
                 ecrireAltitude(gp, l.id, cumul);
                 cumul += hauteurDe(gp, l.id);
                 sommeil(200);
             }
             sommeil(900);
-            restants = malPlaces(gp, c, ordre);
+            restants = malPlaces(gp, c, ordre, depart);
             if (restants == 0) break;
             dire("Passe " + passe + " : " + restants + " wired encore de travers, "
                     + "nouvelle passe...");
         }
 
         final int r = restants;
-        String fin = r == 0
-                ? "Pile rangée et vérifiée en " + passe + " passe(s)."
-                : r + " wired restent mal placés après " + passe + " passes.";
-        dire(fin);
-        InfoJeu.dire("Wired : " + Ui.majuscule(fin));
+        dire("");
+        if (r == 0) {
+            OutilMiroir.Altitude.apprendre(idVariable, 100);      // verifiee : partagee avec le Miroir
+            Journal.succes("Pile de wired rangée et vérifiée en " + passe + " passe(s).");
+        } else {
+            // la variable n'a pas range la pile : on l'oublie (on cherchera a nouveau)
+            variableRatee = idVariable;
+            idVariable = null;
+            Platform.runLater(() -> {
+                altLbl.setText("@altitude sera trouvée automatiquement");
+                altLbl.getStyleClass().setAll("label");
+            });
+            Journal.erreur(r + " wired restent mal placés après " + passe + " passes.");
+        }
     }
 
     /**
@@ -452,36 +468,47 @@ public class OngletWired {
     /**
      * Capture l'identifiant de la variable @altitude depuis l'editeur :wired.
      *
-     * On reconnait le paquet a sa forme : (int, int idMobi, String, int), ou
-     * l'identifiant designe un wired de la salle. La chaine lue est l'id de la
-     * variable — c'est tout ce qu'il manquait.
+     * On reconnait le paquet a sa forme exacte : (int 0, int idMobi, String "-nnn",
+     * int valeur), ou idMobi est un WIRED de la salle. Ce n'est retenu que si
+     * l'altitude de ce wired devient bien valeur / 100 juste apres : une autre
+     * variable reglee dans l'editeur n'est pas prise pour @altitude.
      */
-    private void apprendreAltitude(GPresets gp, HPacket paquet, int taille) {
-        if (idVariable != null || taille < 16 || taille > 60) return;
-        FloorState s = gp.getFloorState();
-        if (s == null || !s.inRoom()) return;
-
+    private void apprendreAltitude(GPresets gp, HPacket paquet, int taille, FloorState s) {
+        if (idVariable != null || taille < 18 || taille > 40) return;
         try {
             HPacket p = new HPacket(paquet);
             p.resetReadIndex();
-            p.readInteger();                       // toujours 0 chez G-Presets
+            if (p.readInteger() != 0) return;
             int idMobi = p.readInteger();
             String var = p.readString();
             int valeur = p.readInteger();
+            if (p.getReadIndex() != p.getBytesLength()) return;
+            if (var == null || !var.matches("-?\\d{1,6}")) return;
 
             HFloorItem it = s.furniFromId(idMobi);
-            if (it == null) return;
-            if (var == null || var.isEmpty() || var.length() > 12) return;
-
-            idVariable = var;
-            facteurAlt = (valeur > 40) ? 100 : 1;
-            OutilMiroir.Altitude.apprendre(var, facteurAlt);
-            Platform.runLater(() -> {
-                altLbl.setText("@altitude appris — variable « " + idVariable + " »");
-                altLbl.getStyleClass().setAll("label", "etat-ok");
+            if (it == null || !Wired.estWired(classe(gp, it.getTypeId()))) return;
+            double avant = it.getTile().getZ(), voulu = valeur / 100.0;
+            if (Math.abs(voulu - avant) < 0.01) return;            // rien a observer
+            // verification hors du fil des paquets
+            Salle.tache("wired-altitude", () -> {
+                for (int i = 0; i < 12; i++) {
+                    sommeil(100);
+                    double z = altitudeDe(gp, idMobi);
+                    if (z >= 0 && Math.abs(z - voulu) < 0.05) {
+                        if (idVariable != null) return;
+                        idVariable = var;
+                        facteurAlt = 100;              // @altitude est toujours en centiemes
+                        OutilMiroir.Altitude.apprendre(var, facteurAlt);
+                        Platform.runLater(() -> {
+                            altLbl.setText("@altitude apprise — variable « " + var + " »");
+                            altLbl.getStyleClass().setAll("label", "etat-ok");
+                        });
+                        Journal.debug("@altitude apprise (verifiee) : mobi=" + idMobi
+                                + " variable=" + var + " valeur=" + valeur);
+                        return;
+                    }
+                }
             });
-            System.out.println("[Atelier] @altitude apprise : mobi=" + idMobi
-                    + " variable=" + var + " valeur=" + valeur);
         } catch (Throwable ignored) { }
     }
 
@@ -491,7 +518,7 @@ public class OngletWired {
      * Trouve l'identifiant de @altitude tout seul, sans rien demander.
      *
      * Les variables internes portent des identifiants negatifs que rien
-     * n'expose : ni la furnidata, ni les parseurs de G-Presets. On les essaie
+     * n'expose : ni la furnidata, ni les parseurs du moteur de l'Atelier. On les essaie
      * donc un par un sur UN wired, en verifiant a chaque fois si son altitude a
      * bouge. Celui qui la fait bouger est le bon — c'est une mesure, pas une
      * supposition, et la valeur d'origine est remise ensuite.
@@ -504,9 +531,15 @@ public class OngletWired {
         double avant = altitudeDe(gp, cible);
         if (avant < 0) return false;
         double essai = avant + 1.0;                       // un ecart bien visible
+        int salle = Groupes.salleCourante();
+        // Les variables de la liste du jeu (autres que @altitude) ne sont pas
+        // essayees : leur valeur serait ecrasee par l'essai.
+        Map<String, String> connues = WiredLecteur.variables();
 
         for (int v = -100; v >= -140; v--) {
+            if (!Salle.dansUneSalle() || Groupes.salleCourante() != salle) return false;   // salle changee
             String candidat = String.valueOf(v);
+            if (connues != null && connues.containsKey(candidat)) continue;
             gp.sendToServer(new HPacket("WiredSetObjectVariableValue",
                     HMessage.Direction.TOSERVER, 0, cible, candidat,
                     (int) Math.round(essai * 100)));
@@ -526,7 +559,7 @@ public class OngletWired {
                     altLbl.setText("@altitude trouvée — variable « " + candidat + " »");
                     altLbl.getStyleClass().setAll("label", "etat-ok");
                 });
-                System.out.println("[Atelier] @altitude = variable " + candidat);
+                Journal.debug("@altitude = variable " + candidat);
                 return true;
             }
         }
@@ -539,9 +572,9 @@ public class OngletWired {
      * On relit la salle : sans cette verification, une premiere passe
      * incomplete passait inapercue.
      */
-    private int malPlaces(GPresets gp, HPoint c, List<LigneWired> ordre) {
+    private int malPlaces(GPresets gp, HPoint c, List<LigneWired> ordre, double depart) {
         int faux = 0;
-        double cumul = 0;
+        double cumul = depart;
         for (LigneWired l : ordre) {
             double reelle = altitudeDe(gp, l.id);
             if (reelle < 0 || Math.abs(reelle - cumul) > 0.06) faux++;

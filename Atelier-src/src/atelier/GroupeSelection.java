@@ -123,6 +123,8 @@ final class GroupeSelection {
         StringBuilder b = new StringBuilder();
         for (int i : s.sols) { if (b.length() > 0) b.append(','); b.append('s').append(i); }
         for (int i : s.murs) { if (b.length() > 0) b.append(','); b.append('m').append(i); }
+        // et ce que la fenetre ouverte met en valeur (plante, couleur de decor, wired choisis)
+        for (String j : MiseEnValeur.jetons()) { if (b.length() > 0) b.append(','); b.append(j); }
         String liste = b.toString();
         int salle = Salle.salleId();
         long t = System.currentTimeMillis();
@@ -141,7 +143,7 @@ final class GroupeSelection {
                 -1, "atelier:surligner=" + liste, 0, 0, 0, -1));
         lueurEnvoyee = liste; lueurSalle = salle; lueurA = t;
         if (change)
-            System.out.println("[Atelier] Mise en valeur envoyée au jeu : "
+            Journal.debug("Mise en valeur envoyée au jeu : "
                     + (liste.isEmpty() ? "aucun mobi (tout éteint)" : (s.sols.size() + s.murs.size()) + " mobi(s)") + ".");
     }
 

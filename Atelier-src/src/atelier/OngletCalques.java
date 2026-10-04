@@ -154,7 +154,7 @@ public class OngletCalques {
         Calques.ecouter(this::majCompteurs);
         Calques.surOubli(() -> {
             recocher();
-            dire(etatCalques, "Nouvelle salle : calques remis à zéro.");
+            dire(etatCalques, "");      // changement de salle : automatique, pas de message
         });
         majCompteurs();
         return v;
@@ -226,8 +226,15 @@ public class OngletCalques {
     }
 
     /** Masque ou reaffiche un calque selon sa case. */
-    private void appliquer(Ligne l) {
+    private void appliquer(Ligne l) { appliquer(l, false); }
+
+    /**
+     * auto : recalcul automatique (mobis poses, portee ou zone changee) ;
+     * pas de message de resultat, les compteurs suffisent. Fil JavaFX.
+     */
+    private void appliquer(Ligne l, boolean auto) {
         boolean visible = l.visible.isSelected();
+        String nomCalque = l.visible.getText();        // lu ici : fil JavaFX
         List<Filtre> fs = new ArrayList<>(filtres);
         String port = portee.getValue();
         if (!visible && l == lNom && fs.isEmpty()) {
@@ -242,7 +249,7 @@ public class OngletCalques {
             }
             if (visible) {
                 int n = Calques.reafficher(l.cle);
-                dire(etatCalques, "« " + l.visible.getText() + " » : " + n + " mobi(s) réaffiché(s).");
+                if (!auto) dire(etatCalques, "« " + nomCalque + " » : " + n + " mobi(s) réaffiché(s).");
                 return;
             }
             if (!Salle.furnidataPrete() && l != lMurs) {
@@ -254,7 +261,7 @@ public class OngletCalques {
             List<HWallItem> murs = new ArrayList<>();
             choisir(l, fs, port, sols, murs);
             int[] r = Calques.regler(l.cle, sols, murs);
-            dire(etatCalques, "« " + l.visible.getText() + " » : " + (sols.size() + murs.size())
+            if (!auto) dire(etatCalques, "« " + nomCalque + " » : " + (sols.size() + murs.size())
                     + " mobi(s) masqué(s)" + (r[0] < sols.size() + murs.size() ? " (dont déjà masqués par un autre calque)" : "")
                     + ".");
         });
@@ -294,7 +301,7 @@ public class OngletCalques {
 
     /** Recalcule tous les calques masques (portee changee, mobis poses depuis). */
     private void reappliquerTout() {
-        for (Ligne l : lignes) if (!l.visible.isSelected()) appliquer(l);
+        for (Ligne l : lignes) if (!l.visible.isSelected()) appliquer(l, true);
     }
 
     private void toutReafficher() {
@@ -386,7 +393,9 @@ public class OngletCalques {
         Button zone = new Button("Définir la zone autour");
         zone.setOnAction(e -> zoneAutour());
 
-        rechercheCompte = Ui.etat();
+        rechercheCompte = Ui.discret("");          // un compteur, pas un resultat
+        rechercheCompte.visibleProperty().bind(rechercheCompte.textProperty().isNotEmpty());
+        rechercheCompte.managedProperty().bind(rechercheCompte.visibleProperty());
         rechercheEtat = Ui.etat();
 
         Label aide = Ui.aide("Sélectionne une ou plusieurs lignes (un type entier ou un mobi) ; "
@@ -410,9 +419,9 @@ public class OngletCalques {
     private void chercher() {
         String texte = rechercheTexte.getText() == null ? "" : rechercheTexte.getText().trim().toLowerCase(Locale.ROOT);
         Salle.tache("recherche", () -> {
-            if (!Salle.dansUneSalle()) { dire(rechercheEtat, "Pas dans une salle (ou G-Presets pas encore prêt)."); return; }
+            if (!Salle.dansUneSalle()) { dire(rechercheEtat, "Pas dans une salle (ou l'Atelier pas encore prêt)."); return; }
             if (!Salle.furnidataPrete())
-                dire(rechercheEtat, "Furnidata pas encore chargée : recherche sur les numéros de type seulement.");
+                dire(rechercheEtat, "La furnidata n'est pas encore là : recherche sur les numéros de type seulement.");
 
             // type -> mobis, groupes tries par nombre decroissant
             Map<String, Entree> groupes = new LinkedHashMap<>();
@@ -556,7 +565,7 @@ public class OngletCalques {
     // ============================================================== outils
 
     private static boolean verifierPret(Label etat) {
-        if (Salle.gp() == null) { dire(etat, "G-Presets pas encore prêt."); return false; }
+        if (Salle.gp() == null) { dire(etat, "L'Atelier n'est pas encore prêt."); return false; }
         if (!Calques.pret()) { dire(etat, "Les calques s'installent : encore un instant."); return false; }
         if (Calques.ecoutes() == 0) { dire(etat, "Aucune écoute de paquets : masquer est désactivé par prudence."); return false; }
         if (!Salle.dansUneSalle()) { dire(etat, "Pas dans une salle."); return false; }

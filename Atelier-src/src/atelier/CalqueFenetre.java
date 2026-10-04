@@ -24,8 +24,9 @@ import javafx.util.Duration;
  * des calques ne grandit plus.
  *
  * Barre de titre bleue (deplacable) avec la croix rouge, corps creme, une
- * ligne d'etat (progression, etat) et des boutons en bas. Elle s'ouvre a
- * droite du panneau des calques ; deplacee a la main, elle garde sa place.
+ * ligne d'etat (progression, etat) et des boutons en bas. Elle s'ouvre juste
+ * sous le panneau des calques (a sa droite s'il n'y a pas la place a l'ecran) ;
+ * deplacee a la main, elle garde sa place.
  * Echap ferme. Tout se fait sur le fil JavaFX.
  */
 final class CalqueFenetre {
@@ -111,7 +112,7 @@ final class CalqueFenetre {
 
     /** Ligne d'etat : progression, ce qui va se passer. Vide = rien. */
     void dire(String s) {
-        etat.setText(s == null ? "" : Ui.majuscule(s));
+        etat.setText(s == null ? "" : WindowsClavier.texte(Ui.majuscule(s)));
         ajuster();
     }
 
@@ -136,13 +137,41 @@ final class CalqueFenetre {
         javafx.application.Platform.runLater(() -> { if (stage.isShowing()) stage.sizeToScene(); });
     }
 
-    /** A droite du panneau des calques, en haut. */
+    /**
+     * Juste sous le panneau des calques, alignee a gauche et collee a son
+     * bord bas ; s'il n'y a pas la place sur son ecran, a droite du panneau,
+     * en haut.
+     */
     private void placer() {
         stage.sizeToScene();
         if (proche != null && proche.isShowing()) {
-            stage.setX(proche.getX() + proche.getWidth() + 8);
-            stage.setY(proche.getY());
+            double[] p = position(proche.getX(), proche.getY(), proche.getWidth(), proche.getHeight(),
+                    stage.getWidth(), stage.getHeight(), ecran(proche));
+            stage.setX(p[0]);
+            stage.setY(p[1]);
         } else stage.centerOnScreen();
+    }
+
+    /** Zone utile de l'ecran du panneau (visualBounds), ou null. */
+    private static javafx.geometry.Rectangle2D ecran(Window w) {
+        java.util.List<javafx.stage.Screen> l = javafx.stage.Screen.getScreensForRectangle(
+                w.getX(), w.getY(), Math.max(1, w.getWidth()), Math.max(1, w.getHeight()));
+        javafx.stage.Screen s = l.isEmpty() ? javafx.stage.Screen.getPrimary() : l.get(0);
+        return s == null ? null : s.getVisualBounds();
+    }
+
+    /**
+     * Ou ouvrir une fenetre de taille (l, h) pres du panneau (px, py, pl, ph) :
+     * dessous (meme x, collee au bord bas) si elle tient dans l'ecran, sinon a
+     * droite du panneau, en haut. Logique pure.
+     */
+    static double[] position(double px, double py, double pl, double ph, double l, double h,
+                             javafx.geometry.Rectangle2D ecran) {
+        double sousY = py + ph;
+        if (ecran != null && sousY + h <= ecran.getMaxY() && px >= ecran.getMinX()
+                && px + l <= ecran.getMaxX())
+            return new double[]{px, sousY};
+        return new double[]{px + pl + 8, py};
     }
 
     // ------------------------------------------------------------ morceaux
@@ -158,7 +187,7 @@ final class CalqueFenetre {
 
     /** Bulle qui s'affiche vite au survol. */
     static Tooltip bulle(String texte) {
-        Tooltip t = new Tooltip(Ui.majuscule(texte));
+        Tooltip t = new Tooltip(WindowsClavier.texte(Ui.majuscule(texte)));
         t.setShowDelay(Duration.millis(150));
         t.setHideDelay(Duration.millis(80));
         t.setShowDuration(Duration.seconds(30));

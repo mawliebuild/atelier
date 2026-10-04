@@ -40,7 +40,8 @@ public final class InfoJeu {
     /** Message de fin, sans condition de duree (operation longue par nature). */
     public static synchronized void dire(String message) {
         if (message == null || message.isBlank()) return;
-        String m = Ui.majuscule(message.trim());
+        String m = Ui.majuscule(Ui.accorder(message.trim()));
+        Journal.jeu(m);
         long now = System.currentTimeMillis();
         if (m.equals(dernierTexte) && now - dernierEnvoi < REPETITION_MS) return;
         if (now - dernierEnvoi >= ECART_MS && !planifie) { envoyer(m); return; }
@@ -63,11 +64,13 @@ public final class InfoJeu {
 
     /**
      * Consigne a suivre tout de suite (une etape d'un outil, comme les messages
-     * de G-Presets) : envoyee sans attendre, seulement si on est dans un appart.
+     * du moteur de l'Atelier) : envoyee sans attendre, seulement si on est dans un appart.
      */
     public static synchronized void consigne(String message) {
         if (message == null || message.isBlank()) return;
-        envoyer(Ui.majuscule(message.trim()));
+        String m = Ui.majuscule(Ui.accorder(message.trim()));
+        Journal.jeu(m);
+        envoyer(m);
     }
 
     private static void envoyer(String m) {
@@ -75,6 +78,7 @@ public final class InfoJeu {
         dernierTexte = m;
         GPresets gp = Salle.gp();
         if (gp == null || !Salle.dansUneSalle()) return;
-        try { gp.sendVisualChatInfo(m); } catch (Throwable ignored) { }
+        try { gp.sendVisualChatInfo(m); }
+        catch (Throwable t) { System.err.println("[Atelier] message du jeu pas envoyé : " + t); }
     }
 }

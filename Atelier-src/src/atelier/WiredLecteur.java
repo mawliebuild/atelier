@@ -26,17 +26,17 @@ import java.util.concurrent.TimeUnit;
 /**
  * Lecture des configurations des wired de la salle.
  *
- * Meme methode que l'exporteur de G-Presets (GPresetExporter) : pour chaque
+ * Meme methode que l'export de l'Atelier (GPresetExporter) : pour chaque
  * wired, on envoie Open(id) au serveur, qui repond par la fenetre de reglage
  * (WiredFurniTrigger / Condition / Action / Addon / Selector / Variable). On
  * BLOQUE cette reponse pour que la fenetre ne s'ouvre pas dans le jeu, et on la
- * decode avec les classes RetrievedWired* de G-Presets.
+ * decode avec les classes RetrievedWired* du moteur de l'Atelier.
  *
  * Seules les reponses a NOS demandes sont bloquees : un wired que
  * l'utilisatrice ouvre elle-meme dans le jeu s'ouvre normalement.
  *
  * Sans droits wired dans la salle, le serveur ne repond pas : on le detecte
- * (permissions de G-Presets, puis absence de reponse sur les premiers wired).
+ * (permissions du moteur de l'Atelier, puis absence de reponse sur les premiers wired).
  *
  * SEULEMENT QUAND L'OUTIL WIRED EST OUVERT (actif(true)) : en entrant dans un
  * appart, rien n'est envoye — sinon le jeu ouvrait parfois la fenetre de
@@ -72,7 +72,7 @@ public final class WiredLecteur {
         public final List<String> variables;
         /** delai d'un effet (en demi-secondes), -1 sinon */
         public final int delai;
-        /** Le reglage tel que G-Presets l'a decode (pour le recopier : WiredCollage). */
+        /** Le reglage tel que le moteur de l'Atelier l'a decode (pour le recopier : WiredCollage). */
         public final PresetWiredBase brut;
 
         Config(PresetWiredBase w, String genre) {
@@ -211,6 +211,9 @@ public final class WiredLecteur {
         if (a) installer();
     }
 
+    /** L'outil Wired est-il ouvert dans la fenetre de l'Atelier ? */
+    public static boolean actif() { return actif; }
+
     /** Arrete la lecture en cours (elle reprendra seule au prochain changement). */
     public static void arreter() { arret = true; }
 
@@ -229,7 +232,7 @@ public final class WiredLecteur {
         Thread t = new Thread(() -> {
             for (int i = 0; i < 900 && !branche; i++) {
                 if (brancher()) {
-                    System.out.println("[Atelier] lecture des wired : ecoute active.");
+                    Journal.debug("lecture des wired : ecoute active.");
                     return;
                 }
                 try { Thread.sleep(1000); } catch (InterruptedException e) { return; }
@@ -238,6 +241,9 @@ public final class WiredLecteur {
         t.setDaemon(true);
         t.start();
     }
+
+    /** Interceptions deja posees : un nouvel essai de brancher() ne les double pas. */
+    private static final Set<String> poses = ConcurrentHashMap.newKeySet();
 
     private static boolean brancher() {
         GPresets gp = Salle.gp();
@@ -248,50 +254,56 @@ public final class WiredLecteur {
         nomme(gp, "WiredFurniAddon", "add-on");
         nomme(gp, "WiredFurniSelector", "selecteur");
         nomme(gp, "WiredFurniVariable", "variable");
-        try {
+        if (!poses.contains("WiredAllVariablesDiffs")) try {
             gp.intercept(HMessage.Direction.TOCLIENT, "WiredAllVariablesDiffs", m -> {
                 try { recevoirVariables(m); } catch (Throwable ignored) { }
             });
+            poses.add("WiredAllVariablesDiffs");
         } catch (Throwable t) {
-            System.out.println("[Atelier] WiredAllVariablesDiffs non intercepte : " + t);
+            Journal.debug("WiredAllVariablesDiffs non intercepte : " + t);
         }
         // Enregistrement d'un wired par l'utilisatrice : premier entier = id.
         for (String n : new String[]{"UpdateTrigger", "UpdateCondition", "UpdateAction",
                 "UpdateAddon", "UpdateSelector", "UpdateVariable"}) {
-            try {
+            if (!poses.contains(n)) try {
                 gp.intercept(HMessage.Direction.TOSERVER, n, m -> {
                     try { modifie(m.getPacket().readInteger(6)); } catch (Throwable ignored) { }
                 });
+                poses.add(n);
             } catch (Throwable t) {
-                System.out.println("[Atelier] " + n + " non intercepte : " + t);
+                Journal.debug(n + " non intercepte : " + t);
             }
         }
         // Open de l'utilisatrice, reconnu a sa forme (10 octets : un entier).
-        try {
+        if (!poses.contains("open")) try {
             gp.intercept(HMessage.Direction.TOSERVER, m -> {
                 try {
                     if (m.getPacket().getBytesLength() != 10) return;
                     elleOuvre(m.getPacket().readInteger(6));
                 } catch (Throwable ignored) { }
             });
+            poses.add("open");
         } catch (Throwable t) { return false; }
         // Le repli par contenu en dernier : les interceptions par nom passent avant.
-        try {
+        if (!poses.contains("contenu")) try {
             gp.intercept(HMessage.Direction.TOCLIENT, m -> {
                 try { parContenu(m); } catch (Throwable ignored) { }
             });
+            poses.add("contenu");
         } catch (Throwable t) { return false; }
         branche = true;
         return true;
     }
 
     private static void nomme(GPresets gp, String nom, String genre) {
+        if (poses.contains(nom)) return;
         try {
             gp.intercept(HMessage.Direction.TOCLIENT, nom, m -> {
                 try { recevoir(m, genre, true); } catch (Throwable ignored) { }
             });
+            poses.add(nom);
         } catch (Throwable t) {
-            System.out.println("[Atelier] " + nom + " non intercepte : " + t);
+            Journal.debug(nom + " non intercepte : " + t);
         }
     }
 
@@ -398,7 +410,7 @@ public final class WiredLecteur {
      * int m, m x (int, HWiredVariable)). Lecture recopiee de l'exporteur.
      */
     private static void recevoirVariables(HMessage m) {
-        if (System.currentTimeMillis() > attenteVariablesJusqua) return;
+        boolean pourMoi = System.currentTimeMillis() <= attenteVariablesJusqua;
         HPacket p = new HPacket(m.getPacket());
         p.resetReadIndex();
         p.readInteger();
@@ -406,11 +418,15 @@ public final class WiredLecteur {
         int n = p.readInteger();
         for (int i = 0; i < n && i < 100000; i++) p.readString();
         int k = p.readInteger();
+        Map<String, String> lues = new HashMap<>();
         for (int i = 0; i < k && i < 100000; i++) {
             p.readInteger();
             HWiredVariable v = new HWiredVariable(p);
-            if (v.id != null) variablesRecues.put(v.id, v.name == null ? "" : v.name);
+            if (v.id != null) lues.put(v.id, v.name == null ? "" : v.name);
         }
+        OutilMiroir.Altitude.depuisListe(lues);
+        if (!pourMoi) return;
+        variablesRecues.putAll(lues);
         variablesSalle = new HashMap<>(variablesRecues);
         if (dernier) attenteVariablesJusqua = 0;
     }
@@ -496,7 +512,7 @@ public final class WiredLecteur {
         Regroupeur reg = new Regroupeur(350, 1000);
         while (true) {
             try { tour(reg); } catch (Throwable t) {
-                System.err.println("[Atelier] suivi des wired : " + t);
+                Journal.info("Suivi des wired en erreur : " + t);   // dedoublonne : pas de spam toutes les 200 ms
             }
             Salle.sommeil(200);
         }
@@ -520,7 +536,7 @@ public final class WiredLecteur {
 
     private static void tour(Regroupeur reg) {
         GPresets gp = Salle.gp();
-        if (gp == null) { etat("En attente de G-Presets…"); return; }
+        if (gp == null) { etat("En attente du moteur de l'Atelier…"); return; }
         game.FloorState s = Salle.etat();
         if (s == null) {
             if (salleCourante != -1) { salleCourante = -1; oublierSalle(); donneesChangees(); }
@@ -579,7 +595,7 @@ public final class WiredLecteur {
     }
 
     /**
-     * G-Presets pose un appart (Update* et poses en rafale) ou exporte (il
+     * Le moteur de l'Atelier pose un appart (Update* et poses en rafale) ou exporte (il
      * ouvre lui-meme les wired) : on ne lit pas en meme temps, ni pour le
      * flood, ni pour ne pas lire un wired pas encore regle.
      */
@@ -587,12 +603,12 @@ public final class WiredLecteur {
         try {
             Object e = gp.getImporter() == null ? null : gp.getImporter().getState();
             if (e != null && !"NONE".equals(String.valueOf(e)))
-                return "En attente : G-Presets pose un appart.";
+                return "En attente : l'Atelier pose un appart.";
         } catch (Throwable ignored) { }
         try {
             Object e = gp.getExporter() == null ? null : gp.getExporter().getState();
             if (e != null && "FETCHING_UNKNOWN_CONFIGS".equals(String.valueOf(e)))
-                return "En attente : G-Presets exporte.";
+                return "En attente : l'Atelier exporte.";
         } catch (Throwable ignored) { }
         return null;
     }

@@ -13,7 +13,7 @@ import gearth.protocol.HPacket;
  *     String proprietaire, int acces, int presents, int maximum, String description...
  *
  * Le paquet est reconnu A SON CONTENU, pas a son nom. L'interception par nom
- * echoue en silence quand le nom ne se resout pas cote G-Earth : l'installation
+ * echoue en silence quand le nom ne se resout pas cote proxy de l'Atelier : l'installation
  * reussit, la trace annonce « interception active », et le rappel n'est jamais
  * appele. C'est exactement ce qui se passait ici — « Salle actuelle » restait
  * sur un tiret.
@@ -38,7 +38,7 @@ public final class NomSalle {
 
     public static synchronized void installer() {
         if (installe) return;
-        GPresets gp = AtelierLauncher.gpresets();
+        GPresets gp = AtelierLauncher.moteur();
         if (gp == null) return;
         try {
             gp.intercept(HMessage.Direction.TOCLIENT, m -> {
@@ -53,14 +53,30 @@ public final class NomSalle {
                     // avant toute copie : la plupart des paquets s'arretent la.
                     byte b0 = brut.readByte(6);
                     if (b0 != 0 && b0 != 1) return;
+                    if (!signature(brut, n)) return;   // id, nom, id du proprietaire : toujours sans copie
                     lire(gp, brut);
                 } catch (Throwable ignored) { }
             });
             installe = true;
-            System.out.println("[Atelier] nom de salle : écoute active (par contenu).");
+            Journal.debug("nom de salle : écoute active (par contenu).");
         } catch (Throwable t) {
             System.err.println("[Atelier] nom de salle indisponible : " + t);
         }
+    }
+
+    /**
+     * Premier tri sur le paquet d'origine, sans copie ni deplacement de l'index
+     * de lecture : octets 7-10 = id de salle plausible, 11-12 = longueur du nom
+     * (1 a 180 octets : 60 caracteres UTF-8), puis l'id du proprietaire plausible.
+     * Logique pure (sur les octets).
+     */
+    static boolean signature(HPacket brut, int n) {
+        int id = brut.readInteger(7);
+        if (id <= 0 || id > 900_000_000) return false;
+        int lg = brut.readUshort(11);
+        if (lg < 1 || lg > 180 || 13 + lg + 4 + 2 > n) return false;
+        int idProp = brut.readInteger(13 + lg);
+        return idProp > 0 && idProp <= 900_000_000;
     }
 
     /**
@@ -80,7 +96,7 @@ public final class NomSalle {
         int id = p.readInteger();
         if (id <= 0 || id > 900_000_000) return;
 
-        // readString() de G-Earth lit en Latin-1 : on repare en UTF-8 (voir utf8).
+        // readString() du proxy de l'Atelier lit en Latin-1 : on repare en UTF-8 (voir utf8).
         String lu = utf8(p.readString());
         if (lu == null || lu.isEmpty() || lu.length() > 60 || !lisible(lu)) return;
 
@@ -107,7 +123,7 @@ public final class NomSalle {
 
     /**
      * Le client envoie ses textes en UTF-8, mais HPacket.readString() de
-     * G-Earth les decode en Latin-1 : « © Loft bordélique » devient
+     * la connexion de l'Atelier les decode en Latin-1 : « © Loft bordélique » devient
      * « Â© Loft bordÃ©lique ». Latin-1 etant un decodage octet pour octet, on
      * retrouve les octets d'origine et on les relit en UTF-8, en mode strict :
      * si ce n'est pas de l'UTF-8 valide (texte deja correct, ou vrai Latin-1),

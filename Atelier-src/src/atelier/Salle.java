@@ -15,7 +15,7 @@ import java.util.function.Consumer;
 /**
  * Acces partage a la salle ouverte, pour les outils de l'Atelier.
  *
- * Tout passe par G-Presets, qui tient deja l'etat de la salle (FloorState),
+ * Tout passe par le moteur de l'Atelier, qui tient deja l'etat de la salle (FloorState),
  * la furnidata et l'inventaire. Ici on ne fait que rassembler les lectures
  * que chaque outil recopiait, et une seule ecoute des clics du jeu :
  *
@@ -31,9 +31,9 @@ public final class Salle {
 
     // ------------------------------------------------------------- lectures
 
-    public static GPresets gp() { return AtelierLauncher.gpresets(); }
+    public static GPresets gp() { return AtelierLauncher.moteur(); }
 
-    /** L'etat de la salle, ou null hors salle / G-Presets pas pret. */
+    /** L'etat de la salle, ou null hors salle / Atelier pas pret. */
     public static FloorState etat() {
         GPresets gp = gp();
         if (gp == null) return null;
@@ -65,7 +65,7 @@ public final class Salle {
 
     /**
      * Copie des mobis de sol ; jamais null. Sans les dalles fictives de la
-     * grille dans le jeu (GrilleJeu), si G-Presets les a vues passer.
+     * grille dans le jeu, si le moteur de l'Atelier les a vues passer.
      */
     public static List<HFloorItem> sols() {
         FloorState s = etat();
@@ -201,7 +201,7 @@ public final class Salle {
     }
 
     /** PlaceObject depuis l'inventaire : "idInventaire x y rot" pour un mobi de sol. */
-    /** Format de G-Presets (GPresetImporter) : « -idInventaire x y rot ». */
+    /** Format du moteur de pose (GPresetImporter) : « -idInventaire x y rot ». */
     public static void poserSol(int idInventaire, int x, int y, int rot) {
         envoyer(new HPacket("PlaceObject", HMessage.Direction.TOSERVER,
                 "-" + Math.abs(idInventaire) + " " + x + " " + y + " " + rot));
@@ -226,7 +226,7 @@ public final class Salle {
 
     /**
      * Branche l'ecoute une seule fois. Les onglets sont construits AVANT que
-     * G-Presets soit embarque : on reessaie donc jusqu'a ce qu'il soit la.
+     * le moteur de l'Atelier soit demarre : on reessaie donc jusqu'a ce qu'il soit la.
      */
     public static synchronized void installer() {
         if (branche || enCours) return;
@@ -240,7 +240,7 @@ public final class Salle {
                             try { examiner(m); } catch (Throwable ignored) { }
                         });
                         branche = true;
-                        System.out.println("[Atelier] ecoute partagee des clics active.");
+                        Journal.debug("ecoute partagee des clics active.");
                         return;
                     } catch (Throwable ignored) { }
                 }

@@ -167,7 +167,12 @@ public final class Zone {
     }
 
     private static void prevenir() {
-        Platform.runLater(() -> { for (Runnable r : ecouteurs) r.run(); });
+        Platform.runLater(() -> {
+            for (Runnable r : ecouteurs) {
+                try { r.run(); }
+                catch (Throwable t) { System.err.println("[Atelier] zone : écouteur : " + t); }
+            }
+        });
     }
 
     /**

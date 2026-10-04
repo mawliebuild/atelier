@@ -31,7 +31,7 @@ import javafx.util.Duration;
  * c'est a toi de relancer : un proxy qui echoue aussitot relancerait sinon
  * la connexion en boucle.
  *
- * Le bouton du controleur de G-Earth est reutilise tel quel (fire) : toute sa
+ * Le bouton du controleur de connexion de l'Atelier est reutilise tel quel (fire) : toute sa
  * logique de connexion reste la sienne. On ne fait que renommer son libelle,
  * lie au systeme de traduction, d'ou le unbind.
  */
@@ -45,7 +45,7 @@ public class EcranConnexion {
     private final Button action = new Button();
 
     private final HConnection connexion;
-    private final Button boutonGEarth;
+    private final Button boutonConnexion;
     private final Runnable surConnectee, surDeconnectee;
 
     private boolean autoFait = false;
@@ -54,10 +54,10 @@ public class EcranConnexion {
     private boolean preparation = false, coupure = false;
     private double prisX, prisY;
 
-    public EcranConnexion(String css, HConnection connexion, Button boutonGEarth,
+    public EcranConnexion(String css, HConnection connexion, Button boutonConnexion,
                           Runnable surConnectee, Runnable surDeconnectee) {
         this.connexion = connexion;
-        this.boutonGEarth = boutonGEarth;
+        this.boutonConnexion = boutonConnexion;
         this.surConnectee = surConnectee;
         this.surDeconnectee = surDeconnectee;
 
@@ -115,7 +115,7 @@ public class EcranConnexion {
 
     /** Montre l'ecran, suit l'etat de la connexion, et clique « Se connecter ». */
     public void demarrer() {
-        if (boutonGEarth != null) boutonGEarth.textProperty().unbind();
+        if (boutonConnexion != null) boutonConnexion.textProperty().unbind();
         connexion.getStateObservable().addListener(
                 (ancien, nouveau) -> Platform.runLater(() -> appliquer(nouveau)));
         appliquer(connexion.getState());
@@ -139,17 +139,17 @@ public class EcranConnexion {
     }
 
     /**
-     * Le bouton de G-Earth reste desactive tant que son controleur n'a pas fini
+     * Le bouton de connexion reste desactive tant que son controleur n'a pas fini
      * de s'initialiser : on attend qu'il soit utilisable, puis on clique une fois.
      */
     private void cliquerQuandPret() {
         Timeline t = new Timeline();
         t.getKeyFrames().add(new KeyFrame(Duration.millis(300), e -> {
             if (autoFait) { t.stop(); return; }
-            if (boutonGEarth == null || boutonGEarth.isDisabled()) return;
+            if (boutonConnexion == null || boutonConnexion.isDisabled()) return;
             autoFait = true;
             t.stop();
-            // G-Earth peut avoir deja lance la connexion de lui-meme.
+            // Le proxy peut avoir deja lance la connexion de lui-meme.
             if (connexion.getState() == HState.NOT_CONNECTED) lancerConnexion();
         }));
         t.setCycleCount(Timeline.INDEFINITE);
@@ -157,34 +157,35 @@ public class EcranConnexion {
     }
 
     private void cliquer() {
-        if (boutonGEarth == null) return;
+        if (boutonConnexion == null) return;
         if (connexion.getState() == HState.NOT_CONNECTED) lancerConnexion();
-        else boutonGEarth.fire();
+        else boutonConnexion.fire();
     }
 
     /**
-     * Lance la connexion de G-Earth, apres avoir remis /etc/hosts et le cache
+     * Lance la connexion de l'Atelier, apres avoir remis /etc/hosts et le cache
      * DNS d'aplomb (GardeConnexion) : sans cela, une reconnexion juste apres
-     * une coupure pouvait faire boucler G-Earth sur lui-meme.
+     * une coupure pouvait faire boucler le proxy sur lui-meme.
      */
     private void lancerConnexion() {
-        if (boutonGEarth == null || preparation) return;
+        if (boutonConnexion == null || preparation) return;
         preparation = true;
         regler("Préparation de la connexion...", "", "Annuler");
         Salle.tache("garde-connexion", () -> {
             String r = GardeConnexion.assainir();
             Platform.runLater(() -> {
                 preparation = false;
-                if (r != null) InfoJeu.dire(r);
-                if (connexion.getState() == HState.NOT_CONNECTED && !boutonGEarth.isDisabled())
-                    boutonGEarth.fire();
+                // Avant la connexion : aucun appart, le jeu ne peut rien afficher -> console.
+                if (r != null) Journal.info(r);
+                if (connexion.getState() == HState.NOT_CONNECTED && !boutonConnexion.isDisabled())
+                    boutonConnexion.fire();
                 else appliquer(connexion.getState());
             });
         });
     }
 
     /**
-     * Coupe-circuit : si G-Earth boucle quand meme (threads par milliers), on
+     * Coupe-circuit : si le proxy boucle quand meme (threads par milliers), on
      * annule la tentative avant que la JVM n'atteigne la limite de macOS, puis
      * on relance une fois, proprement.
      */
@@ -195,8 +196,8 @@ public class EcranConnexion {
             int n = GardeConnexion.threads();
             if (n < 1500) return;
             coupure = true;
-            System.err.println("[Atelier] G-Earth boucle sur lui-meme (" + n + " threads) : tentative annulee.");
-            if (boutonGEarth != null) boutonGEarth.fire();     // « Annuler » pendant l'attente
+            System.err.println("[Atelier] Le proxy boucle sur lui-meme (" + n + " threads) : tentative annulee.");
+            if (boutonConnexion != null) boutonConnexion.fire();     // « Annuler » pendant l'attente
             javafx.animation.PauseTransition p = new javafx.animation.PauseTransition(Duration.seconds(4));
             p.setOnFinished(ev -> {
                 coupure = false;
@@ -212,6 +213,7 @@ public class EcranConnexion {
         if (etat == null) etat = HState.NOT_CONNECTED;
         switch (etat) {
             case CONNECTED:
+                if (!dejaConnectee) Journal.info("Connectée au jeu.");
                 regler("Connectée", "", "Se déconnecter");
                 dejaConnectee = true;
                 stage.hide();
@@ -235,6 +237,7 @@ public class EcranConnexion {
                 else
                     regler("Connexion à Habbo...", "", "Se connecter");
                 if (dejaConnectee) {
+                    Journal.info("Déconnectée du jeu.");
                     dejaConnectee = false;
                     surDeconnectee.run();
                     montrer();
@@ -244,8 +247,8 @@ public class EcranConnexion {
                         derniereReprise = System.currentTimeMillis();
                         javafx.animation.PauseTransition p = new javafx.animation.PauseTransition(Duration.seconds(2));
                         p.setOnFinished(ev -> {
-                            if (connexion.getState() == HState.NOT_CONNECTED && boutonGEarth != null
-                                    && !boutonGEarth.isDisabled()) lancerConnexion();
+                            if (connexion.getState() == HState.NOT_CONNECTED && boutonConnexion != null
+                                    && !boutonConnexion.isDisabled()) lancerConnexion();
                         });
                         p.play();
                     }
@@ -265,6 +268,6 @@ public class EcranConnexion {
         detail.setVisible(!d.isEmpty());
         detail.setManaged(!d.isEmpty());
         action.setText(libelle);
-        if (boutonGEarth != null) boutonGEarth.setText(libelle);
+        if (boutonConnexion != null) boutonConnexion.setText(libelle);
     }
 }

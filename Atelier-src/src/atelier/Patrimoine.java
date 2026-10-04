@@ -67,7 +67,7 @@ public final class Patrimoine {
     private static void travailler() {
         GPresets gp = null;
         while (gp == null) {
-            gp = AtelierLauncher.gpresets();
+            gp = AtelierLauncher.moteur();
             if (gp == null) dormir(1000);
         }
         ecouterIdentite(gp);

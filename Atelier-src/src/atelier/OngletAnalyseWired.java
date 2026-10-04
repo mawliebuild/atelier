@@ -23,7 +23,7 @@ import java.util.Map;
  * Rechercher.
  *
  * Les reglages de chaque wired sont lus par WiredLecteur (Open + reponse
- * bloquee, comme l'exporteur de G-Presets) puis gardes en cache par id.
+ * bloquee, comme l'export de l'Atelier) puis gardes en cache par id.
  * Tout est automatique : la lecture demarre seule en entrant dans une salle
  * et se complete seule quand un wired change ; les trois volets se
  * recalculent d'eux-memes. Chaque volet a sa petite ligne d'etat, car la
@@ -44,6 +44,8 @@ public class OngletAnalyseWired {
     // Verificateur
     private ListView<WiredAnalyse.Probleme> problemes;
     private Label resumeVerif, etatVerif;
+    /** Copie des problemes, lue hors fil JavaFX par MiseEnValeur (jamais la ListView). */
+    private volatile List<WiredAnalyse.Probleme> derniersProblemes = List.of();
 
     // Rechercher
     private ListView<WiredAnalyse.Resultat> resultats;
@@ -102,9 +104,12 @@ public class OngletAnalyseWired {
      * seule : « 42 wired lus », « Lecture… 12 / 42 », « Pas de droits wired ici. »
      */
     private Node bandeau() {
-        Label prog = Ui.etat();
-        prog.setText("Wired : " + WiredLecteur.message());
-        WiredLecteur.ecouterProgres(() -> prog.setText("Wired : " + WiredLecteur.message()));
+        // progression permanente : ligne discrete, sans passer par le Journal
+        Label prog = new Label("Wired : " + WiredLecteur.message());
+        prog.setWrapText(true);
+        prog.setMaxWidth(Double.MAX_VALUE);
+        prog.getStyleClass().add("etat-ligne");
+        WiredLecteur.ecouterProgres(() -> dire(prog, "Wired : " + WiredLecteur.message()));
         return prog;
     }
 
@@ -185,7 +190,7 @@ public class OngletAnalyseWired {
         Button zone = new Button("Prendre cette case comme zone");
         zone.setOnAction(e -> {
             Zone.definir(p.x, p.y, p.x, p.y);
-            dire(etatGraphe, "Zone définie sur la case " + p.caseTexte() + ".");
+            Journal.succes("Zone définie sur la case " + p.caseTexte() + ".");
         });
         boite.getChildren().add(zone);
     }
@@ -235,6 +240,15 @@ public class OngletAnalyseWired {
         resumeVerif.setWrapText(true);
         etatVerif = Ui.etat();
         problemes = new ListView<>();
+        // fenetre Wired ouverte : les wired des piles a probleme s'allument dans l'appart
+        MiseEnValeur.fournir("wired", () -> {
+            java.util.Set<Long> cases = new java.util.HashSet<>();
+            for (WiredAnalyse.Probleme q : derniersProblemes)
+                cases.add(((long) q.x << 32) | (q.y & 0xffffffffL));
+            if (cases.isEmpty()) return java.util.List.of();
+            return MiseEnValeur.solsOu(it -> cases.contains(((long) it.getTile().getX() << 32) | (it.getTile().getY() & 0xffffffffL))
+                    && Wired.estWired(Salle.classe(it.getTypeId(), false)));
+        });
         problemes.setPrefHeight(360);
         problemes.setMinHeight(200);
         VBox.setVgrow(problemes, Priority.ALWAYS);
@@ -259,7 +273,7 @@ public class OngletAnalyseWired {
             WiredAnalyse.Probleme q = problemes.getSelectionModel().getSelectedItem();
             if (q == null) return;
             Zone.definir(q.x, q.y, q.x, q.y);
-            dire(etatVerif, "Zone définie sur la case (" + q.x + "," + q.y + ").");
+            Journal.succes("Zone définie sur la case (" + q.x + "," + q.y + ").");
         });
 
         return volet(bandeau(),
@@ -310,7 +324,7 @@ public class OngletAnalyseWired {
             WiredAnalyse.Resultat r = resultats.getSelectionModel().getSelectedItem();
             if (r == null) return;
             Zone.definir(r.fil.x, r.fil.y, r.fil.x, r.fil.y);
-            dire(etatRecherche, "Zone définie sur la case " + r.fil.caseTexte() + ".");
+            Journal.succes("Zone définie sur la case " + r.fil.caseTexte() + ".");
         });
 
         return volet(bandeau(),
@@ -433,15 +447,18 @@ public class OngletAnalyseWired {
             WiredAnalyse.Pile p = graphe.choisie();
             remplirDetail(detail, p);
             if (detailGrand != null) remplirDetail(detailGrand, p);
-            dire(etatGraphe, !a.salle ? "Pas de salle ouverte."
+            dire(etatGraphe, a.erreur != null ? "Analyse des wired impossible : " + a.erreur
+                    : !a.salle ? "Pas de salle ouverte."
                     : a.piles.size() + " pile(s) · " + a.parId.size() + " wired · "
                       + a.liens.size() + " flèche(s)"
                       + (a.nbLus < a.parId.size() ? " · " + (a.parId.size() - a.nbLus)
-                         + " non lu(s) : flèches incomplètes" : ""));
+                         + " non lu(s) : flèches incomplètes" : "")
+                      + (a.nbIgnores > 0 ? " · " + a.nbIgnores + " wired ignoré(s), pas encore lisible(s)" : ""));
         } catch (Throwable t) { dire(etatGraphe, "Erreur d'affichage : " + t); }
 
         try {
             List<WiredAnalyse.Probleme> l = a.verifier();
+            derniersProblemes = List.copyOf(l);
             majListe(problemes, l, q -> q.gravite + "|" + q.x + "|" + q.y + "|" + q.texte);
             int err = 0, att = 0, inf = 0;
             for (WiredAnalyse.Probleme q : l) {

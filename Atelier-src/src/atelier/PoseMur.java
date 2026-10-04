@@ -12,7 +12,7 @@ import java.util.Set;
 /**
  * Pose un mobi mural a une position donnee, depuis l'inventaire ou le catalogue BC.
  *
- * Structures extraites du bytecode de G-Presets, pas devinees :
+ * Structures extraites du moteur de l'Atelier, pas devinees :
  *   PlaceObject                 (String "&lt;idInventaire&gt; :w=x,y l=oX,oY d")
  *   BuildersClubPlaceWallItem   (int pageId, int offerId, String etat, String position, false)
  */
@@ -31,7 +31,7 @@ public final class PoseMur {
 
     /**
      * @param dejaUtilises identifiants d'inventaire deja consommes dans la meme
-     *                     serie : la liste de G-Presets se met a jour de facon
+     *                     serie : la liste du moteur de l'Atelier se met a jour de facon
      *                     asynchrone, on tient donc le compte nous-memes.
      */
     public static Resultat poser(GPresets gp, int typeId, String etat, String position,
@@ -39,9 +39,10 @@ public final class PoseMur {
         if (source != Source.BC) {
             Integer idInv = prochainInventaire(gp, typeId, dejaUtilises);
             if (idInv != null) {
+                if (!envoyer(gp, new HPacket("PlaceObject", HMessage.Direction.TOSERVER,
+                        idInv + " " + position)))
+                    return new Resultat(false, "envoi refusé (connexion ?)");
                 dejaUtilises.add(idInv);
-                gp.sendToServer(new HPacket("PlaceObject", HMessage.Direction.TOSERVER,
-                        idInv + " " + position));
                 return new Resultat(true, "depuis l'inventaire");
             }
             if (source == Source.INVENTAIRE)
@@ -51,9 +52,14 @@ public final class PoseMur {
         BCCatalog.SingleFurniProduct p = produitBc(gp, typeId, etat);
         if (p == null) return new Resultat(false, "absent du catalogue BC");
 
-        gp.sendToServer(new HPacket("BuildersClubPlaceWallItem", HMessage.Direction.TOSERVER,
-                p.getPageId(), p.getOfferId(), p.getExtraParam(), position, false));
+        if (!envoyer(gp, new HPacket("BuildersClubPlaceWallItem", HMessage.Direction.TOSERVER,
+                p.getPageId(), p.getOfferId(), p.getExtraParam(), position, false)))
+            return new Resultat(false, "envoi refusé (connexion ?)");
         return new Resultat(true, "depuis le BC");
+    }
+
+    private static boolean envoyer(GPresets gp, HPacket p) {
+        try { return gp.sendToServer(p); } catch (Throwable t) { return false; }
     }
 
     private static Integer prochainInventaire(GPresets gp, int typeId, Set<Integer> deja) {

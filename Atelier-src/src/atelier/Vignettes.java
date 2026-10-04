@@ -61,7 +61,7 @@ public final class Vignettes {
 
     /** Furnidata et inventaire prets : sinon un echec ne veut rien dire. */
     private static boolean pret() {
-        GPresets gp = AtelierLauncher.gpresets();
+        GPresets gp = AtelierLauncher.moteur();
         try {
             return gp != null && gp.getFurniDataTools() != null && gp.getFurniDataTools().isReady()
                     && !gp.getInventory().getInventoryItems().isEmpty();
@@ -69,7 +69,7 @@ public final class Vignettes {
     }
 
     private static Image charger(String famille) {
-        GPresets gp = AtelierLauncher.gpresets();
+        GPresets gp = AtelierLauncher.moteur();
         if (gp == null) return null;
         try {
             furnidata.FurniDataTools fd = gp.getFurniDataTools();

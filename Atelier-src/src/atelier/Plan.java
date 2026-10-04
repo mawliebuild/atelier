@@ -390,7 +390,7 @@ public class Plan extends VBox {
 
     private void majSurvol() {
         Instantane d = donnees;
-        if (d == null) { survol.setText(Salle.gp() == null ? "G-Presets pas encore prêt."
+        if (d == null) { survol.setText(Salle.gp() == null ? "L'Atelier n'est pas encore prêt."
                 : "Pas dans une salle (ou plan pas encore reçu)."); return; }
         if (survolX < 0 && survolY < 0) { survol.setText("Survole la carte pour lire une case."); return; }
         int x = survolX, y = survolY;
@@ -423,7 +423,7 @@ public class Plan extends VBox {
             g.setFont(Font.font(12));
             g.setTextAlign(TextAlignment.CENTER);
             g.setTextBaseline(VPos.CENTER);
-            g.fillText(Salle.gp() == null ? "G-Presets pas encore prêt" : "Pas de salle à afficher", W / 2, H / 2);
+            g.fillText(Salle.gp() == null ? "L'Atelier n'est pas encore prêt" : "Pas de salle à afficher", W / 2, H / 2);
             return;
         }
         boolean avecGrille = grille.isSelected();

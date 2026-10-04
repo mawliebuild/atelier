@@ -27,6 +27,10 @@ import com.sun.jna.Structure;
  * principal de Cocoa sur macOS). La souris peut se lire de n'importe quel fil.
  * Rien ici ne leve d'exception : en cas d'echec, on renvoie false / null et
  * probleme() dit pourquoi.
+ *
+ * Sous Windows, les equivalents sont dans WindowsFenetres : hwnd(Stage) (meme
+ * astuce du titre unique), traversante(hwnd) (WS_EX_TRANSPARENT), monter(hwnd)
+ * (empilement HWND_TOPMOST au lieu des niveaux NSWindow).
  */
 final class GrilleTraitsMac {
 

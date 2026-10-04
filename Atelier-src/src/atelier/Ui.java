@@ -19,12 +19,6 @@ public final class Ui {
 
     public static final double DANS_BLOC  = 6;
 
-    private static final java.util.regex.Pattern REUSSITE = java.util.regex.Pattern.compile(
-            "(termin|copi|réussi|traitée|posé|appliqu|enregistr|à jour|prêt|rétabli|annulé)",
-            java.util.regex.Pattern.CASE_INSENSITIVE | java.util.regex.Pattern.UNICODE_CASE);
-    private static final java.util.regex.Pattern ECHEC = java.util.regex.Pattern.compile(
-            "(échec|erreur|impossible|refus|aucun|pas encore|sans réponse|0 )",
-            java.util.regex.Pattern.CASE_INSENSITIVE | java.util.regex.Pattern.UNICODE_CASE);
     public static final double ENTRE_BLOCS = 18;
 
     private Ui() { }
@@ -175,37 +169,80 @@ public final class Ui {
     }
 
     public static Label etiquette(String texte) {
-        Label l = new Label(texte);
+        Label l = new Label(WindowsClavier.texte(texte));
         l.setStyle("-fx-font-weight: bold;");
         return l;
     }
 
     /** Valeur mise en avant : c'est le sujet sur lequel on travaille. */
     public static Label valeur(String texte) {
-        Label l = new Label(texte);
+        Label l = new Label(WindowsClavier.texte(texte));
         l.setStyle("-fx-font-size: 13px; -fx-font-weight: bold;");
         return l;
     }
 
-    /** Ligne d'etat : presente mais jamais dominante. */
     /**
-     * Ligne d'etat : un encadre comme les notes de la maquette (jaune), qui
-     * n'occupe aucune place tant qu'il n'y a rien a dire.
+     * Ligne d'etat d'une fenetre : texte discret, sans encadre, qui n'occupe
+     * aucune place tant qu'il n'y a rien a dire. Elle ne garde que la
+     * progression et les consignes. Les RESULTATS (succes, erreur) partent
+     * dans le jeu et la console (Journal) ; hors d'un appart, ou le jeu ne
+     * peut pas les afficher, ils restent ici.
      */
     public static Label etat() {
         Label l = new Label("");
         l.setWrapText(true);
         l.setMaxWidth(Double.MAX_VALUE);
-        l.getStyleClass().add("note");
-        // Vert quand c'est une reussite, jaune sinon (comme les notes de la maquette).
+        l.getStyleClass().add("etat-ligne");
+        javafx.beans.property.BooleanProperty montre = new javafx.beans.property.SimpleBooleanProperty(false);
         l.textProperty().addListener((o, a, b) -> {
-            boolean ok = b != null && REUSSITE.matcher(b).find() && !ECHEC.matcher(b).find();
-            if (ok) { if (!l.getStyleClass().contains("reussite")) l.getStyleClass().add("reussite"); }
-            else l.getStyleClass().remove("reussite");
+            // pas de « (s) » : accorde selon le nombre (rappelle l'ecouteur une fois)
+            String c = accorder(b);
+            if (c != null && !c.equals(b) && !l.textProperty().isBound()) { l.setText(c); return; }
+            if (c != null) b = c;   // texte lie (bind) : on classe la version accordee
+            if (b == null || b.isBlank()) { montre.set(false); return; }
+            // genre donne par Ui.succes / Ui.erreur, sinon devine sur le texte
+            Object force = l.getProperties().remove(GENRE_ETAT);
+            Journal.Genre g = force instanceof Journal.Genre ? (Journal.Genre) force : Journal.genre(b);
+            boolean resultat = g == Journal.Genre.SUCCES || g == Journal.Genre.ERREUR;
+            if (resultat) {
+                if (g == Journal.Genre.ERREUR) Journal.erreur(b); else Journal.succes(b);
+            } else if (g == Journal.Genre.INFO) Journal.debug(b);
+            montre.set(!resultat || !Salle.dansUneSalle());
         });
-        l.visibleProperty().bind(l.textProperty().isNotEmpty());
+        l.visibleProperty().bind(montre);
         l.managedProperty().bind(l.visibleProperty());
         return l;
+    }
+
+    private static final String GENRE_ETAT = "atelier.etat.genre";
+
+    /**
+     * Resultat reussi d'une action, dans une ligne d'etat faite par Ui.etat() :
+     * le genre est dit, pas devine sur le texte. Appelable depuis n'importe quel fil.
+     */
+    public static void succes(Label etat, String m) { resultat(etat, m, Journal.Genre.SUCCES); }
+
+    /** Echec d'une action, dans une ligne d'etat faite par Ui.etat(). */
+    public static void erreur(Label etat, String m) { resultat(etat, m, Journal.Genre.ERREUR); }
+
+    /** Echec avec sa cause : la trace complete va dans la console. */
+    public static void erreur(Label etat, String m, Throwable t) {
+        if (t != null) t.printStackTrace();
+        erreur(etat, t == null ? m : m + " (" + t.getClass().getSimpleName()
+                + (t.getMessage() == null ? "" : " : " + t.getMessage()) + ")");
+    }
+
+    private static void resultat(Label etat, String m, Journal.Genre g) {
+        if (etat == null || m == null || m.isBlank()) return;
+        if (!javafx.application.Platform.isFxApplicationThread()) {
+            javafx.application.Platform.runLater(() -> resultat(etat, m, g));
+            return;
+        }
+        // le meme resultat deux fois de suite doit etre redit : on vide d'abord
+        if (accorder(m).equals(etat.getText())) etat.setText("");
+        etat.getProperties().put(GENRE_ETAT, g);
+        etat.setText(m);
+        etat.getProperties().remove(GENRE_ETAT);
     }
 
     /** Les polices du jeu (Ubuntu), embarquees dans l'Atelier. A appeler au demarrage. */
@@ -230,7 +267,7 @@ public final class Ui {
 
     /** Texte discret, en italique gris, qui reste en place. */
     public static Label discret(String texte) {
-        Label l = new Label(texte);
+        Label l = new Label(WindowsClavier.texte(texte));
         l.setWrapText(true);
         l.setStyle("-fx-opacity: 0.6; -fx-font-style: italic;");
         return l;
@@ -286,6 +323,47 @@ public final class Ui {
     }
 
     /** Premiere lettre en majuscule (« chargé » -> « Chargé »). */
+    /**
+     * Accorde les « (s) » d'un message selon le nombre qui precede : « 1 dalle(s)
+     * posée(s) » -> « 1 dalle posée », « 3 dalle(s) » -> « 3 dalles ». Aussi
+     * « mural(aux) » -> mural / muraux et « niveau(x) ». Sans nombre dans la
+     * phrase, on met le pluriel. 0 et 1 : singulier (comme en francais).
+     */
+    public static String accorder(String t) {
+        t = WindowsClavier.texte(t);   // noms des touches selon la plateforme (Option -> Alt sous Windows)
+        if (t == null || t.indexOf('(') < 0) return t;
+        java.util.regex.Matcher m = ACCORD.matcher(t);
+        StringBuilder r = new StringBuilder();
+        long dernier = -1;
+        int fin = 0;
+        while (m.find()) {
+            r.append(t, fin, m.start());
+            fin = m.end();
+            if (m.group(1) != null) {                       // un nombre
+                try { dernier = Long.parseLong(m.group(1).replace(" ", "")); } catch (NumberFormatException e) { dernier = -1; }
+                r.append(m.group());
+            } else if (m.group(2) != null) {                // fin de phrase : on oublie le nombre
+                dernier = -1;
+                r.append(m.group());
+            } else {
+                String mot = m.group(3), suffixe = m.group(4);
+                boolean pluriel = dernier < 0 || dernier >= 2;
+                switch (suffixe) {
+                    case "aux": r.append(pluriel && mot.endsWith("al") ? mot.substring(0, mot.length() - 2) + "aux" : mot); break;
+                    case "x":   r.append(pluriel ? mot + "x" : mot); break;
+                    case "es":  r.append(pluriel ? mot + "es" : mot); break;
+                    case "e":   r.append(mot); break;
+                    default:    r.append(pluriel ? mot + "s" : mot);
+                }
+            }
+        }
+        r.append(t.substring(fin));
+        return r.toString();
+    }
+
+    private static final java.util.regex.Pattern ACCORD = java.util.regex.Pattern.compile(
+            "(\\d[\\d\u202f\u00a0]*)|([.!?;](?:\\s|$))|([\\p{L}'’]+)\\((s|x|aux|es|e)\\)");
+
     public static String majuscule(String t) {
         if (t == null || t.isEmpty()) return t;
         int i = 0;

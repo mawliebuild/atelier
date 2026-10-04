@@ -102,7 +102,7 @@ public class OutilCompteur {
             final Comptage r = c; final String e = err;
             Platform.runLater(() -> {
                 enCours = false;
-                if (e != null) { etat.setText("Erreur de comptage : " + e); return; }
+                if (e != null) { derniereNote = null; etat.setText("Erreur de comptage : " + e); return; }
                 appliquer(r);
             });
         });
@@ -201,7 +201,8 @@ public class OutilCompteur {
             resume.setText("—");
             details.setText("");
             liste.getItems().clear();
-            etat.setText(Salle.gp() == null ? "G-Presets pas encore prêt." : "Pas dans une salle.");
+            derniereNote = null;
+            etat.setText(Salle.gp() == null ? "L'Atelier n'est pas encore prêt." : "Pas dans une salle.");
             return;
         }
         boolean change = dernier == null || dernier.signature != c.signature;
@@ -210,11 +211,17 @@ public class OutilCompteur {
                 : "Toute la salle") + " : " + (c.sols + c.murs) + " mobis");
         details.setText(texteDetails(c));
         if (change) afficherTypes();
-        String note = "Mis à jour à " + java.time.LocalTime.now().withNano(0) + ".";
-        if (seulementZone.isSelected() && !Zone.definie()) note = "Aucune zone définie : toute la salle est comptée. " + note;
-        if (!Salle.furnidataPrete()) note = "Furnidata pas encore chargée : noms techniques, BC/rares inconnus. " + note;
-        etat.setText(note);
+        // Pas d'heure ni de « mis a jour » : la ligne d'etat ne change que si
+        // la remarque change, pour ne pas effacer le resultat d'une action (Copier).
+        String note = "";
+        if (seulementZone.isSelected() && !Zone.definie()) note = "Aucune zone définie : toute la salle est comptée.";
+        if (!Salle.furnidataPrete()) note = "La furnidata n'est pas encore là : noms techniques, BC et rares inconnus. " + note;
+        note = note.trim();
+        if (!note.equals(derniereNote)) { derniereNote = note; etat.setText(note); }
     }
+
+    /** Derniere remarque automatique ecrite dans l'etat (pour ne pas la reecrire toutes les 2 s). */
+    private String derniereNote = null;
 
     private static String texteDetails(Comptage c) {
         StringBuilder sb = new StringBuilder();

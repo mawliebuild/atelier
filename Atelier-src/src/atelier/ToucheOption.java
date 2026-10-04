@@ -4,7 +4,9 @@ import com.sun.jna.Library;
 import com.sun.jna.Native;
 
 /**
- * Sait si la touche Option (Alt) ou Tab est enfoncee, a l'instant ou on le demande.
+ * Sait si la touche Option (Alt sous Windows), Tab ou Echap est enfoncee, a
+ * l'instant ou on le demande. Sous Windows : GetAsyncKeyState (WindowsClavier) ;
+ * AltGr (Ctrl gauche + Alt droit sur un clavier francais) ne compte pas comme Alt.
  *
  * Le modificateur n'apparait PAS dans les paquets Habbo : depuis le proxy, un
  * Option+clic et un clic simple sont identiques. Il faut donc interroger le
@@ -12,7 +14,7 @@ import com.sun.jna.Native;
  * modificateurs courants — sans demander l'autorisation d'accessibilite, contrairement
  * a un CGEventTap.
  *
- * Necessite un JNA avec bibliotheque native arm64 : celui livre avec G-Earth
+ * Necessite un JNA avec bibliotheque native arm64 : celui livre avec la connexion de l'Atelier
  * (5.4.0) n'a que i386 et x86_64, d'ou l'UnsatisfiedLinkError observe. Les
  * dependances de l'Atelier embarquent desormais JNA 5.19.1, qui a darwin-aarch64.
  *
@@ -28,16 +30,10 @@ public final class ToucheOption {
         byte CGEventSourceKeyState(int stateID, short touche);   // bool C : un octet
     }
 
-    /** Equivalent Windows : Alt tient le role d'Option. */
-    private interface User32 extends Library {
-        short GetAsyncKeyState(int vKey);
-    }
-
-    private static final int VK_MENU = 0x12;   // touche Alt
-    private static final int VK_TAB = 0x09;
     /** kVK_Tab : code PHYSIQUE, le meme en AZERTY et en QWERTY. */
     private static final short MAC_TAB = 48;
-    private static User32 user32;
+    /** Windows : GetAsyncKeyState par WindowsClavier (Alt tient le role d'Option, AltGr exclu). */
+    private static boolean windows = false;
 
     private static final int ETAT_SESSION_COMBINEE = 0;      // kCGEventSourceStateCombinedSessionState
     private static final long MASQUE_ALT           = 0x00080000L;  // kCGEventFlagMaskAlternate
@@ -54,22 +50,20 @@ public final class ToucheOption {
         try {
             if (cg != null)
                 return (cg.CGEventSourceFlagsState(ETAT_SESSION_COMBINEE) & MASQUE_ALT) != 0;
-            if (user32 != null)
-                return (user32.GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
+            if (windows) return WindowsClavier.alt();
         } catch (Throwable ignored) { }
         return false;
     }
 
     /** kVK_Escape : code physique de la touche Echap. */
     private static final short MAC_ECHAP = 53;
-    private static final int VK_ESCAPE = 0x1B;
 
     /** true si la touche Echap est enfoncee maintenant (lecture seule : rien n'est vole). */
     public static boolean echap() {
         charger();
         try {
             if (cg != null) return cg.CGEventSourceKeyState(ETAT_SESSION_COMBINEE, MAC_ECHAP) != 0;
-            if (user32 != null) return (user32.GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0;
+            if (windows) return WindowsClavier.enfoncee(WindowsClavier.VK_ESCAPE);
         } catch (Throwable ignored) { }
         return false;
     }
@@ -79,7 +73,7 @@ public final class ToucheOption {
         charger();
         try {
             if (cg != null) return cg.CGEventSourceKeyState(ETAT_SESSION_COMBINEE, MAC_TAB) != 0;
-            if (user32 != null) return (user32.GetAsyncKeyState(VK_TAB) & 0x8000) != 0;
+            if (windows) return WindowsClavier.enfoncee(WindowsClavier.VK_TAB);
         } catch (Throwable ignored) { }
         return false;
     }
@@ -87,7 +81,7 @@ public final class ToucheOption {
     /** true si la detection fonctionne sur cette machine. */
     public static boolean disponible() {
         charger();
-        return cg != null || user32 != null;
+        return cg != null || windows;
     }
 
     /** Raison de l'indisponibilite, ou null. */
@@ -101,14 +95,11 @@ public final class ToucheOption {
         tente = true;
         String os = System.getProperty("os.name", "").toLowerCase();
         if (os.contains("win")) {
-            try {
-                user32 = Native.load("user32", User32.class);
-                user32.GetAsyncKeyState(VK_MENU);
-                System.out.println("[Atelier] detection de la touche Alt active (Windows).");
-            } catch (Throwable t) {
-                user32 = null;
-                probleme = String.valueOf(t);
-                System.err.println("[Atelier] detection Alt indisponible : " + t);
+            windows = WindowsClavier.disponible();
+            if (windows) Journal.debug("detection de la touche Alt active (Windows).");
+            else {
+                probleme = String.valueOf(WindowsClavier.probleme());
+                System.err.println("[Atelier] detection Alt indisponible : " + probleme);
             }
             return null;
         }
@@ -123,7 +114,7 @@ public final class ToucheOption {
             // Un appel a blanc : si la bibliotheque native manque pour cette
             // architecture, l'erreur tombe ici et pas au premier clic.
             cg.CGEventSourceFlagsState(ETAT_SESSION_COMBINEE);
-            System.out.println("[Atelier] detection de la touche Option active.");
+            Journal.debug("detection de la touche Option active.");
         } catch (Throwable t) {
             cg = null;
             probleme = String.valueOf(t);

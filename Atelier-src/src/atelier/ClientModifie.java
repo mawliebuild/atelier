@@ -22,6 +22,13 @@ import java.util.regex.Pattern;
  * /var/root, donc on reconstruit les chemins a partir de SUDO_USER, et on
  * lance les scripts AU NOM de l'utilisatrice (sudo -u), pour que les
  * fichiers du Launcher et de travail ne deviennent pas la propriete de root.
+ *
+ * Windows : pas de sudo, pas de Habbo.app. Le client est
+ * %APPDATA%\Habbo Launcher\downloads\air\<version>\...\HabboAir.swf, et tout passe
+ * par Atelier-swf\modifier-jeu.py (le meme que lance « Lancer l'Atelier.bat ») :
+ * il garde l'original, construit les modifs pour CETTE version et les installe ;
+ * --restaurer remet l'original. Python et Java sont ceux embarques dans le
+ * dossier de l'Atelier.
  */
 public final class ClientModifie {
 
@@ -60,7 +67,33 @@ public final class ClientModifie {
         return f.isDirectory() ? f : new File(System.getProperty("user.home"));
     }
 
-    public static File dossierSwf() { return new File(maison(), "Documents/Atelier-swf"); }
+    /**
+     * Le dossier de l'Atelier (celui d'Atelier.jar : Documents\Atelier sous
+     * Windows, ou le lanceur l'installe), ou null s'il est introuvable.
+     */
+    static File dossierAtelier() {
+        try {
+            File f = new File(ClientModifie.class.getProtectionDomain().getCodeSource().getLocation().toURI());
+            if (f.isFile()) f = f.getParentFile();
+            if (f != null && new File(f, "Atelier.jar").isFile()) return f;
+        } catch (Throwable ignored) { }
+        File d = new File(System.getProperty("user.dir", ""));
+        if (new File(d, "Atelier.jar").isFile()) return d;
+        d = new File(maison(), "Documents/Atelier");
+        return d.isDirectory() ? d : null;
+    }
+
+    public static File dossierSwf() {
+        if (WINDOWS) {
+            // a cote du dossier de l'Atelier (le lanceur copie les deux dans Documents)
+            File a = dossierAtelier();
+            if (a != null && a.getParentFile() != null) {
+                File s = new File(a.getParentFile(), "Atelier-swf");
+                if (s.isDirectory()) return s;
+            }
+        }
+        return new File(maison(), "Documents/Atelier-swf");
+    }
 
     public static File dossierLauncher() {
         if (WINDOWS) {
@@ -73,20 +106,19 @@ public final class ClientModifie {
     public static File appJeu() {
         File v = new File(dossierLauncher(), "downloads/air/" + VERSION_PREVUE);
         if (!WINDOWS) return new File(v, "Habbo.app");
-        // Windows : les numeros de version ne suivent pas ceux du Mac (13, 15...). On prend
-        // le dossier dont le client est celui prevu (d'origine ou deja modifie), sinon le plus recent.
-        File[] l = new File(dossierLauncher(), "downloads/air").listFiles(File::isDirectory);
-        if (l == null || l.length == 0) return v;
-        String origine = empreinte(swfOrigine()), pret = empreinte(swfPret());
+        // Windows : les numeros de version ne suivent pas ceux du Mac. modifier-jeu.py
+        // adapte chaque client installe ; on lit le plus recent qui a un HabboAir.swf.
+        return appJeuWindows(new File(dossierLauncher(), "downloads/air").listFiles(File::isDirectory), v);
+    }
+
+    /** Logique pure : le dossier de version au plus grand numero qui contient le client, sinon v. */
+    static File appJeuWindows(File[] l, File v) {
         File recent = null;
-        for (File d : l) {
-            File swf = new File(d, "HabboAir.swf");
-            if (!swf.isFile()) swf = chercher(d, "HabboAir.swf", 4);
-            if (swf == null) continue;
-            String e = empreinte(swf);
-            if (e != null && (e.equals(origine) || e.equals(pret))) return d;
-            if (recent == null || numero(d) > numero(recent)) recent = d;
-        }
+        if (l != null)
+            for (File d : l) {
+                if (!new File(d, "HabboAir.swf").isFile() && chercher(d, "HabboAir.swf", 4) == null) continue;
+                if (recent == null || numero(d) > numero(recent)) recent = d;
+            }
         return recent != null ? recent : v;
     }
 
@@ -94,48 +126,106 @@ public final class ClientModifie {
         try { return Integer.parseInt(d.getName().replaceAll("\\D", "")); } catch (Exception e) { return -1; }
     }
 
-    /** Le client modifie deja construit (livre dans le paquet) : toutes les modifs. */
+    /** Le client modifie deja construit (livre dans le paquet) : toutes les modifs. Mac seulement. */
     public static File swfPret() {
-        if (WINDOWS) { String v = versionWindows(); if (v != null) return new File(dossierSwf(), "travail/HabboAir-atelier-win-" + v + ".swf"); }
         return new File(dossierSwf(), "travail/HabboAir-atelier.swf");
     }
 
-    /**
-     * Windows : le client Habbo n'a pas la meme version que sur Mac (15 au lieu de 16).
-     * Le paquet fournit, pour chaque version Windows prevue, l'original
-     * (origines/HabboAir-win-N.swf) et sa version modifiee (travail/HabboAir-atelier-win-N.swf).
-     * On prend la version dont l'un ou l'autre est identique au client installe ;
-     * a defaut, la plus recente fournie.
-     */
-    private static volatile String versionWin = null;
+    // ------------------------------------------------------------ Windows : modifier-jeu.py
 
-    static String versionWindows() {
-        if (versionWin != null) return versionWin;
-        File[] l = new File(dossierSwf(), "origines").listFiles((d, n) -> n.matches("HabboAir-win-\\d+\\.swf"));
-        if (l == null || l.length == 0) return null;
-        String recente = null;
-        for (File o : l) {
-            String v = o.getName().replaceAll("\\D", "");
-            if (recente == null || Integer.parseInt(v) > Integer.parseInt(recente)) recente = v;
+    /** Le script qui adapte et installe les modifs pour le client de cet ordinateur. */
+    static File scriptJeu() { return new File(dossierSwf(), "modifier-jeu.py"); }
+
+    /** Son journal (le detail d'un echec). */
+    static File journalJeu() { return new File(dossierSwf(), "modifier-jeu.log"); }
+
+    /**
+     * Une seule voie pour modifier le jeu : modifier-jeu.py (s'adapte a chaque
+     * version), lance par le Python embarque. Sur un Mac sans Python embarque
+     * (poste de dev), on garde l'ancienne voie construire.py + installer-mod.sh.
+     */
+    static boolean parScript() { return WINDOWS || (pythonEmbarque() != null && scriptJeu().isFile()); }
+
+    /** Python embarque de l'Atelier (Windows : <Atelier>\python\python.exe), ou null. */
+    static File pythonEmbarque() {
+        File a = dossierAtelier();
+        if (a == null) return null;
+        File p = new File(a, WINDOWS ? "python/python.exe" : "python/python/bin/python3");
+        return p.isFile() ? p : null;
+    }
+
+    /**
+     * Logique pure : la commande qui lance modifier-jeu.py (avec --restaurer
+     * pour remettre l'original).
+     */
+    static List<String> commandeScript(String python, String script, boolean restaurer) {
+        List<String> c = new ArrayList<>();
+        c.add(python);
+        c.add(script);
+        if (restaurer) c.add("--restaurer");
+        return c;
+    }
+
+    /**
+     * Logique pure : le message de resultat de modifier-jeu.py d'apres son
+     * code de sortie (0 bien, 2 Habbo ouvert, autre : souci) et sa derniere ligne.
+     */
+    static String bilanScript(int code, String derniere, boolean restaurer, String journal) {
+        String l = derniere == null ? "" : derniere.replaceFirst("^(OK|!|…)\\s*", "").trim();
+        if (code == 0) return !l.isEmpty() ? l
+                : restaurer ? "Jeu d'origine remis." : "Modifs du jeu installées.";
+        if (code == 2) return "Habbo est ouvert : ferme-le puis recommence.";
+        return (restaurer ? "Échec de la remise du jeu d'origine" : "Échec de l'installation des modifs du jeu")
+                + (l.isEmpty() ? "" : " : " + l) + ". Détail dans " + journal + ".";
+    }
+
+    /** Lance modifier-jeu.py (Windows, et Mac avec Python embarque) et dit le resultat. */
+    private static Resultat script(boolean restaurer, Consumer<String> ligne) {
+        File py = pythonEmbarque();
+        String python = py != null ? py.getPath() : python();
+        if (python == null) {
+            String m = "Python embarqué introuvable (" + new File(dossierAtelier() == null ? new File("Atelier")
+                    : dossierAtelier(), WINDOWS ? "python\\python.exe" : "python/python/bin/python3") + ") : re-télécharge le paquet complet de l'Atelier.";
+            Journal.erreur(m);
+            return new Resultat(1, m);
         }
-        File[] dossiers = new File(dossierLauncher(), "downloads/air").listFiles(File::isDirectory);
-        if (dossiers != null) for (File d : dossiers) {
-            File swf = new File(d, "HabboAir.swf");
-            if (!swf.isFile()) swf = chercher(d, "HabboAir.swf", 4);
-            if (swf == null) continue;
-            String e = empreinte(swf);
-            for (File o : l) {
-                String v = o.getName().replaceAll("\\D", "");
-                if (e != null && (e.equals(empreinte(o))
-                        || e.equals(empreinte(new File(dossierSwf(), "travail/HabboAir-atelier-win-" + v + ".swf")))))
-                    return versionWin = v;
-            }
-        }
-        return versionWin = recente;
+        Resultat r = lancer(commandeScript(python, scriptJeu().getPath(), restaurer), ligne);
+        String m = bilanScript(r.code, r.derniereLigne(), restaurer, journalJeu().getPath());
+        if (r.code == 0) Journal.succes(m); else Journal.erreur(m);
+        return new Resultat(r.code, r.sortie + m + "\n");
+    }
+
+    /**
+     * Windows : l'original garde par modifier-jeu.py (etat-jeu.json ->
+     * origines/HabboAir-<12 premiers caracteres>.swf) ; si le client installe
+     * n'est pas modifie, c'est lui l'original.
+     */
+    private static File swfOrigineWindows() {
+        File inst = swfInstalle();
+        String h = empreinte(inst);
+        if (h == null) return new File(dossierSwf(), "origines/HabboAir-inconnu.swf");
+        try {
+            String s = new String(Files.readAllBytes(new File(dossierSwf(), "etat-jeu.json").toPath()), StandardCharsets.UTF_8);
+            String o = origineDansEtat(s, h);
+            if (o != null) return new File(dossierSwf(), "origines/HabboAir-" + o.substring(0, Math.min(12, o.length())) + ".swf");
+        } catch (Exception ignored) { }
+        return inst;
+    }
+
+    /** Logique pure : dans etat-jeu.json, l'empreinte de l'original du client modifie « h », ou null. */
+    static String origineDansEtat(String json, String h) {
+        try {
+            org.json.JSONObject m = new org.json.JSONObject(json).optJSONObject("modifies");
+            if (m == null || !m.has(h)) return null;
+            Object v = m.get(h);
+            if (v instanceof org.json.JSONObject) return ((org.json.JSONObject) v).optString("origine", null);
+            return v instanceof String ? (String) v : null;
+        } catch (Exception e) { return null; }
     }
 
     /** Le client installe est-il celui pour lequel les modifs sont faites (d'origine ou deja modifie par nous) ? */
     public static boolean clientPrevu() {
+        if (WINDOWS) return swfInstalle().isFile();     // modifier-jeu.py s'adapte a chaque version
         String e = empreinte(swfInstalle());
         if (e == null) return false;
         return e.equals(empreinte(swfOrigine())) || e.equals(empreinte(swfPret()))
@@ -159,9 +249,6 @@ public final class ClientModifie {
         return null;
     }
 
-    /** Windows : copie du client d'origine, faite avant la premiere installation. */
-    private static File sauvegardeWindows() { return new File(dossierSwf(), "HabboAir-origine-windows.swf"); }
-
     // ------------------------------------------------- ce que sait le client installe
 
     private static volatile String cleLueur = "";
@@ -171,6 +258,13 @@ public final class ClientModifie {
     private static volatile boolean zone = false;
     private static volatile boolean dalles = false;
     private static volatile boolean annuler = false;
+    private static volatile boolean cases = false;
+
+    /** Le client installe sait-il le mode Cases (« atelier:cases= », clics dans le vide) ? */
+    public static boolean saitCases() {
+        saitSurligner();
+        return cases;
+    }
 
     /** Le client installe sait-il annuler un deplacement (« atelier:annuler », Echap) ? */
     public static boolean saitAnnuler() {
@@ -216,7 +310,13 @@ public final class ClientModifie {
         File f = swfInstalle();
         String cle = f.lastModified() + ":" + f.length();
         if (cle.equals(cleLueur)) return lueur;
-        boolean r = false, cap = false, gr = false, zo = false, da = false, an = false;
+        return lireClient(f, cle);
+    }
+
+    /** Une seule lecture du SWF a la fois (il pese des dizaines de Mo une fois decompresse). */
+    private static synchronized boolean lireClient(File f, String cle) {
+        if (cle.equals(cleLueur)) return lueur;          // lu entre-temps par un autre fil
+        boolean r = false, cap = false, gr = false, zo = false, da = false, an = false, ca = false;
         try {
             byte[] tout = java.nio.file.Files.readAllBytes(f.toPath());
             byte[] corps = tout;
@@ -239,8 +339,9 @@ public final class ClientModifie {
             zo = contient(corps, "atelier:zone=".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
             da = contient(corps, "atelier:dalles=".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
             an = contient(corps, "atelier:annuler".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+            ca = contient(corps, "atelier:cases=".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
         } catch (Throwable t) {
-            System.out.println("[Atelier] Lecture du client impossible (" + t + ") : sélection en clignotement.");
+            Journal.debug("Lecture du client impossible (" + t + ") : sélection en clignotement.");
         }
         lueur = r;
         capture = cap;
@@ -248,8 +349,9 @@ public final class ClientModifie {
         zone = zo;
         dalles = da;
         annuler = an;
+        cases = ca;
         cleLueur = cle;
-        System.out.println("[Atelier] Client du jeu : " + (r ? "mise en valeur de la sélection disponible."
+        Journal.debug("Client du jeu : " + (r ? "mise en valeur de la sélection disponible."
                 : "pas de mise en valeur de la sélection (client d'origine ou ancienne version) : clignotement."));
         return r;
     }
@@ -264,12 +366,17 @@ public final class ClientModifie {
     }
 
     public static File swfOrigine() {
-        if (WINDOWS) { String v = versionWindows(); if (v != null) return new File(dossierSwf(), "origines/HabboAir-win-" + v + ".swf"); }
+        if (WINDOWS) return swfOrigineWindows();
         return new File(dossierSwf(), "Habbo.app.origine/Contents/Resources/HabboAir.swf");
     }
 
-    /** Le SWF fabrique par l'Atelier (a part, pour ne pas ecraser les essais faits a la main). */
+    /**
+     * Le SWF fabrique par l'Atelier (a part, pour ne pas ecraser les essais faits a la main).
+     * Windows : rien n'est fabrique a l'avance, modifier-jeu.py construit et installe
+     * d'un coup ; on rend donc le script lui-meme (il existe quand tout est pret).
+     */
     public static File swfConstruit() {
+        if (parScript()) return scriptJeu();
         return new File(dossierSwf(), "travail/HabboAir-atelier-parametres.swf");
     }
 
@@ -296,6 +403,13 @@ public final class ClientModifie {
     public static String manque() {
         File d = dossierSwf();
         if (!d.isDirectory()) return "Dossier introuvable : " + d + ".";
+        if (parScript()) {
+            for (String s : new String[]{"modifier-jeu.py", "construire.py"})
+                if (!new File(d, s).isFile()) return "Script introuvable : " + new File(d, s) + ".";
+            if (pythonEmbarque() == null && python() == null)
+                return "Python embarqué introuvable dans le dossier de l'Atelier : re-télécharge le paquet complet.";
+            return null;
+        }
         for (String s : WINDOWS ? new String[]{"construire.py"} : new String[]{"construire.py", "installer-mod.sh", "restaurer.sh"})
             if (!new File(d, s).isFile()) return "Script introuvable : " + new File(d, s) + ".";
         if (!swfOrigine().isFile()) return "Client d'origine introuvable : " + swfOrigine() + ".";
@@ -332,7 +446,7 @@ public final class ClientModifie {
      * annoncee). Un avertissement si ce n'est pas la 16, sinon null.
      */
     public static String avertissementVersion() {
-        if (WINDOWS) return null;           // Windows : autres numeros ; clientPrevu() compare le fichier lui-meme
+        if (parScript()) return null;       // modifier-jeu.py s'adapte a chaque version : pas d'avertissement
         File f = new File(dossierLauncher(), "versions.json");
         if (!f.isFile()) return null;
         try {
@@ -358,7 +472,7 @@ public final class ClientModifie {
                 return "Le Launcher annonce la version " + annoncee + " du client. La modification est faite "
                         + "pour la version " + VERSION_PREVUE + " : après la mise à jour, il faudra l'adapter.";
         } catch (Exception e) {
-            System.out.println("[Atelier] Lecture de versions.json : " + e);
+            Journal.debug("Lecture de versions.json : " + e);
         }
         return null;
     }
@@ -400,6 +514,9 @@ public final class ClientModifie {
     }
 
     public static Resultat construire(List<String> sans, Consumer<String> ligne) {
+        // Windows : modifier-jeu.py construit (toutes les modifs) et installe d'un coup, dans installer().
+        if (parScript()) return dire(0, sans.isEmpty() ? "Modifs du jeu prêtes à installer."
+                : "Toutes les modifs du jeu sont installées (le choix n'est pas encore possible).", ligne);
         // Toutes les modifs : le client deja construit suffit, pas besoin de Python.
         if (sans.isEmpty() && swfPret().isFile()) {
             try {
@@ -424,7 +541,7 @@ public final class ClientModifie {
     }
 
     public static Resultat installer(Consumer<String> ligne) {
-        if (WINDOWS) return installerWindows(ligne);
+        if (parScript()) return script(false, ligne);
         List<String> c = new ArrayList<>();
         c.add("/bin/sh");
         c.add(new File(dossierSwf(), "installer-mod.sh").getPath());
@@ -433,45 +550,15 @@ public final class ClientModifie {
     }
 
     public static Resultat restaurer(Consumer<String> ligne) {
-        if (WINDOWS) return restaurerWindows(ligne);
+        if (parScript()) return script(true, ligne);
         List<String> c = new ArrayList<>();
         c.add("/bin/sh");
         c.add(new File(dossierSwf(), "restaurer.sh").getPath());
         return lancer(c, ligne);
     }
 
-    /** Windows : pas de signature ; on garde l'original une fois, puis on copie le SWF construit. */
-    private static Resultat installerWindows(Consumer<String> ligne) {
-        try {
-            if (jeuOuvert()) return dire(1, "Ferme Habbo d'abord, puis recommence.", ligne);
-            File dest = swfInstalle(), construit = swfConstruit();
-            if (!construit.isFile()) return dire(1, "SWF construit introuvable : " + construit, ligne);
-            if (!dest.isFile()) return dire(1, "Client Habbo introuvable : " + dest, ligne);
-            if (!clientPrevu()) return dire(1, "Ton client Habbo (" + appJeu().getName() + ") n'est pas celui pour "
-                    + "lequel les modifs sont faites : rien n'est installé (ton jeu reste intact).", ligne);
-            File sauve = sauvegardeWindows();
-            if (!sauve.isFile()) Files.copy(dest.toPath(), sauve.toPath());
-            Files.copy(construit.toPath(), dest.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-            return dire(0, "SWF modifie installe. Lance Habbo par le Launcher, comme d'habitude.", ligne);
-        } catch (Exception e) {
-            return dire(1, "Installation impossible : " + e, ligne);
-        }
-    }
-
-    private static Resultat restaurerWindows(Consumer<String> ligne) {
-        try {
-            if (jeuOuvert()) return dire(1, "Ferme Habbo d'abord, puis recommence.", ligne);
-            File sauve = sauvegardeWindows();
-            if (!sauve.isFile()) return dire(1, "Pas de copie d'origine : le client n'a jamais été modifié par l'Atelier.", ligne);
-            Files.copy(sauve.toPath(), swfInstalle().toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-            return dire(0, "Client d'origine remis.", ligne);
-        } catch (Exception e) {
-            return dire(1, "Restauration impossible : " + e, ligne);
-        }
-    }
-
     private static Resultat dire(int code, String m, Consumer<String> ligne) {
-        System.out.println("[Atelier] " + m);
+        Journal.info(m);
         if (ligne != null) ligne.accept(m);
         return new Resultat(code, m);
     }
@@ -488,28 +575,36 @@ public final class ClientModifie {
         if (root) {
             c.add("/usr/bin/sudo"); c.add("-u"); c.add(u); c.add("-H");
             c.add("/usr/bin/env"); c.add("HOME=" + maison().getPath());
+            c.add("JAVA_HOME=" + System.getProperty("java.home"));   // sudo vide l'environnement
         }
         c.addAll(commande);
-        System.out.println("[Atelier] Lance : " + String.join(" ", c));
+        Journal.debug("Lance : " + String.join(" ", c));
         StringBuilder tout = new StringBuilder();
         try {
             ProcessBuilder pb = new ProcessBuilder(c).directory(dossierSwf()).redirectErrorStream(true);
             pb.environment().put("HOME", maison().getPath());
             pb.environment().put("PYTHONUNBUFFERED", "1");
+            pb.environment().put("JAVA_HOME", System.getProperty("java.home"));
+            if (WINDOWS) {
+                // le Java embarque (celui qui fait tourner l'Atelier) sert a construire.py ;
+                // sortie en UTF-8 quoi que dise la page de code de la console
+                pb.environment().put("JAVA_HOME", System.getProperty("java.home"));
+                pb.environment().put("PYTHONIOENCODING", "utf-8");
+            }
             Process p = pb.start();
             try (BufferedReader r = new BufferedReader(new InputStreamReader(p.getInputStream(), StandardCharsets.UTF_8))) {
                 String l;
                 while ((l = r.readLine()) != null) {
-                    System.out.println("[Atelier] " + l);
+                    Journal.debug(l);
                     tout.append(l).append('\n');
                     if (ligne != null && !l.isBlank()) ligne.accept(l.trim());
                 }
             }
             int code = p.waitFor();
-            System.out.println("[Atelier] Code de sortie : " + code);
+            Journal.debug("Code de sortie : " + code);
             return new Resultat(code, tout.toString());
         } catch (Exception e) {
-            System.out.println("[Atelier] Impossible de lancer " + commande.get(0) + " : " + e);
+            System.err.println("[Atelier] Impossible de lancer " + commande.get(0) + " : " + e);
             return new Resultat(-1, tout + "Impossible de lancer " + commande.get(0) + " : " + e.getMessage());
         }
     }

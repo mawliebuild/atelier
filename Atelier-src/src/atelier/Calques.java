@@ -21,7 +21,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
  *   masquer     on envoie au client ObjectRemove (sol) ou ItemRemove (mur),
  *               comme si le mobi avait ete ramasse ;
  *   reafficher  on lui renvoie ObjectAdd / ItemAdd, construit depuis l'etat
- *               le plus recent connu (FloorState de G-Presets, a defaut la
+ *               le plus recent connu (FloorState du moteur de l'Atelier, a defaut la
  *               copie prise au moment de masquer).
  *
  * Pendant qu'un mobi est masque, tout ce que le serveur envoie a son sujet
@@ -32,7 +32,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * WiredMovements) sont recopies sans les mobis masques. Les changements d'etat
  * bloques sont gardes et rejoues au moment de reafficher.
  *
- * FloorState de G-Presets ecoute les memes paquets (par nom) : le blocage ne
+ * FloorState du moteur de l'Atelier ecoute les memes paquets (par nom) : le blocage ne
  * l'empeche pas de les lire, il garde donc la position et l'etat a jour. On ne
  * modifie jamais un paquet en place (il le lirait modifie) : on bloque
  * l'original et on envoie une copie.
@@ -311,7 +311,7 @@ public final class Calques {
         boolean avait = !masques.isEmpty();
         masques.clear();
         salleDesMasques = -1;
-        if (avait) System.out.println("[Atelier] calques : changement de salle, masques oublies.");
+        if (avait) Journal.debug("calques : changement de salle, masques oublies.");
         prevenir();
         Platform.runLater(() -> { for (Runnable r : oublis) try { r.run(); } catch (Throwable ignored) { } });
     }
@@ -355,7 +355,7 @@ public final class Calques {
     /** Nombre d'ecoutes par nom branchees (sur 15) : 0 = rien ne sera bloque. */
     public static int ecoutes() { return ecoutesActives; }
 
-    /** Branche les ecoutes une seule fois, des que G-Presets est la. */
+    /** Branche les ecoutes une seule fois, des que le moteur de l'Atelier est la. */
     public static synchronized void installer() {
         if (installe || enCours) return;
         enCours = true;
@@ -377,8 +377,8 @@ public final class Calques {
 
     /**
      * Ecoutes PAR NOM : ce sont exactement les noms qu'ecoute FloorState de
-     * G-Presets pour tenir la salle a jour ; s'ils ne se resolvaient pas, la
-     * salle de G-Presets serait vide elle aussi.
+     * le moteur de l'Atelier pour tenir la salle a jour ; s'ils ne se resolvaient pas, la
+     * salle du moteur serait vide elle aussi.
      */
     private static void brancher(GPresets gp) {
         int n = 0;
@@ -389,12 +389,12 @@ public final class Calques {
                 });
                 n++;
             } catch (Throwable t) {
-                System.err.println("[Atelier] calques : ecoute " + nom + " indisponible : " + t);
+                Journal.debug("calques : ecoute " + nom + " indisponible : " + t);
             }
         }
         ecoutesActives = n;
         installe = true;
-        System.out.println("[Atelier] calques : " + n + "/" + NOMS.length + " ecoutes actives.");
+        Journal.debug("calques : " + n + "/" + NOMS.length + " ecoutes actives.");
         prevenir();
     }
 
@@ -412,7 +412,15 @@ public final class Calques {
             default:
         }
         if (masques.isEmpty()) return;
-        if (nosEnvois.contains(Arrays.hashCode(brut.toBytes()))) return;   // notre propre paquet
+        // Paquets a un seul mobi : l'id se lit sur place (sans copie) ; un mobi non
+        // masque sort tout de suite. L'empreinte (notre propre envoi ?) ne se calcule
+        // que pour un mobi masque. Les paquets groupes (glissements, etats, wired)
+        // n'ont pas besoin d'empreinte : nos recopies n'y gardent aucun mobi masque.
+        String vise = idSimple(nom, brut);
+        if (vise != null) {
+            if (!masques.containsKey(vise)) return;
+            if (nosEnvois.contains(Arrays.hashCode(brut.toBytes()))) return;   // notre propre paquet
+        }
 
         HPacket p = new HPacket(brut);
         p.resetReadIndex();
@@ -470,6 +478,19 @@ public final class Calques {
                 return;
             }
             default:
+        }
+    }
+
+    /** Cle du mobi vise par un paquet a un seul mobi (lu sans copie), null pour les autres. */
+    private static String idSimple(String nom, HPacket brut) {
+        switch (nom) {
+            case "ObjectUpdate":     return cle(brut.readInteger(6), false);
+            case "ObjectDataUpdate":
+            case "ObjectRemove":     return cle(entier(brut.readString(6)), false);
+            case "ItemUpdate":
+            case "ItemDataUpdate":
+            case "ItemRemove":       return cle(entier(brut.readString(6)), true);
+            default:                 return null;
         }
     }
 
@@ -538,7 +559,7 @@ public final class Calques {
 
     /**
      * WiredMovements : int n, n × (int sorte, ...). Meme lecture que FloorState
-     * de G-Presets : sorte 1 = mobi (ii, x, y, s, s, id, ii, B[i], B[i]).
+     * du moteur de l'Atelier : sorte 1 = mobi (ii, x, y, s, s, id, ii, B[i], B[i]).
      * Une sorte inconnue : on laisse passer le paquet tel quel.
      */
     private static void recopierMouvements(HMessage m, HPacket p) {

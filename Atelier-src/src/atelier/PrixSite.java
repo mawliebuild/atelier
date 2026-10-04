@@ -125,14 +125,14 @@ public final class PrixSite {
         misAJour = System.currentTimeMillis();
         sauver();
         etat = "";
-        System.out.println("[Atelier] prix habbofurni : " + lus.size() + " mobis lus sur " + pages
+        Journal.debug("prix habbofurni : " + lus.size() + " mobis lus sur " + pages
                 + " pages" + (echecs.get() > 0 ? " (" + echecs.get() + " pages en échec)" : "") + ".");
     }
 
     /** Lecture ratee (site en panne, mise en page changee) : on garde l'ancien fichier. */
     private static void echec(int lus) {
-        etat = misAJour == 0 ? "habbofurni.xyz n'a pas pu être lu ; prix du marché du jeu à la place."
-                             : "habbofurni.xyz n'a pas pu être relu ; prix gardés du " + date(misAJour) + ".";
+        etat = misAJour == 0 ? "Le site habbofurni.xyz n'a pas pu être lu : prix du marché du jeu à la place."
+                             : "Le site habbofurni.xyz n'a pas pu être relu : prix gardés du " + date(misAJour) + ".";
         System.err.println("[Atelier] prix habbofurni : lecture ratée (" + lus + " prix).");
     }
 
@@ -206,7 +206,7 @@ public final class PrixSite {
                 prix.put(k, new Prix(j.optInt("moyen"), j.optString("source", "?")));
             }
         } catch (Throwable t) {
-            System.err.println("[Atelier] prix habbofurni : fichier illisible, il sera refait : " + t);
+            Journal.debug("prix habbofurni : fichier illisible, il sera refait : " + t);
         }
     }
 

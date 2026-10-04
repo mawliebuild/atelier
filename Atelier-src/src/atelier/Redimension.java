@@ -7,7 +7,7 @@ import javafx.stage.Stage;
 /**
  * Redimensionnement a la souris pour une fenetre sans decoration.
  *
- * G-Earth ouvre sa fenetre en StageStyle.TRANSPARENT et se dessine sa propre
+ * La fenetre de connexion de l'Atelier s'ouvre en StageStyle.TRANSPARENT et se dessine sa propre
  * barre de titre : le systeme ne fournit donc aucune poignee. On les recree
  * sur les bords droit et bas, plus le coin.
  */

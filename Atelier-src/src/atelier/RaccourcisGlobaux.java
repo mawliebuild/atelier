@@ -20,9 +20,12 @@ import java.util.function.IntFunction;
 
 /**
  * Annuler / Retablir au clavier PENDANT qu'on joue : Ctrl+Z / Cmd+Z annule,
+ * (sous Windows : Ctrl a la place de Cmd, Alt a la place d'Option ; voir
+ * raccourcisWindows et WindowsClavier, qui fait RegisterHotKey sur un fil dedie.)
  * Ctrl+Maj+Z, Cmd+Maj+Z, Ctrl+Y et Cmd+Y retablissent. En mode Construction
- * (panneau des calques actif) : S (mode calque), Ctrl/Cmd+C copie le calque
- * vise, Ctrl/Cmd+V le colle (seulement quand un calque est copie).
+ * (panneau des calques actif) : Option+C (mode calque), Option+G (grille),
+ * Option+Maj+C copie le calque vise, Option+Maj+V le colle (seulement quand un
+ * calque est copie). Dans le panneau lui-meme, Cmd/Ctrl+C et V marchent aussi.
  *
  * Quand une fenetre de l'Atelier a le focus, c'est OutilHistorique.installerRaccourcis
  * (filtre JavaFX) qui s'en charge. Ici on couvre le cas ou l'appli Habbo est au
@@ -79,7 +82,7 @@ public final class RaccourcisGlobaux {
     public static void toucheP(boolean on) {
         if (pVoulu == on) return;
         pVoulu = on;
-        if (WIN) { reenregistrer(); return; }
+        if (WIN) { Windows.appliquer(); return; }
         try {
             Platform.runLater(() -> { if (Carbon.enregistresAlors()) { Carbon.desenregistrer(); Carbon.enregistrer(); } });
         } catch (IllegalStateException ignored) { }
@@ -120,7 +123,7 @@ public final class RaccourcisGlobaux {
     }
 
     private static void reenregistrer() {
-        if (WIN) { if (voulu) { Windows.desenregistrer(); Windows.enregistrer(); } return; }
+        if (WIN) { Windows.appliquer(); return; }
         try {
             Platform.runLater(() -> { if (Carbon.enregistresAlors()) { Carbon.desenregistrer(); Carbon.enregistrer(); } });
         } catch (IllegalStateException ignored) { }
@@ -133,7 +136,7 @@ public final class RaccourcisGlobaux {
      */
     public static boolean toucheCalques(boolean copier) {
         if (!calquesVoulu) return false;
-        try { (copier ? surCopier : surColler).run(); } catch (Throwable t) { System.err.println("[Atelier] raccourci calques : " + t); }
+        try { (copier ? surCopier : surColler).run(); } catch (Throwable t) { Journal.erreur("Le raccourci des calques a échoué", t); }
         return true;
     }
 
@@ -163,6 +166,31 @@ public final class RaccourcisGlobaux {
         if (calques) {
             r.add(new int[]{CMD_C, c, Carbon.OPTION | Carbon.MAJ}); // copier le calque : Option + Maj + C
             if (coller) r.add(new int[]{CMD_V, v, Carbon.OPTION | Carbon.MAJ});
+        }
+        return r.toArray(new int[0][]);
+    }
+
+    /**
+     * Logique pure, Windows : {id, code VK, modificateurs MOD_*} a enregistrer.
+     * Cmd (Mac) devient Ctrl, Option devient Alt. Pas de variante Cmd : la
+     * touche Windows est reservee au systeme. z, y, c, v, g = codes VK des lettres
+     * (en AZERTY aussi, VK_Z est la touche marquee Z).
+     * Alt + lettre seul (jamais Ctrl + Alt : c'est AltGr sur un clavier francais,
+     * qui sert a taper @, #, €...). RegisterHotKey ne declenche qu'avec exactement
+     * ces modificateurs : AltGr + C ne prend donc pas Alt + C.
+     */
+    static int[][] raccourcisWindows(int z, int y, int c, int v, int g, boolean modeCalque, boolean calques, boolean coller) {
+        int ctrl = WindowsClavier.MOD_CONTROL, alt = WindowsClavier.MOD_ALT, maj = WindowsClavier.MOD_SHIFT;
+        List<int[]> r = new java.util.ArrayList<>(List.of(
+                new int[]{CTRL_Z, z, ctrl}, new int[]{CTRL_MAJ_Z, z, ctrl | maj}, new int[]{CTRL_Y, y, ctrl}));
+        if (modeCalque) {
+            r.add(new int[]{TOUCHE_P, c, alt});                 // mode calque : Alt + C
+            r.add(new int[]{TOUCHE_G, g, alt});                 // grille : Alt + G
+        }
+        if (calques) {
+            // Ctrl + Maj (pas Alt + Maj : c'est le changement de langue du clavier sous Windows)
+            r.add(new int[]{CTRL_C, c, ctrl | maj});             // copier le calque : Ctrl + Maj + C
+            if (coller) r.add(new int[]{CTRL_V, v, ctrl | maj}); // coller : Ctrl + Maj + V
         }
         return r.toArray(new int[0][]);
     }
@@ -211,16 +239,17 @@ public final class RaccourcisGlobaux {
 
     /** Pour l'interface : une phrase sur l'etat des raccourcis dans le jeu. */
     public static String etat() {
-        if (probleme != null) return "Raccourcis dans le jeu indisponibles : " + probleme;
+        String pb = probleme != null ? probleme : WIN ? WindowsClavier.probleme() : null;
+        if (pb != null) return "Raccourcis dans le jeu indisponibles : " + pb;
         if (!installe) return "Raccourcis dans le jeu pas encore actifs.";
-        if (enregistres) return "Raccourcis actifs dans le jeu.";
+        if (WIN ? WindowsClavier.actifs() > 0 : enregistres) return "Raccourcis actifs dans le jeu.";
         if (estHabbo(appDevant) && saisie) return "Chat en cours de saisie : Ctrl+Z laissé au jeu.";
         return "Raccourcis prêts : ils s'activent quand Habbo est au premier plan.";
     }
 
     /**
      * A appeler une fois au demarrage, apres le lancement de JavaFX.
-     * Sans effet hors macOS (dit dans etat()).
+     * Mac (Carbon) et Windows (RegisterHotKey) ; sans effet ailleurs (dit dans etat()).
      */
     public static synchronized void installer() {
         if (installe) return;
@@ -229,7 +258,7 @@ public final class RaccourcisGlobaux {
         WIN = os.contains("win");
         if (!os.contains("mac") && !WIN) {
             probleme = "seulement sur Mac et Windows";
-            System.out.println("[Atelier] raccourcis globaux : " + probleme);
+            Journal.debug("raccourcis globaux : " + probleme);
             return;
         }
         Historique.demarrer();
@@ -242,7 +271,7 @@ public final class RaccourcisGlobaux {
         }, "atelier-raccourcis");
         t.setDaemon(true);
         t.start();
-        System.out.println("[Atelier] raccourcis globaux : surveillance du premier plan active.");
+        Journal.debug("raccourcis globaux : surveillance du premier plan active.");
     }
 
     private static void tour() {
@@ -253,7 +282,7 @@ public final class RaccourcisGlobaux {
         if (v == voulu) return;
         voulu = v;
         try {
-            if (WIN) { if (voulu) Windows.enregistrer(); else Windows.desenregistrer(); }
+            if (WIN) Windows.appliquer();
             else Platform.runLater(() -> {
                 if (voulu) Carbon.enregistrer(); else Carbon.desenregistrer();
             });
@@ -297,11 +326,8 @@ public final class RaccourcisGlobaux {
         if (now - dernier < 120) return;       // rebond
         dernier = now;
         Salle.tache("raccourci", () -> {
+            // Historique dit lui-meme son resultat (Journal) : rien a redire ici.
             if (a < 0) Historique.annuler(); else Historique.retablir();
-            // retour dans le jeu : on n'y voit pas la fenetre de l'Atelier
-            for (int i = 0; i < 100 && Historique.occupe(); i++) Salle.sommeil(100);
-            Salle.sommeil(150);
-            InfoJeu.dire(Historique.message());
         });
     }
 
@@ -310,7 +336,7 @@ public final class RaccourcisGlobaux {
     /**
      * StartTyping = la barre de chat n'est plus vide ; CancelTyping = vide de
      * nouveau ; Chat / Shout / Whisper = message envoye (barre videe). Ecoute
-     * passive, rien n'est bloque. Reessaie tant que G-Presets n'est pas la.
+     * passive, rien n'est bloque. Reessaie tant que le moteur de l'Atelier n'est pas la.
      */
     private static void ecouterChat() {
         Thread t = new Thread(() -> {
@@ -323,7 +349,7 @@ public final class RaccourcisGlobaux {
                     ok += brancher(gp, "Chat", false);
                     ok += brancher(gp, "Shout", false);
                     ok += brancher(gp, "Whisper", false);
-                    System.out.println("[Atelier] raccourcis globaux : " + ok + "/5 paquets de chat suivis.");
+                    Journal.debug("raccourcis globaux : " + ok + "/5 paquets de chat suivis.");
                     return;
                 }
                 try { Thread.sleep(1000); } catch (InterruptedException e) { return; }
@@ -338,56 +364,24 @@ public final class RaccourcisGlobaux {
             gp.intercept(HMessage.Direction.TOSERVER, nom, m -> saisie = tape);
             return 1;
         } catch (Throwable t) {
-            System.out.println("[Atelier] raccourcis : " + nom + " non suivi (" + t + ")");
+            Journal.debug("raccourcis : " + nom + " non suivi (" + t + ")");
             return 0;
         }
     }
 
     // ---------------------------------------------------------- premier plan
 
-    /** Nom de l'appli au premier plan, par le runtime Objective-C (NSWorkspace). */
-    /** Windows : raccourcis globaux par jkeymaster (RegisterHotKey), memes ids que sous Mac. */
+    /** Windows : raccourcis globaux par RegisterHotKey (WindowsClavier), memes ids que sous Mac. */
     private static volatile boolean WIN = false;
 
     static final class Windows {
-        private static com.tulskiy.keymaster.common.Provider fournisseur;
-        private static boolean actifs = false;
-
-        static synchronized void enregistrer() {
-            if (actifs) return;
-            try {
-                if (fournisseur == null) fournisseur = com.tulskiy.keymaster.common.Provider.getCurrentProvider(false);
-                int alt = java.awt.event.InputEvent.ALT_DOWN_MASK, maj = java.awt.event.InputEvent.SHIFT_DOWN_MASK,
-                    ctrl = java.awt.event.InputEvent.CTRL_DOWN_MASK;
-                java.util.List<Object[]> l = new java.util.ArrayList<>();
-                l.add(new Object[]{CTRL_Z, java.awt.event.KeyEvent.VK_Z, ctrl});
-                l.add(new Object[]{CTRL_MAJ_Z, java.awt.event.KeyEvent.VK_Z, ctrl | maj});
-                l.add(new Object[]{CTRL_Y, java.awt.event.KeyEvent.VK_Y, ctrl});
-                if (pVoulu) {
-                    l.add(new Object[]{TOUCHE_P, java.awt.event.KeyEvent.VK_C, alt});
-                    l.add(new Object[]{TOUCHE_G, java.awt.event.KeyEvent.VK_G, alt});
-                }
-                if (calquesVoulu) {
-                    l.add(new Object[]{CMD_C, java.awt.event.KeyEvent.VK_C, alt | maj});
-                    if (collerVoulu) l.add(new Object[]{CMD_V, java.awt.event.KeyEvent.VK_V, alt | maj});
-                }
-                for (Object[] k : l) {
-                    int id = (int) k[0];
-                    fournisseur.register(javax.swing.KeyStroke.getKeyStroke((int) k[1], (int) k[2]), h -> declencher(id));
-                }
-                actifs = true;
-                enregistres = true;
-            } catch (Throwable t) {
-                probleme = "raccourcis Windows indisponibles (" + t.getMessage() + ")";
-                System.err.println("[Atelier] raccourcis Windows : " + t);
-            }
-        }
-
-        static synchronized void desenregistrer() {
-            if (!actifs) return;
-            try { if (fournisseur != null) fournisseur.reset(); } catch (Throwable ignored) { }
-            actifs = false;
-            enregistres = false;
+        /** Envoie au fil des raccourcis Windows la liste voulue maintenant (vide si Habbo n'est pas devant). */
+        static synchronized void appliquer() {
+            int[][] r = voulu ? raccourcisWindows(WindowsClavier.vkPour('z'), WindowsClavier.vkPour('y'),
+                    WindowsClavier.vkPour('c'), WindowsClavier.vkPour('v'), WindowsClavier.vkPour('g'),
+                    pVoulu, calquesVoulu, collerVoulu) : new int[0][];
+            WindowsClavier.raccourcis(r, RaccourcisGlobaux::declencher);
+            enregistres = r.length > 0;
         }
     }
 
@@ -427,7 +421,7 @@ public final class RaccourcisGlobaux {
 
         /** Nom de l'appli au premier plan, ou null. */
         static String app() {
-            if (System.getProperty("os.name", "").toLowerCase().contains("win")) return appWindows();
+            if (WindowsClavier.WINDOWS) return WindowsClavier.appDevant();
             if (!charger()) return null;
             Pointer pool = objc.objc_autoreleasePoolPush();
             try {
@@ -446,19 +440,13 @@ public final class RaccourcisGlobaux {
     }
 
     /** Windows : le programme de la fenetre au premier plan, sans « .exe » (« Habbo », « java »...). */
+    /** Meme lecture du premier plan que BarrePremierPlan (ignore barre des taches et Alt+Tab). */
     static String appWindows() {
         try {
-            com.sun.jna.platform.win32.WinDef.HWND h = com.sun.jna.platform.win32.User32.INSTANCE.GetForegroundWindow();
-            if (h == null) return null;
-            IntByReference pid = new IntByReference();
-            com.sun.jna.platform.win32.User32.INSTANCE.GetWindowThreadProcessId(h, pid);
-            return ProcessHandle.of(pid.getValue()).flatMap(p -> p.info().command()).map(c -> {
-                String n = new java.io.File(c).getName();
-                return n.toLowerCase().endsWith(".exe") ? n.substring(0, n.length() - 4) : n;
-            }).orElse(null);
-        } catch (Throwable t) {
-            return null;
-        }
+            WindowsFenetres.Devant d = WindowsFenetres.devant();
+            if (d != null) return WindowsFenetres.nomDevant(d.exe, d.titre, d.classe);
+        } catch (Throwable t) { Journal.debug("premier plan Windows : " + t); }
+        return WindowsClavier.appDevant();
     }
 
     // ---------------------------------------------------------- Carbon
@@ -592,7 +580,7 @@ public final class RaccourcisGlobaux {
                     if (cv != null) v = cv;
                 }
             } catch (Throwable t) {
-                System.err.println("[Atelier] raccourcis : disposition clavier illisible, QWERTY suppose (" + t + ")");
+                Journal.debug("raccourcis : disposition clavier illisible, QWERTY suppose (" + t + ")");
             }
             int[][] r = raccourcis(z, y, p, c, v, g, pVoulu, calquesVoulu, collerVoulu);
             int ok = 0;

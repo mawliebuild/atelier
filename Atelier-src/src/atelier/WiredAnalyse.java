@@ -122,15 +122,21 @@ public final class WiredAnalyse {
     public final Map<Integer, Fil> parId = new LinkedHashMap<>();
     public final int nbLus, nbIllisibles;
     public final boolean salle;
+    /** null si l'analyse s'est bien passee, sinon la raison de l'echec (a montrer). */
+    public final String erreur;
+    /** Mobis wired ignores parce qu'illisibles (case pas encore connue…). */
+    public final int nbIgnores;
 
     private WiredAnalyse() {
         Map<Long, Pile> parCase = new LinkedHashMap<>();
-        int l = 0, ill = 0;
+        int l = 0, ill = 0, ign = 0;
         for (HFloorItem it : Salle.sols()) {
             String cls;
             try { cls = Salle.classe(it.getTypeId(), false); } catch (Throwable t) { continue; }
             if (!Wired.estWired(cls)) continue;
-            Fil f = new Fil(it, cls);
+            Fil f;
+            // un mobi illisible (en cours d'arrivee, case nulle) est ignore seul
+            try { f = new Fil(it, cls); } catch (Throwable t) { ign++; continue; }
             parId.put(f.id, f);
             if (f.conf != null) l++;
             if (f.illisible) ill++;
@@ -141,6 +147,8 @@ public final class WiredAnalyse {
         }
         nbLus = l;
         nbIllisibles = ill;
+        nbIgnores = ign;
+        erreur = null;
         salle = Salle.dansUneSalle();
         for (Pile p : parCase.values()) p.wired.sort(Comparator.comparingDouble(f -> f.z));
         piles.addAll(parCase.values());
@@ -153,14 +161,15 @@ public final class WiredAnalyse {
     public static WiredAnalyse maintenant() {
         try { return new WiredAnalyse(); }
         catch (Throwable t) {
-            System.err.println("[Atelier] analyse wired : " + t);
-            return vide();
+            t.printStackTrace();
+            return new WiredAnalyse(t.getClass().getSimpleName()
+                    + (t.getMessage() == null ? "" : " : " + t.getMessage()));
         }
     }
 
-    private static WiredAnalyse vide() { return new WiredAnalyse(true); }
-
-    private WiredAnalyse(boolean vide) { nbLus = 0; nbIllisibles = 0; salle = false; }
+    private WiredAnalyse(String erreur) {
+        nbLus = 0; nbIllisibles = 0; nbIgnores = 0; salle = false; this.erreur = erreur;
+    }
 
     /**
      * Fleches : de A vers B quand un effet ou selecteur de A designe un mobi

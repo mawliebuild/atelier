@@ -23,9 +23,8 @@ import java.util.function.Function;
  *  - liste des plantes (paquet Users a l'entree de la salle, voir PlanteSuivi)
  *  - details lus PASSIVEMENT : fiches (PetInfo) que le jeu recoit quand tu
  *    cliques une plante toi-meme, mises a jour de statut / niveau
- *  - « Lire les détails » (bouton) : demande la fiche des plantes, une apres
- *    l'autre. C'est le seul moyen de connaitre vie et croissance sans clic,
- *    mais le jeu l'affiche comme un clic : jamais fait tout seul.
+ *  - fiches lues toutes seules en arriere-plan (demarrerFichesAuto), sans
+ *    rien ouvrir dans le jeu.
  *  - « Traiter » (le soin quotidien = respect d'animal), une ou toutes
  *  - pour ses propres plantes : « Recolter » les adultes, « Composter » les mortes
  *
@@ -121,7 +120,6 @@ public class OngletPlantes {
             };
             r.selectedProperty().addListener((o, a, b) -> styler(r));
             r.setOnMouseClicked(e -> {
-                if (e.getClickCount() == 2 && r.getItem() != null) montrer(r.getItem());
             });
             return r;
         });
@@ -129,12 +127,6 @@ public class OngletPlantes {
         table.setMinHeight(170);
         VBox.setVgrow(table, Priority.ALWAYS);
 
-        Button montrer = new Button("Montrer");
-        montrer.setOnAction(e -> {
-            Plante p = choisie();
-            if (p == null) dire("Choisis une plante dans le tableau.");
-            else montrer(p);
-        });
         stop = new Button("Arrêter");
         stop.setDisable(true);
         stop.setOnAction(e -> { arret = true; dire("Arrêt demandé…"); });
@@ -147,6 +139,12 @@ public class OngletPlantes {
             lancer("plantes-traiter", () -> traiterUne(p, true));
         });
         Button traiterToutes = new Button("Tout traiter");
+        // survol : la premiere plante a traiter a la fleche du jeu (une seule a la fois)
+        MiseEnValeur.auSurvol(traiterToutes, () -> {
+            for (Plante p : trier(PlanteSuivi.plantes()))
+                if (!p.morte && p.aBesoin() && p.index >= 0) return List.of("p" + p.index);
+            return List.of();
+        });
         traiterToutes.getStyleClass().add("primaire");
         traiterToutes.setMaxWidth(Double.MAX_VALUE);
         traiterToutes.setOnAction(e -> lancer("plantes-traiter-toutes", this::traiterToutes));
@@ -171,9 +169,13 @@ public class OngletPlantes {
         Button composter = new Button("Composter");
         composter.setTooltip(new Tooltip("Ta plante MORTE choisie : elle est retirée définitivement (en échange d'un petit gain dans le jeu)."));
         composter.setOnAction(e -> composter());
+        Button toutComposter = new Button("Tout composter");
+        toutComposter.setTooltip(new Tooltip("Composte toutes tes plantes MORTES de l'appart (définitif)."));
+        toutComposter.setOnAction(e -> toutComposter());
 
         // --- reproduction
-        reproLbl = Ui.etat();
+        reproLbl = new Label();                    // consigne permanente : pas un resultat
+        reproLbl.getStyleClass().add("etat-ligne");
         reproLbl.setWrapText(true);
         Button reproduire = new Button("Reproduire toutes les plantes");
         reproduire.getStyleClass().add("primaire");
@@ -192,8 +194,8 @@ public class OngletPlantes {
         for (Button b : new Button[]{traiterToutes, reproduire}) b.setMaxWidth(Double.MAX_VALUE);
         // Un seul « Traiter » : il traite tout seul celles qui en ont besoin.
         // Les boutons gardent leur texte entier (retour a la ligne si la fenetre est etroite).
-        FlowPane autres = new FlowPane(6, 6, recolter, toutRecolter, composter);
-        for (Button b : new Button[]{recolter, toutRecolter, composter}) b.setMinWidth(Region.USE_PREF_SIZE);
+        FlowPane autres = new FlowPane(6, 6, recolter, toutRecolter, composter, toutComposter);
+        for (Button b : new Button[]{recolter, toutRecolter, composter, toutComposter}) b.setMinWidth(Region.USE_PREF_SIZE);
         VBox boutons = new VBox(6, traiterToutes, reproduire, autres);
         Label aideActions = Ui.aide(
                 "Tout traiter : le soin du jour (respect d'animal) pour les plantes qui en ont besoin (bien-être bas) ; "
@@ -204,19 +206,21 @@ public class OngletPlantes {
                 + "Récolter : ta plante ADULTE choisie te donne sa récompense (graines…), elle disparaît.\n"
                 + "Tout récolter : toutes tes plantes adultes de l'appart, une par une.\n"
                 + "Composter : supprime ta plante MORTE choisie (définitif).\n"
-                + "Récolter et Composter ne marchent que sur tes plantes. Double-clic sur une ligne du tableau : "
-                + "la zone se place sur sa case.");
+                + "Tout composter : toutes tes plantes mortes de l'appart, après confirmation (définitif).\n"
+                + "Récolter et Composter ne marchent que sur tes plantes. Choisis une ligne du tableau : "
+                + "la plante a la flèche de sélection dans le jeu.");
         VBox actions = Ui.bloc("Actions", soinsLbl, boutons, confirmationRepro, reproLbl, aideActions);
 
         VBox v = new VBox(12,
                 Ui.bloc("Prérequis", vSalle, vListe, vInfos, vMoi),
                 actions,
-                Ui.bloc("Plantes de la salle", resume, table, Ui.ligne(montrer, stop)),
+                Ui.bloc("Plantes de la salle", resume, table, Ui.ligne(stop)),
                 etat);
         v.setFillWidth(true);
         v.setPadding(new Insets(12, 14, 14, 14));
 
         PlanteSuivi.ecouter(this::prevoirMaj);
+        MiseEnValeur.fournir("plantes", this::plantesEnValeur);
         PlanteSuivi.installer();
 
         demarrerListeAuto();
@@ -254,6 +258,12 @@ public class OngletPlantes {
         if (v >= 0 && v < URGENT_S) r.setStyle("-fx-background-color: #f2b8b0;");
         else if (v >= 0 && v < BIENTOT_S) r.setStyle("-fx-background-color: #fbe1dc;");
         else r.setStyle("");
+    }
+
+    /** Fenetre Monster Plants ouverte : la plante choisie dans le tableau a la fleche du jeu. */
+    private Collection<String> plantesEnValeur() {
+        Plante p = choisie();
+        return p != null && p.index >= 0 ? List.of("p" + p.index) : List.of();
     }
 
     private Plante choisie() {
@@ -305,7 +315,7 @@ public class OngletPlantes {
 
     private void majVoyants() {
         GPresets gp = Salle.gp();
-        if (gp == null) vSalle.regler("absent", "G-Presets pas encore prêt");
+        if (gp == null) vSalle.regler("absent", "L'Atelier n'est pas encore prêt");
         else if (!Salle.dansUneSalle()) vSalle.regler("absent", "Entre dans un appart.");
         else vSalle.regler("ok", "Oui.");
 
@@ -322,7 +332,7 @@ public class OngletPlantes {
         if (n == 0) vInfos.regler("attente", "Aucune plante");
         else vInfos.regler(avecFiche == n ? "ok" : "attente",
                 avecFiche + " / " + n + " lu(s)"
-                + (avecFiche < n ? (occupe.get() ? " — lecture en cours…" : " — « Lire les détails » pour le reste") : ""));
+                + (avecFiche < n ? (occupe.get() ? " — lecture en cours…" : " — lecture automatique en cours…") : ""));
 
         String moi = PlanteSuivi.monNom;
         String saisi = monNomTxt.getText();
@@ -336,6 +346,10 @@ public class OngletPlantes {
         else Platform.runLater(() -> etat.setText(s));
     }
 
+    /** Resultat d'une action : dans le jeu (Journal), le genre dit explicitement. */
+    private void succes(String s) { Ui.succes(etat, s); }
+    private void erreur(String s) { Ui.erreur(etat, s); }
+
     // -------------------------------------------------------------- travaux
 
     /** Un seul travail reseau a la fois, hors fil JavaFX. */
@@ -346,7 +360,7 @@ public class OngletPlantes {
         Salle.tache(nom, () -> {
             // Seul endroit ou les envois vers les plantes sont permis : un bouton.
             try { PlanteSuivi.enActionExplicite(r); }
-            catch (Throwable t) { dire("Erreur : " + t); }
+            catch (Throwable t) { Ui.erreur(etat, "Erreur pendant le travail sur les plantes", t); }
             finally {
                 occupe.set(false);
                 Platform.runLater(() -> stop.setDisable(true));
@@ -355,8 +369,8 @@ public class OngletPlantes {
     }
 
     private boolean pret() {
-        if (Salle.gp() == null) { dire("G-Presets pas encore prêt."); return false; }
-        if (!Salle.dansUneSalle()) { dire("Entre d'abord dans une salle."); return false; }
+        if (Salle.gp() == null) { erreur("Impossible : l'Atelier n'est pas encore prêt."); return false; }
+        if (!Salle.dansUneSalle()) { erreur("Impossible : entre d'abord dans une salle."); return false; }
         if (!PlanteSuivi.branche()) { dire("L'écoute des paquets s'installe : encore un instant."); return false; }
         return true;
     }
@@ -375,11 +389,6 @@ public class OngletPlantes {
 
 
 
-    private void montrer(Plante p) {
-        if (p.x < 0) { dire(p.nom + " : case pas encore connue, elle arrive avec la liste de la salle."); return; }
-        try { Zone.definir(p.x, p.y, p.x, p.y); } catch (Throwable ignored) { }
-        dire(p.nom + " est en (" + p.x + "," + p.y + ") — zone placée sur sa case.");
-    }
 
     /** Resultat d'un soin : fait, refuse par le serveur, ou sans reponse claire. */
     private enum Soin { FAIT, REFUSE, INCERTAIN }
@@ -410,9 +419,11 @@ public class OngletPlantes {
         if (p.morte) { if (seule) dire(p.nom + " est morte : on ne peut plus la traiter."); return false; }
         Soin r = traiter(p);
         prevoirMaj();
-        if (seule) dire(r == Soin.FAIT ? p.nom + " traitée."
-                : r == Soin.REFUSE ? p.nom + " : le jeu refuse (déjà traitée, ou plus de soins aujourd'hui)."
-                : p.nom + " : soin envoyé, effet non confirmé.");
+        if (seule) {
+            if (r == Soin.FAIT) succes(p.nom + " traitée.");
+            else erreur(r == Soin.REFUSE ? p.nom + " : soin refusé par le jeu (déjà traitée, ou plus de soins aujourd'hui)."
+                    : p.nom + " : soin envoyé, effet non confirmé.");
+        }
         return r == Soin.FAIT;
     }
 
@@ -448,8 +459,7 @@ public class OngletPlantes {
                 + (incertains > 0 ? ", " + incertains + " sans confirmation" : "")
                 + (refus > 0 ? ", " + refus + " refusée(s) (déjà traitées ?)" : "")
                 + (fin != null ? " — " + fin + "." : ".");
-        dire(bilan);
-        InfoJeu.dire(bilan);
+        if (faits == 0 && (refus > 0 || incertains > 0)) erreur(bilan); else succes(bilan);
     }
 
     // ----------------------------------------------------- liste auto
@@ -457,7 +467,7 @@ public class OngletPlantes {
     /**
      * Surveillance passive. Si l'ecoute s'est installee apres ton entree dans
      * la salle, la liste Users a ete manquee : on redemande le contenu de la
-     * salle (GetHeightMap, comme G-Presets), une fois par salle. Ce n'est pas
+     * salle (GetHeightMap, comme le moteur de l'Atelier), une fois par salle. Ce n'est pas
      * un clic : aucune plante n'est visee ni selectionnee. On ne demande
      * JAMAIS la fiche d'une plante ici (le jeu la montrerait comme un clic).
      */
@@ -480,10 +490,6 @@ public class OngletPlantes {
         t.start();
     }
 
-    /**
-     * Bouton « Lire les détails » : demande la fiche des plantes qui n'en ont
-     * pas (ou une fiche de plus de 10 min), une a la fois, 300 ms d'ecart.
-     */
     /**
      * Les fiches des plantes (vie, croissance, rarete) se lisent toutes seules,
      * vite et sans rien ouvrir dans le jeu (PlanteSuivi.demanderInfoSilencieuse) :
@@ -515,23 +521,6 @@ public class OngletPlantes {
         }, "atelier-plantes-fiches");
         t.setDaemon(true);
         t.start();
-    }
-
-    private void lireDetails() {
-        if (!pret()) return;
-        List<Plante> l = PlanteSuivi.aLire(trier(PlanteSuivi.plantes()), System.currentTimeMillis());
-        if (l.isEmpty()) { dire("Toutes les fiches sont déjà à jour."); return; }
-        int ok = 0, i = 0;
-        for (Plante p : l) {
-            if (arret) break;
-            dire("Lecture des fiches… " + (++i) + "/" + l.size() + " : " + p.nom);
-            if (lireInfo(p)) ok++;
-            Salle.sommeil(300);
-        }
-        prevoirMaj();
-        int manque = i - ok;
-        dire(ok + " fiche(s) lue(s)" + (manque > 0 ? ", " + manque + " sans réponse du jeu" : "")
-                + (arret ? " (arrêté)." : "."));
     }
 
     // -------------------------------------------------------- reproduction
@@ -594,8 +583,7 @@ public class OngletPlantes {
         prevoirMaj();
         String bilan = ok + " reproduction(s) réussie(s)" + (echecs > 0 ? ", " + echecs + " sans résultat du jeu" : "")
                 + (arret ? " (arrêté)." : ".") + (ok > 0 ? " Les graines sont dans ton inventaire." : "");
-        dire(bilan);
-        InfoJeu.dire(bilan);
+        if (ok == 0 && echecs > 0) erreur(bilan); else succes(bilan);
     }
 
     private boolean recolterUne(Plante p, String nom, boolean seule) {
@@ -604,8 +592,8 @@ public class OngletPlantes {
         if (!PlanteSuivi.estAMoi(p, nom)) { if (seule) dire(p.nom + " n'est pas à toi."); return false; }
         if (p.morte) { if (seule) dire(p.nom + " est morte : composte-la plutôt."); return false; }
         if (!p.recoltable && !p.adulte()) { if (seule) dire(p.nom + " n'est pas encore adulte."); return false; }
-        if (!PlanteSuivi.recolter(p.id)) { if (seule) dire("Récolte de " + p.nom + " non envoyée."); return false; }
-        if (seule) dire("Récolte de " + p.nom + " demandée.");
+        if (!PlanteSuivi.recolter(p.id)) { if (seule) erreur("Échec : récolte de " + p.nom + " non envoyée."); return false; }
+        if (seule) succes("Récolte de " + p.nom + " demandée.");
         return true;
     }
 
@@ -619,8 +607,8 @@ public class OngletPlantes {
             if (recolterUne(p, nom, false)) n++;
             Salle.sommeil(1000);
         }
-        dire(n == 0 ? "Aucune de tes plantes n'est prête à récolter." : n + " récolte(s) demandée(s).");
-        if (n > 0) InfoJeu.dire(n + " récolte(s) demandée(s).");
+        if (n == 0) dire("Aucune de tes plantes n'est prête à récolter.");
+        else succes(n + " récolte(s) demandée(s)" + (arret ? " (arrêté)." : "."));
     }
 
     private void composter() {
@@ -639,8 +627,37 @@ public class OngletPlantes {
         if (r.isEmpty() || r.get() != ButtonType.OK) { dire("Compostage annulé."); return; }
         lancer("plantes-composter", () -> {
             if (!pret()) return;
-            PlanteSuivi.composter(p.id);
-            dire("Compostage de " + p.nom + " demandé.");
+            if (!PlanteSuivi.composter(p.id)) erreur("Échec : compostage de " + p.nom + " non envoyé.");
+            else succes("Compostage de " + p.nom + " demandé.");
+        });
+    }
+
+    /** Composte toutes MES plantes mortes de la salle, apres une seule confirmation. */
+    private void toutComposter() {
+        String nom = monNomTxt.getText();
+        if (!aMoiConnu(nom)) return;
+        List<Plante> mortes = new ArrayList<>();
+        for (Plante p : PlanteSuivi.plantes()) if (p.morte && PlanteSuivi.estAMoi(p, nom)) mortes.add(p);
+        if (mortes.isEmpty()) { dire("Aucune de tes plantes n'est morte dans cet appart."); return; }
+        Alert a = new Alert(Alert.AlertType.CONFIRMATION,
+                "Composter tes " + mortes.size() + " plante(s) morte(s) ? C'est définitif : elles disparaissent.",
+                ButtonType.OK, ButtonType.CANCEL);
+        a.setHeaderText(null);
+        a.setTitle("Tout composter");
+        Optional<ButtonType> r = a.showAndWait();
+        if (r.isEmpty() || r.get() != ButtonType.OK) { dire("Compostage annulé."); return; }
+        lancer("plantes-tout-composter", () -> {
+            if (!pret()) return;
+            int n = 0;
+            for (Plante p : mortes) {
+                if (arret) break;
+                dire("Compostage de " + p.nom + "…");
+                if (PlanteSuivi.composter(p.id)) n++;
+                Salle.sommeil(1000);
+            }
+            String bilan = n + " plante(s) compostée(s)" + (arret ? " (arrêté)." : ".");
+            if (n == 0 && !arret) erreur("Échec : aucun compostage envoyé.");
+            else succes(bilan);
         });
     }
 

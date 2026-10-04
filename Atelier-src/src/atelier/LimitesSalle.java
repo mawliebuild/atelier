@@ -33,27 +33,40 @@ final class LimitesSalle {
     private static volatile int salle = -1;
     private static volatile boolean branche = false;
 
+    /** Chaque ecoute est marquee seulement une fois posee : un echec est retente au tour suivant. */
+    private static volatile boolean brancheUsers = false, brancheRemove = false, brancheReady = false;
+
     private static synchronized void brancher() {
         if (branche) return;
         extension.GPresets gp = Salle.gp();
         if (gp == null) return;
-        branche = true;
         try {
-            gp.intercept(HMessage.Direction.TOCLIENT, "Users", m -> {
-                try {
-                    verifierSalle();
-                    for (HEntity e : HEntity.parse(new HPacket(m.getPacket()))) {
-                        if (e == null) continue;
-                        HEntityType t = e.getEntityType();
-                        if (t == HEntityType.PET || t == HEntityType.BOT || t == HEntityType.OLD_BOT) entites.put(e.getIndex(), t);
-                    }
-                } catch (Throwable ignored) { }
-            });
-            gp.intercept(HMessage.Direction.TOCLIENT, "UserRemove", m -> {
-                try { entites.remove(Integer.parseInt(new HPacket(m.getPacket()).readString().trim())); }
-                catch (Throwable ignored) { }
-            });
-            gp.intercept(HMessage.Direction.TOCLIENT, "RoomReady", m -> { entites.clear(); salle = -1; });
+            if (!brancheUsers) {
+                gp.intercept(HMessage.Direction.TOCLIENT, "Users", m -> {
+                    try {
+                        verifierSalle();
+                        for (HEntity e : HEntity.parse(new HPacket(m.getPacket()))) {
+                            if (e == null) continue;
+                            HEntityType t = e.getEntityType();
+                            if (t == HEntityType.PET || t == HEntityType.BOT || t == HEntityType.OLD_BOT) entites.put(e.getIndex(), t);
+                        }
+                    } catch (Throwable ignored) { }
+                });
+                brancheUsers = true;
+            }
+            if (!brancheRemove) {
+                gp.intercept(HMessage.Direction.TOCLIENT, "UserRemove", m -> {
+                    if (entites.isEmpty()) return;          // test avant toute copie
+                    try { entites.remove(Integer.parseInt(new HPacket(m.getPacket()).readString().trim())); }
+                    catch (Throwable ignored) { }
+                });
+                brancheRemove = true;
+            }
+            if (!brancheReady) {
+                gp.intercept(HMessage.Direction.TOCLIENT, "RoomReady", m -> { entites.clear(); salle = -1; });
+                brancheReady = true;
+            }
+            branche = true;
         } catch (Throwable t) {
             System.err.println("[Atelier] limites de l'appart : " + t);
         }
@@ -80,8 +93,10 @@ final class LimitesSalle {
                     int nm = Salle.sols().size() + Salle.murs().size();
                     int na = 0, nb = 0;
                     for (HEntityType ty : entites.values()) { if (ty == HEntityType.PET) na++; else nb++; }
-                    String sm = ligne("Mobis", nm, MAX_MOBIS), sa = ligne("Animaux et monster plants", na, MAX_ANIMAUX),
-                           sb = ligne("Bots", nb, MAX_BOTS);
+                    boolean connu = branche;   // sans ecoute des entites, 0 serait faux
+                    String sm = ligne("Mobis", nm, MAX_MOBIS),
+                           sa = connu ? ligne("Animaux et monster plants", na, MAX_ANIMAUX) : "Animaux et monster plants : inconnu",
+                           sb = connu ? ligne("Bots", nb, MAX_BOTS) : "Bots : inconnu";
                     Platform.runLater(() -> { mobis.setText(sm); animaux.setText(sa); bots.setText(sb); });
                 } catch (Throwable ignored) { }
             }

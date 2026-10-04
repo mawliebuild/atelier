@@ -131,7 +131,7 @@ public final class Marche {
                 prix.put(k, new Prix(j.optInt("moyen"), j.optInt("offres"), j.optInt("vendus"), j.optLong("le")));
             }
         } catch (Throwable t) {
-            System.err.println("[Atelier] prix : fichier illisible, il sera refait : " + t);
+            Journal.debug("prix : fichier illisible, il sera refait : " + t);
         }
     }
 

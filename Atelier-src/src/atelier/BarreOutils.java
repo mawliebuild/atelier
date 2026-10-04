@@ -158,8 +158,18 @@ public class BarreOutils implements Ancrage.Ancrable {
                 + " -fx-padding: 3 7 3 7; -fx-font-size: 12px; -fx-font-weight: bold;");
         bulle.getContent().add(bulleTexte);
 
+        // Petite fleche a gauche pour reduire / deplier (comme les barres du bas).
+        fleche.getStyleClass().add("barre-bouton");
+        fleche.setFocusTraversable(false);
+        fleche.setStyle("-fx-min-width: 14; -fx-pref-width: 14; -fx-max-width: 14;"
+                + " -fx-min-height: 36; -fx-pref-height: 36; -fx-max-height: 36; -fx-padding: 0;");
+        fleche.setOnAction(a -> { reduite = !reduite; prefs.putBoolean("barre.haut.reduite", reduite); appliquerReduite(); });
+        barre.getChildren().add(0, fleche);
+        appliquerReduite();
+
         HBox racine = new HBox(barre);
         racine.setStyle("-fx-background-color: transparent; -fx-padding: 0 0 3 0;");
+        Deplacement.activer(stage, racine, "haut", this::recentrer);
         Scene scene = new Scene(racine);
         scene.setFill(Color.TRANSPARENT);
         if (css != null) scene.getStylesheets().add(css);
@@ -180,6 +190,30 @@ public class BarreOutils implements Ancrage.Ancrable {
     /** Allume le bouton du menu ouvert ; null = aucun. */
     public void actif(String cle) {
         for (ToggleButton b : boutons) b.setSelected(b.getUserData().equals(cle));
+        if (reduite) appliquerReduite();
+    }
+
+    // ------------------------------------------------------------ reduction
+
+    private final Button fleche = new Button();
+    private final java.util.prefs.Preferences prefs = java.util.prefs.Preferences.userRoot().node("atelier");
+    private boolean reduite = prefs.getBoolean("barre.haut.reduite", false);
+
+    /**
+     * Reduite : il ne reste que la fleche et l'icone du menu ouvert (aucune
+     * si rien n'est ouvert) ; le resume de la salle se cache aussi.
+     */
+    private void appliquerReduite() {
+        fleche.setGraphic(Icones.trace(BarreIcones.trace(false, !reduite), "icone-barre"));
+        for (javafx.scene.Node n : barre.getChildren()) {
+            if (n == fleche) continue;
+            boolean voir = !reduite || (n instanceof ToggleButton && ((ToggleButton) n).isSelected());
+            n.setVisible(voir);
+            n.setManaged(voir);
+        }
+        survol(fleche, reduite ? "Déplier le menu" : "Réduire le menu");
+        bulle.hide();
+        if (stage.isShowing()) { stage.sizeToScene(); recentrer(); }
     }
 
     // ---------------------------------------------------------------- outils
@@ -195,7 +229,7 @@ public class BarreOutils implements Ancrage.Ancrable {
     /** Bulle sous le bouton, sans delai ni animation. */
     private void survol(Region b, String nom) {
         b.setOnMouseEntered(e -> {
-            bulleTexte.setText(nom);
+            bulleTexte.setText(WindowsClavier.texte(nom));
             Bounds r = b.localToScreen(b.getBoundsInLocal());
             if (r == null) return;
             bulle.show(stage, r.getMinX(), r.getMaxY() + 6);
@@ -214,14 +248,16 @@ public class BarreOutils implements Ancrage.Ancrable {
     }
 
     private void recentrer() {
+        // place normale + decalage choisi en glissant la barre (Deplacement)
+        double dx = Deplacement.dx("haut"), dy = Deplacement.dy("haut");
         if (habbo == null) {
             javafx.geometry.Rectangle2D e = javafx.stage.Screen.getPrimary().getVisualBounds();
-            stage.setX(e.getMinX() + e.getWidth() / 2 - stage.getWidth() / 2);
-            stage.setY(e.getMinY() + MARGE_HAUT);
+            stage.setX(e.getMinX() + e.getWidth() / 2 - stage.getWidth() / 2 + dx);
+            stage.setY(e.getMinY() + MARGE_HAUT + dy);
             return;
         }
-        stage.setX(habbo[0] + habbo[2] / 2 - stage.getWidth() / 2);
-        stage.setY(habbo[1] + TITRE_MAC + MARGE_HAUT);
+        stage.setX(habbo[0] + habbo[2] / 2 - stage.getWidth() / 2 + dx);
+        stage.setY(habbo[1] + TITRE_MAC + MARGE_HAUT + dy);
     }
 
     // --------------------------------------------------------- resume salle
@@ -248,7 +284,7 @@ public class BarreOutils implements Ancrage.Ancrable {
     }
 
     private void majResume() {
-        GPresets gp = AtelierLauncher.gpresets();
+        GPresets gp = AtelierLauncher.moteur();
         String niveau, nom, sous;
         if (gp == null) {
             niveau = "attente"; nom = "Atelier"; sous = "Connexion à Habbo...";

@@ -23,12 +23,12 @@ import java.util.*;
  * Volet « Liste de courses » : ce qu'il faut pour monter un appart, et ce qui
  * manque dans l'inventaire.
  *
- * Source : un appart G-Presets enregistre (wired compris, ce sont des mobis
+ * Source : un appart enregistre (wired compris, ce sont des mobis
  * comme les autres), la zone, ou toute la salle. Pour chaque mobi : besoin,
  * quantite en inventaire (+ dans la salle si l'option est cochee, comme le
- * « useRoomFurni » de G-Presets), manque, et s'il est au catalogue BC.
+ * « useRoomFurni » du moteur de l'Atelier), manque, et s'il est au catalogue BC.
  *
- * Le BC se lit dans G-Presets (getFloorProduct / getAnyWallProduct) ; tant
+ * Le BC se lit dans le moteur de l'Atelier (getFloorProduct / getAnyWallProduct) ; tant
  * qu'il n'est pas charge, on se rabat sur son cache disque (BC_CATALOG_*.txt).
  * Ces donnees ne contiennent pas de prix : pas de colonne prix.
  */
@@ -64,6 +64,8 @@ public class OutilCourses {
     private List<Ligne> lignes = new ArrayList<>();
     private String titreSource = "";
     private volatile boolean enCours = false;
+    /** Une demande arrivee pendant un calcul : on recalcule a la fin. */
+    private volatile boolean aRefaire = false;
 
     // prix estimes (habbofurni.xyz)
     private CheckBox prixDeTout;
@@ -79,7 +81,7 @@ public class OutilCourses {
 
         choixAppart = new ComboBox<>();
         choixAppart.setMaxWidth(Double.MAX_VALUE);
-        choixAppart.setPromptText("Aucun appart dans le dossier G-Presets");
+        choixAppart.setPromptText("Aucun appart dans le dossier des apparts");
         choixAppart.setOnShowing(e -> chargerListe());
         choixAppart.valueProperty().addListener((o, a, b) -> { if (rAppart.isSelected()) calculer(); });
         choixAppart.disableProperty().bind(rAppart.selectedProperty().not());
@@ -172,8 +174,7 @@ public class OutilCourses {
         estimation.setWrapText(true);
         avertPrix = new Label();
         avertPrix.setWrapText(true);
-        avertPrix.setStyle("-fx-font-weight: bold; -fx-text-fill: #8a4b00; -fx-background-color: #fff3d6; "
-                + "-fx-border-color: #e0a84a; -fx-border-radius: 3; -fx-background-radius: 3; -fx-padding: 6;");
+        avertPrix.getStyleClass().add("etat-ligne");   // texte discret, sans encadre
         avertPrix.setMaxWidth(Double.MAX_VALUE);
         majAvertissement();
 
@@ -231,7 +232,8 @@ public class OutilCourses {
     // ------------------------------------------------------------ calcul
 
     private void calculer() {
-        if (enCours) return;
+        if (enCours) { aRefaire = true; return; }
+        aRefaire = false;
         final String source = rAppart.isSelected() ? S_APPART : rZone.isSelected() ? S_ZONE : S_SALLE;
         final String appart = choixAppart.getValue();
         final boolean salle = avecSalle.isSelected() && !rSalle.isSelected();
@@ -265,6 +267,8 @@ public class OutilCourses {
             final List<Ligne> r = res; final String m = msg; final String ti = titre;
             Platform.runLater(() -> {
                 enCours = false;
+                // la source a change pendant le calcul : ce resultat est perime
+                if (aRefaire) { aRefaire = false; calculer(); return; }
                 majVoyants();
                 if (m != null) { etat.setText("Impossible : " + m + "."); lignes = new ArrayList<>(); afficher(); return; }
                 lignes = r; titreSource = ti;
@@ -392,7 +396,7 @@ public class OutilCourses {
     // ------------------------------------------------------- catalogue BC
 
     /**
-     * Disponibilite au BC. D'abord le catalogue charge par G-Presets ; sinon
+     * Disponibilite au BC. D'abord le catalogue charge par le moteur de l'Atelier ; sinon
      * son cache disque, lignes « F|W  classe  page  offre  [param] ».
      */
     private static final class Catalogue {
@@ -426,7 +430,7 @@ public class OutilCourses {
     /** Le plus recent BC_CATALOG_*.txt de ~/Documents/Atelier/catalog, ou null. */
     private static Set<String> cacheDisque() {
         try {
-            File d = new File(System.getProperty("user.home"), "Documents/Atelier/catalog");
+            File d = new File(Dossiers.maison(), "Documents" + File.separator + "Atelier" + File.separator + "catalog");
             File[] fs = d.listFiles((x, n) -> n.startsWith("BC_CATALOG_") && n.endsWith(".txt"));
             if (fs == null || fs.length == 0) return null;
             File plusRecent = Collections.max(Arrays.asList(fs), Comparator.comparingLong(File::lastModified));
@@ -475,14 +479,14 @@ public class OutilCourses {
 
     private void majVoyants() {
         GPresets gp = Salle.gp();
-        if (gp == null) { vInv.regler("absent", "G-Presets pas encore prêt"); vBc.regler("absent", "G-Presets pas encore prêt"); return; }
+        if (gp == null) { vInv.regler("absent", "L'Atelier n'est pas encore prêt"); vBc.regler("absent", "L'Atelier n'est pas encore prêt"); return; }
         String ei = "?";
         int n = 0;
         try { ei = String.valueOf(gp.getInventory().getState()); n = gp.getInventory().getInventoryItems().size(); }
         catch (Throwable ignored) { }
         if ("LOADED".equals(ei)) vInv.regler("ok", "Chargé (" + n + " objets).");
         else if ("LOADING".equals(ei)) vInv.regler("attente", "Chargement en cours...");
-        else vInv.regler("absent", "Non chargé — « Recharger l'inventaire »");
+        else vInv.regler("absent", "Non chargé : ouvre l'inventaire dans le jeu");
         String eb = "?";
         try { eb = String.valueOf(gp.getCatalog().getState()); } catch (Throwable ignored) { }
         if ("COLLECTED".equals(eb)) vBc.regler("ok", "Chargé.");
@@ -539,25 +543,6 @@ public class OutilCourses {
         vuInventaireSalle = sig;
         majVoyants();
         if (!premier || rAppart.isSelected()) calculer();
-    }
-
-    private void rechargerInventaire() {
-        GPresets gp = Salle.gp();
-        if (gp == null) { etat.setText("G-Presets pas encore prêt."); return; }
-        etat.setText("Demande de l'inventaire envoyée...");
-        Salle.tache("courses-inventaire", () -> {
-            try { gp.getInventory().requestInventory(); }
-            catch (Throwable t) { Platform.runLater(() -> etat.setText("Échec de la demande : " + t)); return; }
-            for (int i = 0; i < 60; i++) {
-                Salle.sommeil(500);
-                Platform.runLater(this::majVoyants);
-                if (inventaireCharge() && i >= 2) break;
-            }
-            Platform.runLater(() -> {
-                if (!inventaireCharge()) etat.setText("L'inventaire n'est toujours pas chargé (ouvre-le dans le jeu ?).");
-                calculer();
-            });
-        });
     }
 
     // ------------------------------------------------------- prix estimes

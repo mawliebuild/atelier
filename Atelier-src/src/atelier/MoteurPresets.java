@@ -9,23 +9,23 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * G-Presets, avec ses messages dans le jeu en francais.
+ * le module Presets de l'Atelier, avec ses messages dans le jeu en francais.
  *
- * G-Presets ecrit tout ce qu'il dit au joueur par sendVisualChatInfo (un
+ * Le module Presets ecrit tout ce qu'il dit au joueur par sendVisualChatInfo (un
  * Whisper envoye au client), en anglais. Cette sous-classe le traduit au
  * passage ; un message inconnu passe tel quel. AppartsCreator la fait
  * instancier par le FXMLLoader a la place de GPresets.
  *
- * L'annotation est recopiee : ExtensionInfo n'est pas @Inherited, et G-Earth
+ * L'annotation est recopiee : ExtensionInfo n'est pas @Inherited, et le proxy
  * la lit sur la classe exacte de l'extension.
  */
 @ExtensionInfo(
-        Title = "G-Presets",
-        Description = "Never do anything twice mod. by TH",
+        Title = "Atelier",
+        Description = "Presets de l'Atelier",
         Version = "1.3.7",
-        Author = "sirjonasxx"
+        Author = "Atelier"
 )
-public class GPresetsFr extends GPresets {
+public class MoteurPresets extends GPresets {
 
     @Override
     public void sendVisualChatInfo(String message) {
@@ -111,7 +111,7 @@ public class GPresetsFr extends GPresets {
         t("WARNING: Unknown wall item '%s', skipping", "ATTENTION : mobi mural « %s » inconnu, ignoré");
 
         // erreurs generales
-        t("ERROR: extension not fully initialized yet", "ERREUR : G-Presets n'a pas fini de démarrer");
+        t("ERROR: extension not fully initialized yet", "ERREUR : l'Atelier n'a pas fini de démarrer");
         t("ERROR: Inventory, catalog or furnidata is unavailable", "ERREUR : inventaire, catalogue BC ou furnidata indisponible");
         t("ERROR: No preset selected!", "ERREUR : aucun appart choisi !");
         t("ERROR: select the preset first", "ERREUR : choisis d'abord un appart");

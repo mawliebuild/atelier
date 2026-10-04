@@ -44,6 +44,11 @@ public class OutilAligner {
     // ------------------------------------------------------------------ UI
 
     public Tab construire() {
+        // fenetre ouverte : le mobi mural choisi reste allume dans le jeu
+        MiseEnValeur.fournir("murs-aligner", () -> {
+            SelectionMur.Mur m = SelectionMur.courant();
+            return m == null ? java.util.List.<String>of() : java.util.List.of("m" + m.id);
+        });
         selLbl = Ui.valeur("Aucun mur sélectionné");
 
         nombre = spin(1, 200, 5);
@@ -63,7 +68,7 @@ public class OutilAligner {
         ajouter = new Button("Ajouter les copies");
         ajouter.getStyleClass().add("primaire");
         ajouter.setMaxWidth(Double.MAX_VALUE);
-        ajouter.setOnAction(e -> lancer());
+        ajouter.setOnAction(e -> { if (enCours) arreter = true; else lancer(); });
 
         etat = Ui.etat();
 
@@ -126,7 +131,7 @@ public class OutilAligner {
         ajouterGrille = new Button("Poser la grille");
         ajouterGrille.getStyleClass().add("primaire");
         ajouterGrille.setMaxWidth(Double.MAX_VALUE);
-        ajouterGrille.setOnAction(e -> lancerGrille());
+        ajouterGrille.setOnAction(e -> { if (enCours) arreter = true; else lancerGrille(); });
 
         etatGrille = Ui.etat();
         bandeauGrille = EcartsBandeau.grille(pasDroite, pasHaut);
@@ -207,7 +212,7 @@ public class OutilAligner {
         if (SelectionMur.courant() != null) bandeauGrille.enregistrerAPose();   // l'ecart se retient pour ce mobi
         List<int[]> d = decalagesGrille(colonnes.getValue(), rangees.getValue(),
                 pasDroite.getValue(), pasHaut.getValue());
-        if (d.isEmpty()) { direGrille("Une grille de 1 × 1, c'est le mur déjà posé."); return; }
+        if (d.isEmpty()) { direGrille("Grille impossible : en 1 × 1, c'est le mur déjà posé."); return; }
         PoseMur.Source src = gBc.isSelected() ? PoseMur.Source.BC
                 : gInvBc.isSelected() ? PoseMur.Source.INVENTAIRE_PUIS_BC
                 : PoseMur.Source.INVENTAIRE;
@@ -219,6 +224,7 @@ public class OutilAligner {
     private void majSelection() {
         SelectionMur.Mur m = SelectionMur.courant();
         boolean actif = (m != null);
+        if (enCours) return;   // pendant une pose, les boutons servent a Arreter (finPose remet tout)
         if (reglages != null) { reglages.setDisable(!actif); ajouter.setDisable(!actif); }
         if (reglagesGrille != null) { reglagesGrille.setDisable(!actif); ajouterGrille.setDisable(!actif); }
         String aide = actif ? "Mur choisi : « " + m.nom + " »." : "Clique un mobi mural dans le jeu pour le choisir.";
@@ -257,14 +263,14 @@ public class OutilAligner {
     private void lancerAvec(List<int[]> decalages, PoseMur.Source src,
                             java.util.function.Consumer<String> dire, String nomOutil) {
         SelectionMur.Mur ref = SelectionMur.courant();
-        if (ref == null) { dire.accept("Clique un mur dans le jeu pour le prendre en référence."); return; }
-        GPresets gp = AtelierLauncher.gpresets();
-        if (gp == null) { dire.accept("G-Presets pas encore prêt."); return; }
-        if (ref.typeId < 0) { dire.accept("Type du mur inconnu — reclique le mur dans le jeu."); return; }
+        if (ref == null) { dire.accept("Pose impossible : clique d'abord un mur dans le jeu."); return; }
+        GPresets gp = AtelierLauncher.moteur();
+        if (gp == null) { dire.accept("Pose impossible : l'Atelier n'est pas encore prêt."); return; }
+        if (ref.typeId < 0) { dire.accept("Pose impossible : type du mur inconnu, reclique le mur dans le jeu."); return; }
 
         WallPosition p;
         try { p = new WallPosition(ref.position); }
-        catch (Throwable t) { dire.accept("Position illisible : " + ref.position); return; }
+        catch (Throwable t) { dire.accept("Pose impossible : position du mur illisible (" + ref.position + ")."); return; }
 
         List<String> cibles = new ArrayList<>();
         boolean faceGauche = (p.getDirection() == 'l');
@@ -275,10 +281,57 @@ public class OutilAligner {
                     wx, wy, p.getOffsetX(), p.getOffsetY() + d[1], p.getDirection()));
         }
 
-        dire.accept("Pose de " + cibles.size() + " copie(s) de « " + ref.nom + " »...");
-        Thread t = new Thread(() -> poser(gp, ref, cibles, src, dire, nomOutil), "atelier-aligner");
+        // Pose en masse : apercu chiffre, puis un second clic pour confirmer.
+        long now = System.currentTimeMillis();
+        String sig = nomOutil + ":" + cibles.size() + ":" + ref.id;
+        if (cibles.size() > SEUIL_CONFIRMATION && !(sig.equals(aConfirmer) && now - aConfirmerA < 15000)) {
+            aConfirmer = sig;
+            aConfirmerA = now;
+            dire.accept(cibles.size() + " copies de « " + ref.nom + " » à poser (source : "
+                    + (src == PoseMur.Source.BC ? "BC" : src == PoseMur.Source.INVENTAIRE ? "inventaire" : "inventaire puis BC")
+                    + "). Reclique pour confirmer.");
+            return;
+        }
+        aConfirmer = null;
+
+        enCours = true;
+        arreter = false;
+        debutPose();
+        dire.accept("Pose de " + cibles.size() + " copie(s) de « " + ref.nom + " »…");
+        Thread t = new Thread(() -> {
+            try { poser(gp, ref, cibles, src, dire, nomOutil); }
+            catch (Throwable e) { Journal.erreur(nomOutil + " : pose interrompue", e); }
+            finally { enCours = false; Platform.runLater(this::finPose); }
+        }, "atelier-aligner");
         t.setDaemon(true);
         t.start();
+    }
+
+    /** Au-dela, la pose demande un second clic (apercu chiffre). */
+    static final int SEUIL_CONFIRMATION = 20;
+    private volatile boolean enCours = false, arreter = false;
+    private String aConfirmer = null;
+    private long aConfirmerA = 0;
+    private String texteAjouter, texteGrille;
+
+    /** Pendant la pose : un seul fil, et les deux boutons deviennent « Arrêter ». */
+    private void debutPose() {
+        if (ajouter != null) {
+            texteAjouter = ajouter.getText();
+            ajouter.setText("Arrêter"); ajouter.setDisable(false);
+            if (reglages != null) reglages.setDisable(true);
+        }
+        if (ajouterGrille != null) {
+            texteGrille = ajouterGrille.getText();
+            ajouterGrille.setText("Arrêter"); ajouterGrille.setDisable(false);
+            if (reglagesGrille != null) reglagesGrille.setDisable(true);
+        }
+    }
+
+    private void finPose() {
+        if (ajouter != null && texteAjouter != null) ajouter.setText(texteAjouter);
+        if (ajouterGrille != null && texteGrille != null) ajouterGrille.setText(texteGrille);
+        majSelection();
     }
 
     /**
@@ -293,12 +346,21 @@ public class OutilAligner {
         java.util.Set<Integer> utilises = new java.util.HashSet<>();
         int pose = 0, echecs = 0, k = 0;
         String raison = "";
-        System.out.println("[Atelier] " + nomOutil + " : " + cibles.size() + " copie(s) de « " + ref.nom
+        String arret = null;
+        int salle = Salle.salleId();
+        long dernierEnvoi = 0;
+        Journal.debug(nomOutil + " : " + cibles.size() + " copie(s) de « " + ref.nom
                 + " » (type " + ref.typeId + ", état " + ref.etat + ") depuis " + ref.position + ", source " + src);
         for (String cible : cibles) {
+            if (arreter) { arret = "pose arrêtée"; break; }
+            if (Salle.salleId() != salle) { arret = "pose interrompue, tu as changé de salle"; break; }
+            // au moins 150 ms entre deux envois, meme si la copie precedente est apparue tout de suite
+            long ecart = System.currentTimeMillis() - dernierEnvoi;
+            if (ecart < 150) Salle.sommeil(150 - ecart);
             k++;
             java.util.Set<Integer> avant = new java.util.HashSet<>();
             for (gearth.extensions.parsers.HWallItem w : Salle.murs()) avant.add(w.getId());
+            dernierEnvoi = System.currentTimeMillis();
             PoseMur.Resultat r = PoseMur.poser(gp, ref.typeId, ref.etat, cible, src, utilises);
             String ligne;
             if (!r.ok) {
@@ -311,18 +373,23 @@ public class OutilAligner {
                 echecs++; raison = "refusée par le jeu (position hors du mur ?)";
                 ligne = "envoyée " + r.detail + ", mais refusée par le jeu";
             }
-            System.out.println("[Atelier] " + nomOutil + " " + k + "/" + cibles.size() + " " + cible + " : " + ligne);
-            dire.accept(nomOutil + " : " + k + "/" + cibles.size() + " — " + ligne);
+            Journal.debug(nomOutil + " " + k + "/" + cibles.size() + " " + cible + " : " + ligne);
+            dire.accept(nomOutil + " : " + k + "/" + cibles.size() + " — " + ligne + "…");   // « … » : progression, pas un resultat
             // tout manque dans l'inventaire / au BC : inutile d'insister
             if (!r.ok && pose == 0 && k >= 2) {
                 echecs += cibles.size() - k;
                 break;
             }
         }
-        String bilan = pose + " copie(s) posée(s)" + (echecs > 0 ? ", " + echecs + " échec(s) : " + raison : "") + ".";
-        System.out.println("[Atelier] " + nomOutil + " : " + bilan);
+        String bilan = arret != null
+                ? arret + " (" + pose + " / " + cibles.size() + " copie(s) posée(s)"
+                        + (echecs > 0 ? ", " + echecs + " échec(s) : " + raison : "") + ")."
+                : pose + " copie(s) posée(s)" + (echecs > 0 ? ", " + echecs + " échec(s) : " + raison : "") + ".";
+        bilan = nomOutil + " : " + bilan;
+        // un seul message de resultat (la ligne d'etat garde le meme texte, sans le redire)
+        if (echecs > 0 || (arret != null && arret.contains("salle"))) Journal.erreur(bilan);
+        else Journal.succes(bilan);
         dire.accept(bilan);
-        InfoJeu.dire(nomOutil + " : " + bilan);
     }
 
     /** Un nouveau mobi mural du type est-il apparu ? Attend 2 s au plus. */

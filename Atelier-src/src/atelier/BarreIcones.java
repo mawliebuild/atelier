@@ -91,6 +91,7 @@ public class BarreIcones implements Ancrage.Ancrable {
 
         HBox racine = new HBox(barre);
         racine.setStyle("-fx-background-color: transparent; -fx-padding: 0 0 3 0;");
+        Deplacement.activer(stage, racine, verticale ? "verticale" : "horizontale", this::replacer);
         Scene scene = new Scene(racine);
         scene.setFill(Color.TRANSPARENT);
         if (css != null) scene.getStylesheets().add(css);
@@ -144,7 +145,7 @@ public class BarreIcones implements Ancrage.Ancrable {
     /** Le nom au survol : au-dessus du bouton (horizontale), a sa gauche (verticale). */
     private void survol(javafx.scene.layout.Region b, String nom) {
         b.setOnMouseEntered(e -> {
-            bulleTexte.setText(nom);
+            bulleTexte.setText(WindowsClavier.texte(nom));
             javafx.geometry.Bounds r = b.localToScreen(b.getBoundsInLocal());
             if (r == null) return;
             bulle.show(stage, r.getMinX(), r.getMinY());
@@ -223,12 +224,14 @@ public class BarreIcones implements Ancrage.Ancrable {
             bas = habbo[1] + habbo[3] - BarreMesure.BAS;
         }
         boolean v = voisine != null && voisine.isShowing();
+        String cle = verticale ? "verticale" : "horizontale";
+        double dx = Deplacement.dx(cle), dy = Deplacement.dy(cle);   // glissee ailleurs (Deplacement)
         if (verticale) {
-            stage.setX(droite - l);
-            stage.setY(bas - (v ? voisine.getHeight() + ECART : 0) - h);
+            stage.setX(droite - l + dx);
+            stage.setY(bas - (v ? voisine.getHeight() + ECART : 0) - h + dy);
         } else {
-            stage.setX(droite - (v ? voisine.getWidth() + ECART : 0) - l);
-            stage.setY(bas - h);
+            stage.setX(droite - (v ? voisine.getWidth() + ECART : 0) - l + dx);
+            stage.setY(bas - h + dy);
         }
     }
 }

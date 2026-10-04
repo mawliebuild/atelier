@@ -16,9 +16,8 @@ import javafx.scene.layout.*;
 import java.util.List;
 
 /**
- * Deplace un mobi mural, avec les memes reglages que le Poster mover de
- * G-BuildTools, qui ne pouvait pas cohabiter avec G-Presets (deux classes
- * furnidata.FurniDataTools homonymes).
+ * Deplace un mobi mural, avec les reglages d'un deplaceur d'affiches
+ * classique, integre a l'Atelier.
  *
  * Une position de mur s'ecrit ":w=x,y l=offX,offY d" :
  *   - w=x,y        le pan de mur        -> bloc « Position »
@@ -38,6 +37,11 @@ public class OutilDeplacer {
     // ------------------------------------------------------------------ UI
 
     public Tab construire() {
+        // fenetre ouverte : le mobi mural choisi reste allume dans le jeu
+        MiseEnValeur.fournir("murs-deplacer", () -> {
+            SelectionMur.Mur m = SelectionMur.courant();
+            return m == null ? java.util.List.<String>of() : java.util.List.of("m" + m.id);
+        });
         nomSel = Ui.valeur("Aucun mur sélectionné");
         codeSel = new TextField();
         codeSel.setStyle("-fx-font-family: monospace;");
@@ -203,21 +207,21 @@ public class OutilDeplacer {
 
     private void deplacer(int dx, int dy, boolean surLePan) {
         SelectionMur.Mur m = SelectionMur.courant();
-        if (m == null) { note("Aucun mur sélectionné."); return; }
-        GPresets gp = AtelierLauncher.gpresets();
-        if (gp == null) { note("G-Presets pas encore prêt."); return; }
+        if (m == null) { echec("Aucun mur sélectionné."); return; }
+        GPresets gp = AtelierLauncher.moteur();
+        if (gp == null) { echec("L'Atelier n'est pas encore prêt."); return; }
 
         WallPosition p;
         try { p = new WallPosition(m.position); }
-        catch (Throwable t) { note("Position illisible : " + m.position); return; }
+        catch (Throwable t) { echec("Position illisible : " + m.position); return; }
 
-        // Correspondance reprise telle quelle du Poster mover de G-BuildTools :
+        // Correspondance reprise telle quelle du deplaceur d'affiches classique :
         //   Position : haut = y-, bas = y+, gauche = x-, droite = x+
         //   Offset   : haut = offY-, bas = offY+, gauche = offX-, droite = offX+
         // Ce qui trompait, ce n'etait pas les axes mais la disposition en croix :
         // sur une grille isometrique, ces quatre sens sont des DIAGONALES a
         // l'ecran, d'ou les boutons en losange ci-dessous.
-        // Correspondance de G-BuildTools, telle quelle : haut = y-, bas = y+,
+        // Correspondance classique, telle quelle : haut = y-, bas = y+,
         // gauche = x-, droite = x+. L'adaptation selon la face du mur ne vaut que
         // pour l'Aligner, qui pose des copies en ligne.
         String cible = surLePan
@@ -232,13 +236,13 @@ public class OutilDeplacer {
     /** Deplace le mur selectionne exactement au code saisi : copier-coller de position. */
     private void appliquerCode() {
         SelectionMur.Mur m = SelectionMur.courant();
-        if (m == null) { note("Aucun mur sélectionné."); return; }
-        GPresets gp = AtelierLauncher.gpresets();
-        if (gp == null) return;
+        if (m == null) { echec("Aucun mur sélectionné."); return; }
+        GPresets gp = AtelierLauncher.moteur();
+        if (gp == null) { echec("L'Atelier n'est pas encore prêt."); return; }
         String code = codeSel.getText() == null ? "" : codeSel.getText().trim();
         try { new WallPosition(code); }
         catch (Throwable t) {
-            note("Code invalide : « " + code + " »   (attendu : :w=x,y l=oX,oY r)");
+            echec("Code invalide : « " + code + " » (attendu : :w=x,y l=oX,oY r)");
             return;
         }
         envoyer(gp, m, code);
@@ -247,23 +251,24 @@ public class OutilDeplacer {
     /** Pose une copie du mur selectionne a la position du code. */
     private void dupliquer() {
         SelectionMur.Mur m = SelectionMur.courant();
-        if (m == null) { note("Aucun mur sélectionné."); return; }
-        GPresets gp = AtelierLauncher.gpresets();
-        if (gp == null) return;
+        if (m == null) { echec("Aucun mur sélectionné."); return; }
+        GPresets gp = AtelierLauncher.moteur();
+        if (gp == null) { echec("L'Atelier n'est pas encore prêt."); return; }
         if (m.typeId < 0) {
-            note("Type du mur inconnu — refais un Option + clic sur le mur.");
+            echec("Type du mur inconnu : refais un Option + clic sur le mur.");
             return;
         }
         String code = codeSel.getText() == null ? "" : codeSel.getText().trim();
         try { new WallPosition(code); }
-        catch (Throwable t) { note("Code invalide : « " + code + " »"); return; }
+        catch (Throwable t) { echec("Code invalide : « " + code + " »"); return; }
 
         PoseMur.Source src = sBc.isSelected() ? PoseMur.Source.BC
                 : sInvBc.isSelected() ? PoseMur.Source.INVENTAIRE_PUIS_BC
                 : PoseMur.Source.INVENTAIRE;
         PoseMur.Resultat r = PoseMur.poser(gp, m.typeId, m.etat, code, src,
                 new java.util.HashSet<>());
-        note((r.ok ? "Copie posée " : "ÉCHEC : ") + r.detail + "   " + code);
+        if (r.ok) reussi("Copie posée " + r.detail + ".");
+        else echec("Échec de la copie : " + r.detail + ".");
     }
 
     private static RadioButton radio(String t, ToggleGroup g, boolean sel) {
@@ -275,26 +280,26 @@ public class OutilDeplacer {
 
     private void pivoter() {
         SelectionMur.Mur m = SelectionMur.courant();
-        if (m == null) { note("Aucun mur sélectionné."); return; }
-        GPresets gp = AtelierLauncher.gpresets();
-        if (gp == null) return;
+        if (m == null) { echec("Aucun mur sélectionné."); return; }
+        GPresets gp = AtelierLauncher.moteur();
+        if (gp == null) { echec("L'Atelier n'est pas encore prêt."); return; }
         try {
             WallPosition p = new WallPosition(m.position);
             char autre = (p.getDirection() == 'l') ? 'r' : 'l';
             envoyer(gp, m, position(p.getX(), p.getY(),
                     p.getOffsetX(), p.getOffsetY(), autre));
-        } catch (Throwable t) { note("Position illisible."); }
+        } catch (Throwable t) { echec("Position illisible."); }
     }
 
     private void envoyer(GPresets gp, SelectionMur.Mur m, String cible) {
         // un mobi d'un calque verrouille ne bouge pas
         String v = Groupes.refusVerrouMobis(List.of(), List.of(m.id));
-        if (v != null) { InfoJeu.consigne(v); note(v); return; }
+        if (v != null) { echec(v); return; }
         gp.sendToServer(new HPacket("MoveWallItem", HMessage.Direction.TOSERVER, m.id, cible));
         // On tient la position a jour localement : les clics s'enchainent sans
         // attendre la confirmation du serveur.
         SelectionMur.majPosition(cible);
-        note(cible);
+        note("");   // deplacement eclair, deja visible dans le jeu : pas de message
     }
 
     private static String position(int x, int y, int ox, int oy, char dir) {
@@ -311,5 +316,17 @@ public class OutilDeplacer {
 
     private void note(String s) {
         Platform.runLater(() -> etat.setText(s));
+    }
+
+    /** Resultat rate : ligne d'etat + Journal (une seule fois, meme si le texte ne dit pas « échec »). */
+    private void echec(String s) {
+        note(s);
+        if (Journal.genre(s) != Journal.Genre.ERREUR) Journal.erreur(s);
+    }
+
+    /** Resultat reussi : ligne d'etat + Journal. */
+    private void reussi(String s) {
+        note(s);
+        if (Journal.genre(s) != Journal.Genre.SUCCES) Journal.succes(s);
     }
 }

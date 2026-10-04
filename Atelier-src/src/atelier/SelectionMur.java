@@ -90,12 +90,12 @@ public final class SelectionMur {
     }
 
     /**
-     * Branche les interceptions une seule fois, sur l'instance de G-Presets
+     * Branche les interceptions une seule fois, sur l'instance du moteur de l'Atelier
      * embarquee. Sans effet si elle n'est pas encore prete : les outils rappellent.
      */
     public static synchronized void installer() {
         if (installe) return;
-        GPresets gp = AtelierLauncher.gpresets();
+        GPresets gp = AtelierLauncher.moteur();
         if (gp == null) return;
         try {
             // Interception SANS nom de paquet. Un intercept par nom echoue en
@@ -110,7 +110,7 @@ public final class SelectionMur {
             // recoit aucun paquet et tout le reste en decoule.
             gp.intercept(HMessage.Direction.TOCLIENT, m -> entrants.incrementAndGet());
             installe = true;
-            System.out.println("[Atelier] selection au clic active (par contenu).");
+            Journal.debug("selection au clic active (par contenu).");
             resumePeriodique(gp);
         } catch (Throwable t) {
             System.err.println("[Atelier] selection au clic indisponible : " + t);
@@ -119,6 +119,7 @@ public final class SelectionMur {
 
     /** Resume regulier dans le terminal : dit si le flux atteint l'extension. */
     private static void resumePeriodique(GPresets gp) {
+        if (!Journal.DEBUG) return;   // seulement en mode diagnostic
         Thread t = new Thread(() -> {
             while (true) {
                 try { Thread.sleep(10000); } catch (InterruptedException e) { return; }
@@ -131,7 +132,7 @@ public final class SelectionMur {
                         try { java.util.List<HWallItem> w = s.getWallItems(); murs = (w == null) ? -1 : w.size(); }
                         catch (Throwable ignored) { }
                     }
-                    System.out.println("[Atelier] flux : " + sortants.get() + " envoyes, "
+                    Journal.debug("flux : " + sortants.get() + " envoyes, "
                             + entrants.get() + " recus   |   dans une salle : " + dans
                             + "   murs connus : " + murs
                             + "   mur selectionne : " + (courant == null ? "aucun" : courant.nom));
@@ -160,13 +161,13 @@ public final class SelectionMur {
         // l'etat de salle etait faux — exactement le cas qu'on cherche a lire.
         if (trace && taille <= 48) {
             StringBuilder sb = new StringBuilder();
-            sb.append("[Atelier] sortant header=").append(p.headerId())
+            sb.append("sortant header=").append(p.headerId())
               .append(" taille=").append(taille).append("  entiers:");
             for (int off = 6; off + 4 <= taille && off < 30; off += 4) {
                 try { sb.append(' ').append(p.readInteger(off)); }
                 catch (Throwable e) { break; }
             }
-            System.out.println(sb);
+            Journal.debug(sb.toString());
         }
 
         if (taille > 40) return;
@@ -207,7 +208,7 @@ public final class SelectionMur {
         // c'est le seul moyen de voir pourquoi la comparaison echoue.
         if (trace && taille <= 20 && !compareAffichee) {
             compareAffichee = true;
-            StringBuilder sb = new StringBuilder("[Atelier] AUCUN ID RECONNU. paquet:");
+            StringBuilder sb = new StringBuilder("AUCUN ID RECONNU. paquet:");
             for (int off = 6; off + 4 <= taille; off += 4) {
                 try { sb.append(' ').append(p.readInteger(off)); } catch (Throwable e) { break; }
             }
@@ -216,7 +217,7 @@ public final class SelectionMur {
             try {
                 for (HWallItem w : s.getWallItems()) { sb.append(' ').append(w.getId()); if (++n >= 5) break; }
             } catch (Throwable ignored) { }
-            System.out.println(sb);
+            Journal.debug(sb.toString());
         }
     }
 

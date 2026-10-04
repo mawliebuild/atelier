@@ -110,7 +110,7 @@ public final class Repertoire {
             estimer(furni);
             sauver();
             lu = true;
-            System.out.println("[Atelier] répertoire : " + mobis.size() + " mobis, "
+            Journal.debug("répertoire : " + mobis.size() + " mobis, "
                     + compter("catalogue") + " par le catalogue, " + compter("collection")
                     + " par la collection, " + compter("nouveauté") + " nouveautés, "
                     + compter("estimation") + " estimés" + (nouveaux.isEmpty() ? ""
@@ -123,7 +123,7 @@ public final class Repertoire {
 
     private static GPresets attendre() throws InterruptedException {
         for (int i = 0; i < 600; i++) {
-            GPresets gp = AtelierLauncher.gpresets();
+            GPresets gp = AtelierLauncher.moteur();
             try {
                 if (gp != null && gp.getFurniDataTools() != null && gp.getFurniDataTools().isReady())
                     return gp;
@@ -186,7 +186,7 @@ public final class Repertoire {
                     HCatalogIndex idx = new HCatalogIndex(new HPacket(m.getPacket()));
                     boolean bc = "BUILDERS_CLUB".equals(idx.getCatalogType());
                     int n = parcourir(idx.getRoot(), new ArrayList<>(), bc ? parOffreBc : parOffre);
-                    System.out.println("[Atelier] répertoire : catalogue " + idx.getCatalogType()
+                    Journal.debug("répertoire : catalogue " + idx.getCatalogType()
                             + " lu, " + n + " mobis rattachés à une page.");
                     // Le catalogue peut revenir plus tard (ouvert dans le jeu) :
                     // on enregistre a chaque fois, hors du fil des paquets.
@@ -204,7 +204,7 @@ public final class Repertoire {
         }
     }
 
-    /** Le catalogue normal ; celui du BC est deja demande par G-Presets. */
+    /** Le catalogue normal ; celui du BC est deja demande par le moteur de l'Atelier. */
     private static void demanderCatalogue(GPresets gp) {
         try {
             gp.sendToServer(new HPacket("GetCatalogIndex", HMessage.Direction.TOSERVER, "NORMAL"));
@@ -397,7 +397,7 @@ public final class Repertoire {
                 mobis.put(k, e);
             }
         } catch (Throwable t) {
-            System.err.println("[Atelier] répertoire : fichier illisible, il sera reconstruit : " + t);
+            Journal.debug("répertoire : fichier illisible, il sera reconstruit : " + t);
         }
     }
 

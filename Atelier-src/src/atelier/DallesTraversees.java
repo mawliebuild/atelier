@@ -8,25 +8,22 @@ package atelier;
  * un double-clic tombe alors sur le mobi pose dessus. La demande est refaite
  * quand les dalles de la salle changent (le jeu les retrouve lui-meme), et de
  * temps en temps (en rentrant dans une salle, le jeu refait tout).
- * Reglage dans Hauteur fixe ; actif par defaut.
+ * Toujours actif (plus de reglage).
  */
 final class DallesTraversees {
 
     private DallesTraversees() { }
 
-    private static final java.util.prefs.Preferences prefs = java.util.prefs.Preferences.userRoot().node("atelier");
-    private static volatile boolean actif = prefs.getBoolean("dalles.traversees", true);
+    /** Toujours actif : changer l'etat d'un mobi pose sur une dalle se fait tout seul. */
+    private static volatile boolean actif = true;
     private static volatile String envoye = null;
     private static volatile long envoyeA = 0;
     private static volatile boolean demarre = false;
 
     static boolean actif() { return actif; }
 
-    static void actif(boolean oui) {
-        actif = oui;
-        prefs.putBoolean("dalles.traversees", oui);
-        envoye = null;
-    }
+    /** Garde pour compatibilite : le reglage n'existe plus, rien ne coupe le passage des clics. */
+    static void actif(boolean oui) { envoye = null; }
 
     static synchronized void demarrer() {
         if (demarre) return;

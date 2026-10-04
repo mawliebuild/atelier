@@ -46,7 +46,7 @@ import java.util.function.Function;
  * COLLER (collerDans) : aperçu chiffre (wired, mobis lies, ce qu'il y a dans
  * l'inventaire / au BC, selections perdues), puis Confirmer, puis la case du
  * coin haut-gauche (donnee, ou cliquee dans le jeu). La pose passe par
- * l'importeur de G-Presets, exactement comme un appart exporte avec ses
+ * le moteur de pose, exactement comme un appart exporte avec ses
  * wired : il pose les mobis (inventaire et/ou BC, dalle magique pour les
  * hauteurs exactes), puis enregistre le reglage de chaque wired (paquets
  * UpdateTrigger / UpdateCondition / UpdateAction / UpdateAddon /
@@ -56,8 +56,8 @@ import java.util.function.Function;
  * l'aperçu).
  *
  * Wired « instantane » (wf_act_match_to_sshot, wf_cnd_match_snapshot,
- * wf_cnd_not_match_snap, wf_trg_stuff_state) : comme l'exporteur de
- * G-Presets, l'etat / la position / la rotation memorises sont lus dans le
+ * wf_cnd_not_match_snap, wf_trg_stuff_state) : comme l'export de
+ * l'Atelier, l'etat / la position / la rotation memorises sont lus dans le
  * texte du reglage (« id,etat,rot,x,y[,alt];... ») et donnes en liaisons
  * (PresetWiredFurniBinding), positions ramenees au coin de la copie.
  *
@@ -109,7 +109,7 @@ public final class WiredCollage {
         final double z;
         /** declencheur / condition / effet / add-on / selecteur / variable ; null = pas un wired */
         final String genre;
-        /** reglage G-Presets (PresetWiredBase.toJsonObject) ; null = pas un wired ou pas lu */
+        /** reglage du moteur de l'Atelier (PresetWiredBase.toJsonObject) ; null = pas un wired ou pas lu */
         final JSONObject config;
         final List<Liaison> liaisons;
 
@@ -171,7 +171,7 @@ public final class WiredCollage {
     /** Une configuration copiee : positions relatives au coin (0,0). */
     static final class Copie {
         final List<Piece> pieces;
-        /** Variables de la salle d'origine : id -> nom (G-Presets les retrouve par leur nom). */
+        /** Variables de la salle d'origine : id -> nom (le moteur de pose les retrouve par leur nom). */
         final Map<String, String> variables;
         final int salle;
         final long quand;
@@ -265,7 +265,7 @@ public final class WiredCollage {
         if (solMin == Integer.MAX_VALUE) solMin = 0;
         List<Piece> r = new ArrayList<>();
         for (Piece p : absolues) r.add(p.decalee(minX, minY, solMin));
-        // du bas vers le haut : G-Presets empile dans cet ordre
+        // du bas vers le haut : le moteur de pose empile dans cet ordre
         r.sort(Comparator.comparingDouble((Piece p) -> p.z).thenComparingInt(p -> p.y).thenComparingInt(p -> p.x));
         return new Copie(r, variables, salle, System.currentTimeMillis());
     }
@@ -321,7 +321,7 @@ public final class WiredCollage {
         return r;
     }
 
-    /** Un reglage G-Presets a partir de son JSON et de son genre. null = genre inconnu. */
+    /** Un reglage du moteur de l'Atelier a partir de son JSON et de son genre. null = genre inconnu. */
     static PresetWiredBase reglage(String genre, JSONObject o) {
         switch (genre) {
             case "declencheur": return new PresetWiredTrigger(o);
@@ -335,8 +335,8 @@ public final class WiredCollage {
     }
 
     /**
-     * Le preset G-Presets de la pose : les mobis (id = id d'origine), le
-     * reglage de chaque wired (selections reduites aux mobis poses ; G-Presets
+     * Le preset de la pose : les mobis (id = id d'origine), le
+     * reglage de chaque wired (selections reduites aux mobis poses ; le moteur de pose
      * les remplace par les nouveaux ids), les liaisons des wired instantanes.
      *
      * @param nom nom lisible d'une classe (peut renvoyer la classe)
@@ -566,14 +566,14 @@ public final class WiredCollage {
         String note = "";
         try {
             File f = fichierCopie();
-            Files.write(f.toPath(), c.versJson().getBytes(StandardCharsets.UTF_8));
+            ecrireAtomique(f, c.versJson().getBytes(StandardCharsets.UTF_8));
             Copie relue = Copie.depuisJson(new String(Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8));
             if (relue.pieces.size() != c.pieces.size()) note = " Attention : le fichier de sauvegarde relu ne correspond pas.";
         } catch (Throwable t) {
             note = " (Copie gardée en mémoire seulement : " + t.getMessage() + ")";
         }
         Plan p = planifier(c, false);
-        b.fin("Copié : " + c.nbWired() + " wired"
+        b.bilan(true, "Copié : " + c.nbWired() + " wired"
                 + (sansReglage > 0 ? " dont " + sansReglage + " sans réglage lu (ils seront posés vides)" : "")
                 + ", " + p.lies + " mobi(s) qu'ils utilisent, " + (c.pieces.size() - c.nbWired() - p.lies)
                 + " autre(s) mobi(s). Zone de " + c.largeur() + "×" + c.longueur() + " cases."
@@ -595,7 +595,7 @@ public final class WiredCollage {
         if (c == null || c.nbWired() == 0) { b.fin("Rien à coller : copie d'abord une config wired."); return; }
         if (enCours) { b.fin("Une copie ou un collage est déjà en cours."); return; }
         GPresets gp = Salle.gp();
-        if (gp == null) { b.fin("G-Presets pas encore prêt."); return; }
+        if (gp == null) { b.fin("L'Atelier n'est pas encore prêt."); return; }
         if (!Salle.dansUneSalle()) { b.fin("Tu n'es pas dans une salle."); return; }
         if (!Salle.furnidataPrete()) { b.fin("Furnidata pas encore chargée."); return; }
         b.apercu(c, origine);
@@ -652,8 +652,8 @@ public final class WiredCollage {
 
     /**
      * Ctrl+V d'un calque dans un AUTRE appart : la copie entiere (wired avec
-     * leur reglage, mobis lies, autres mobis) est posee par l'importeur de
-     * G-Presets, comme le collage wired, apres un clic sur la case du coin
+     * leur reglage, mobis lies, autres mobis) est posee par le moteur
+     * de pose, comme le collage wired, apres un clic sur la case du coin
      * haut-gauche dans le jeu (ce clic vaut confirmation ; Ctrl+Z annule).
      * Source : l'inventaire, comme Dupliquer (jamais d'achat sans le dire).
      *
@@ -664,7 +664,7 @@ public final class WiredCollage {
         Consumer<List<Integer>> f = fin == null ? l -> { } : fin;
         if (c == null || c.pieces.isEmpty()) { b.fin("Rien à coller."); f.accept(List.of()); return; }
         if (enCours) { b.fin("Une copie ou un collage est déjà en cours."); f.accept(List.of()); return; }
-        if (Salle.gp() == null) { b.fin("G-Presets pas encore prêt."); f.accept(List.of()); return; }
+        if (Salle.gp() == null) { b.fin("L'Atelier n'est pas encore prêt."); f.accept(List.of()); return; }
         if (!Salle.dansUneSalle()) { b.fin("Tu n'es pas dans une salle."); f.accept(List.of()); return; }
         if (!Salle.furnidataPrete()) { b.fin("Furnidata pas encore chargée."); f.accept(List.of()); return; }
         Plan p = planifier(c, true);
@@ -766,10 +766,10 @@ public final class WiredCollage {
         if (gp == null || fs == null) { b.fin("Tu n'es plus dans une salle."); return List.of(); }
         int salle = fs.getRoomId();
         GPresetImporter imp = gp.getImporter();
-        if (imp == null) { b.fin("Importeur de G-Presets introuvable."); return List.of(); }
+        if (imp == null) { b.fin("Moteur de pose de l'Atelier introuvable."); return List.of(); }
         try {
             if (imp.getState() != GPresetImporter.BuildingImportState.NONE) {
-                b.fin("G-Presets est déjà en train de poser : termine ou tape :abort dans le jeu.");
+                b.fin("L'Atelier est déjà en train de poser : termine ou tape :abort dans le jeu.");
                 return List.of();
             }
         } catch (Throwable ignored) { }
@@ -777,25 +777,27 @@ public final class WiredCollage {
         for (Piece p : plan.aPoser)
             if (fd.getFloorTypeId(p.classe) == null) { b.fin("« " + p.classe + " » inconnu de la furnidata : collage annulé."); return List.of(); }
 
-        // 1. le preset, aller-retour JSON (ce que G-Presets relira)
+        // 1. le preset, aller-retour JSON (ce que le moteur de pose relira)
         PresetConfig cfg = versPreset(c, plan, cl -> nomLisible(gp, cl));
         String json = cfg.toJsonObject().toString(2);
         PresetConfig relu = new PresetConfig(new JSONObject(json));
         String fichier = "_atelier_wired";
         File dossier = OngletApparts.dossierApparts();
         if (!dossier.exists()) dossier.mkdirs();
-        Files.write(new File(dossier, fichier + ".json").toPath(), json.getBytes(StandardCharsets.UTF_8));
+        ecrireAtomique(new File(dossier, fichier + ".json"), json.getBytes(StandardCharsets.UTF_8));
 
         // 2. la case du coin
         HPoint racine = origine;
         if (racine == null) {
             b.travail("Dans le jeu : clique la case du coin haut-gauche (x min, y min) de la zone de destination. "
                     + "Ton avatar ne bougera pas.");
-            InfoJeu.consigne("Coller la config wired : clique la case du coin haut-gauche.");
+            InfoJeu.consigne("Clique dans le jeu la case du coin haut-gauche où coller.");
             racine = Generateur.Dalle.attendreClic(120_000);
             if (b.arretee()) { b.fin("Arrêté avant la pose : rien n'a été posé."); return List.of(); }
             if (racine == null) { b.fin("Pas de clic dans le jeu en 2 minutes : collage annulé, rien n'a été posé."); return List.of(); }
         }
+        // la salle a pu changer pendant l'attente du clic (ou depuis l'aperçu)
+        if (Salle.salleId() != salle) { b.fin("Tu as changé de salle : collage annulé, rien n'a été posé."); return List.of(); }
 
         // 3. la dalle magique (hauteurs exactes), comme Dupliquer
         List<Generateur.Mobi> relatifs = new ArrayList<>();
@@ -813,30 +815,35 @@ public final class WiredCollage {
         if (dalle == null) { Generateur.Dalle.finIgnorer(); b.fin("Collage annulé (dalle magique) : rien n'a été posé."); return List.of(); }
         for (HFloorItem it : Salle.sols()) avant.add(it.getId());    // la dalle posee par l'Atelier
 
-        String entete = plan.aPoser.size() + " mobi(s) envoyés à G-Presets. ";
+        String entete = plan.aPoser.size() + " mobi(s) envoyés au moteur de pose. ";
         boolean ok = Generateur.importer(gp, imp, relu, fichier, source, racine, dire, entete, dalle.ou);
         if (!ok) {
             if (dalle.poseeParAtelier > 0)
                 Generateur.Dalle.ramasser(dalle.poseeParAtelier, dire, "La pose n'a pas démarré : j'ai ramassé la dalle magique.");
             else Generateur.Dalle.finIgnorer();
-            b.fin("G-Presets n'a pas lancé la pose (regarde son message dans le jeu). Rien n'a été posé.");
+            b.fin("Le moteur de pose n'a pas lancé la pose (regarde son message dans le jeu). Rien n'a été posé.");
             return List.of();
         }
         Generateur.Dalle.apresImport(imp, dalle.poseeParAtelier, dire);
 
-        // 4. suivre G-Presets
+        // 4. suivre le moteur de pose
         int voulus = plan.aPoser.size();
         long fin = System.currentTimeMillis() + 30 * 60_000L;
         boolean arrete = false;
         while (System.currentTimeMillis() < fin) {
             Salle.sommeil(500);
             game.FloorState s = Salle.etat();
-            if (s == null || s.getRoomId() != salle) { b.fin("Tu as quitté la salle pendant la pose."); return List.of(); }
+            if (s == null || s.getRoomId() != salle) {
+                abandonner(imp, gp);
+                Generateur.Dalle.finIgnorer();
+                b.fin("Tu as quitté la salle pendant la pose : collage interrompu.");
+                return List.of();
+            }
             if (b.arretee() && !arrete) { arrete = true; abandonner(imp, gp); }
             GPresetImporter.BuildingImportState st;
             try { st = imp.getState(); } catch (Throwable e) { st = GPresetImporter.BuildingImportState.NONE; }
             int n = nouveaux(avant, attendus).size();
-            b.progres(Math.min(n, voulus), voulus, "G-Presets pose et règle : " + Math.min(n, voulus) + " / " + voulus
+            b.progres(Math.min(n, voulus), voulus, "L'Atelier pose et règle : " + Math.min(n, voulus) + " / " + voulus
                     + (st == GPresetImporter.BuildingImportState.AWAITING_UNOCCUPIED_SPACE
                        ? " — clique une case LIBRE dans le jeu pour la dalle magique" : "")
                     + (n >= voulus && st != GPresetImporter.BuildingImportState.NONE ? " (réglage des wired…)" : ""));
@@ -875,7 +882,7 @@ public final class WiredCollage {
             }
         }
         int manquants = Math.max(0, voulus - poses);
-        b.fin((arrete ? "Arrêté. " : "") + poses + " / " + voulus + " mobi(s) posé(s) en ("
+        b.bilan(arrete || (manquants == 0 && differents == 0 && nonLus == 0), (arrete ? "Arrêté. " : "") + poses + " / " + voulus + " mobi(s) posé(s) en ("
                 + racine.getX() + "," + racine.getY() + ")."
                 + (manquants > 0 ? " " + manquants + " manquant(s) (inventaire / BC ? case refusée ?)." : "")
                 + (aRelire.isEmpty() ? "" : " Réglages vérifiés : " + conformes + " identique(s)"
@@ -883,6 +890,18 @@ public final class WiredCollage {
                     + (nonLus > 0 ? ", " + nonLus + " non relu(s)" : "") + ".")
                 + (plan.refsPerdues > 0 ? " " + plan.refsPerdues + " sélection(s) vers des mobis hors copie non reprise(s)." : ""));
         return new ArrayList<>(idMap.values());
+    }
+
+    /** Ecrit dans un .tmp puis le met en place d'un coup : jamais de fichier tronque. */
+    private static void ecrireAtomique(File f, byte[] contenu) throws java.io.IOException {
+        java.nio.file.Path tmp = new File(f.getParentFile(), f.getName() + ".tmp").toPath();
+        Files.write(tmp, contenu);
+        try {
+            Files.move(tmp, f.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                    java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+        } catch (java.nio.file.AtomicMoveNotSupportedException e) {
+            Files.move(tmp, f.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        }
     }
 
     /** Nouveaux mobis de sol des types attendus (au plus le nombre attendu par type). */
@@ -976,9 +995,16 @@ public final class WiredCollage {
             fx(() -> { barre.setVisible(true); barre.setManaged(true); barre.setProgress(v); });
         }
 
-        void fin(String s) {
+        /** Fin sur un refus ou un echec : dit aussi dans le jeu (Journal). */
+        void fin(String s) { bilan(false, s); }
+
+        /** Fin d'operation : le texte reste dans la boite, et part au Journal (succes ou erreur). */
+        void bilan(boolean ok, String s) {
             texte(s);
-            System.out.println("[Atelier] wired (copier/coller) : " + s);
+            String t = Ui.majuscule(s);
+            if (t.startsWith("Arrêté")) Journal.info("wired (copier/coller) : " + t);   // arret voulu : la boite suffit
+            else if (ok) Journal.succes(t);
+            else Journal.erreur(t);
             fx(() -> {
                 barre.setVisible(false); barre.setManaged(false);
                 corps.getChildren().set(corps.getChildren().size() - 1, rangee(fermer));

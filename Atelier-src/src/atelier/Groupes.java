@@ -152,7 +152,6 @@ public final class Groupes {
         private volatile boolean arret = false, finie = false;
         private volatile Resultat resultat;
         private volatile long dernier = 0;
-        private final long debut = InfoJeu.debut();
 
         Tache(String nom, Progression p) { this.nom = nom; this.p = p == null ? new Progression() { } : p; }
 
@@ -174,9 +173,8 @@ public final class Groupes {
         void finir(Resultat r) {
             resultat = r;
             finie = true;
-            System.out.println("[Atelier] calques : " + nom + " : " + r.message);
-            fx(() -> p.fin(r));
-            InfoJeu.fin(debut, r.message);     // dans le chat du jeu, si c'etait long
+            Journal.debug("calques : " + nom + " : " + r.message);
+            fx(() -> p.fin(r));                // le panneau dit le resultat (CalqueActions.resultat) : pas de second message
             prevenir();
         }
     }
@@ -271,8 +269,7 @@ public final class Groupes {
     /** Une erreur que l'utilisatrice doit voir : panneau (erreur()), chat du jeu, console. */
     static void signaler(String message) {
         erreur = message;
-        System.err.println("[Atelier] calques : " + message);
-        try { InfoJeu.dire(message); } catch (Throwable ignored) { }
+        try { Journal.erreur(message); } catch (Throwable ignored) { }
         prevenir();
     }
 
@@ -282,7 +279,7 @@ public final class Groupes {
             migre = true;
             try {
                 int n = GroupeStockage.migrer(DOSSIER, GroupeStockage.anciensDossiers());
-                if (n > 0) System.out.println("[Atelier] calques : " + n + " appart(s) recopie(s) dans " + DOSSIER);
+                if (n > 0) Journal.debug("calques : " + n + " appart(s) recopie(s) dans " + DOSSIER);
             } catch (Throwable t) {
                 signaler("Calques : anciens calques pas recopiés (" + t.getMessage() + ").");
             }
@@ -290,7 +287,7 @@ public final class Groupes {
         try {
             GroupeModele.Plan p = GroupeStockage.lire(DOSSIER, s);
             if (salleIllisible == s) salleIllisible = Integer.MIN_VALUE;
-            System.out.println("[Atelier] calques : appart " + s + " : " + p.calques.size() + " calque(s) relu(s).");
+            Journal.debug("calques : appart " + s + " : " + p.calques.size() + " calque(s) relu(s).");
             return p;
         } catch (Throwable t) {
             boolean abime = String.valueOf(t.getMessage()).startsWith("Fichier des calques abîmé");
@@ -635,14 +632,16 @@ public final class Groupes {
         Tache t = new Tache("supprimer", prog);
         List<String> l = new ArrayList<>(new LinkedHashSet<>(ids));
         if (salle() == -1) { t.finir(Resultat.refus("Tu n'es pas dans une salle.")); return t; }
-        if (occupe()) { t.finir(Resultat.refus("Une autre action sur les calques est en cours.")); return t; }
+        // le verrou est pris AVANT de toucher au plan : lancer() ne peut plus refuser
+        // apres coup (calques partis, mobis ni ramasses ni reaffiches)
+        if (!occupe.compareAndSet(false, true)) { t.finir(Resultat.refus("Une autre action sur les calques est en cours.")); return t; }
         Set<Integer> sols = new LinkedHashSet<>(), murs = new LinkedHashSet<>();
         List<String> noms = new ArrayList<>();
         synchronized (V) {
             GroupeModele.Plan p = plan();
-            if (p == null) { t.finir(Resultat.refus("Tu n'es pas dans une salle.")); return t; }
+            if (p == null) { occupe.set(false); t.finir(Resultat.refus("Tu n'es pas dans une salle.")); return t; }
             String refus = p.refusSuppression(l);
-            if (refus != null) { t.finir(Resultat.refus(refus)); return t; }
+            if (refus != null) { occupe.set(false); t.finir(Resultat.refus(refus)); return t; }
             for (String id : l) {
                 GroupeModele.Calque c = p.supprimer(id);
                 if (c == null) continue;
@@ -668,16 +667,17 @@ public final class Groupes {
             });
         };
         if (sols.isEmpty() && murs.isEmpty()) {
+            occupe.set(false);
             remontrer.run();
             t.finir(new Resultat(true, false, 0, 0, 0, quoi + " (il était vide).", null));
             return t;
         }
-        return lancer("supprimer", null, false, prog, x -> {
+        return lancer("supprimer", null, false, prog, true, x -> {
             Resultat res;
             try { res = GroupeActions.ramasserIds(x, sols, murs); }
             finally { remontrer.run(); }
             return new Resultat(res.ok, res.arrete, res.voulus, res.reussis, res.echecs, quoi + ". " + res.message, null);
-        });
+        }, remontrer);
     }
 
     // ============================================================== fusionner
@@ -845,7 +845,7 @@ public final class Groupes {
             return t;
         }
         if (info(id) == null) { t.finir(Resultat.refus("Calque introuvable.")); return t; }
-        if (!Calques.pret()) { t.finir(Resultat.refus("Le moteur des calques n'est pas encore prêt (G-Presets ?).")); return t; }
+        if (!Calques.pret()) { t.finir(Resultat.refus("Le moteur des calques n'est pas encore prêt (Atelier en cours de démarrage ?).")); return t; }
         retenirCache(id, masquer);
         MASQUES.submit(() -> {
             try {
@@ -931,8 +931,8 @@ public final class Groupes {
     /** Calque dont l'apercu est demande (null = aucun). */
     public static String calqueApercu() { return GroupeApercu.calque(); }
 
-    /** Vrai si G-Presets voit les fantomes comme des mobis (voir le rapport : filtre conseille dans Salle.sols). */
-    public static boolean fantomesVusParGPresets() { return GroupeFantomes.vusParGPresets; }
+    /** Vrai si le moteur de l'Atelier voit les fantomes comme des mobis (voir le rapport : filtre conseille dans Salle.sols). */
+    public static boolean fantomesVusParMoteur() { return GroupeFantomes.vusParMoteur; }
 
     static void apercuPerdu() { GroupeApercu.perdu(); prevenir(); }
 
@@ -954,7 +954,7 @@ public final class Groupes {
 
     /**
      * Pose une COPIE des mobis du calque decalee de (dx, dy), par un appart
-     * temporaire G-Presets (dalle magique automatique). Les mobis poses
+     * temporaire du moteur de pose (dalle magique automatique). Les mobis poses
      * deviennent un nouveau calque « <nom> copie ». Wired ignores (sans leur
      * reglage), comme la copie miroir. Source des meubles : inventaire.
      */
@@ -978,8 +978,8 @@ public final class Groupes {
 
     /**
      * Copie TOURNEE du calque (quarts : 1 horaire, 3 inverse, 2 demi-tour),
-     * posee a cote de l'original par G-Presets (dalle magique : chaque mobi
-     * garde sa hauteur au-dessus du sol). Devient un nouveau calque.
+     * posee a cote de l'original mobi par mobi (PoseDirecte : rotation, etat,
+     * et @altitude : chaque mobi garde sa hauteur au-dessus du sol). Devient un nouveau calque.
      */
     public static Tache dupliquerTourne(String calqueId, int quarts, Generateur.Source source, Progression p) {
         return lancer("dupliquer", calqueId, false, p, t -> GroupeActions.dupliquer(t, calqueId,
@@ -1040,16 +1040,30 @@ public final class Groupes {
      */
     private static Tache lancer(String nom, String calqueId, boolean modifie, Progression p,
                                 java.util.function.Function<Tache, Resultat> f) {
+        return lancer(nom, calqueId, modifie, p, false, f, null);
+    }
+
+    /**
+     * @param verrouPris le verrou « occupe » est deja pris par l'appelant (rendu ici en cas de refus)
+     * @param siRefus    lance si l'action est refusee avant de demarrer (peut etre null)
+     */
+    private static Tache lancer(String nom, String calqueId, boolean modifie, Progression p, boolean verrouPris,
+                                java.util.function.Function<Tache, Resultat> f, Runnable siRefus) {
         installer();
         Tache t = new Tache(nom, p);
-        if (GroupeModele.estDecor(calqueId)) { t.finir(Resultat.refus("Ce calque peut seulement être masqué ou affiché.")); return t; }
-        if (salle() == -1) { t.finir(Resultat.refus("Tu n'es pas dans une salle.")); return t; }
-        if (calqueId != null && info(calqueId) == null) { t.finir(Resultat.refus("Calque introuvable.")); return t; }
-        if (modifie && calqueId != null) {
-            String v = refusVerrou(calqueId);
-            if (v != null) { t.finir(Resultat.refus(v)); return t; }
+        String refus = null;
+        if (GroupeModele.estDecor(calqueId)) refus = "Ce calque peut seulement être masqué ou affiché.";
+        else if (salle() == -1) refus = "Tu n'es pas dans une salle.";
+        else if (calqueId != null && info(calqueId) == null) refus = "Calque introuvable.";
+        else if (modifie && calqueId != null) refus = refusVerrou(calqueId);
+        if (refus == null && !verrouPris && !occupe.compareAndSet(false, true))
+            refus = "Une autre action sur les calques est en cours.";
+        if (refus != null) {
+            if (verrouPris) occupe.set(false);
+            if (siRefus != null) siRefus.run();
+            t.finir(Resultat.refus(refus));
+            return t;
         }
-        if (!occupe.compareAndSet(false, true)) { t.finir(Resultat.refus("Une autre action sur les calques est en cours.")); return t; }
         annulerApercu();
         Salle.tache("calques-" + nom, () -> {
             Resultat r;
@@ -1143,7 +1157,7 @@ public final class Groupes {
     }
 
     /**
-     * Jeton du chargement de salle : G-Presets recree sa liste de mobis a
+     * Jeton du chargement de salle : le moteur de l'Atelier recree sa liste de mobis a
      * chaque entree (meme dans le meme appart), son identite change donc.
      * 0 si illisible.
      */
@@ -1171,9 +1185,10 @@ public final class Groupes {
                 int j = s == -1 ? 0 : jeton();
                 boolean recharge = s != -1 && s == derniere && j != 0 && dernierJeton != 0 && j != dernierJeton;
                 if (s != derniere || recharge) {
+                    if (s != -1 && !recharge) Journal.info("Entrée dans l'appart " + s + ".");
                     if (recharge) {
                         // meme appart recharge : le client a tout recu de nouveau, plus rien n'est masque
-                        System.out.println("[Atelier] calques : appart " + s + " recharge.");
+                        Journal.debug("calques : appart " + s + " recharge.");
                         Calques.oublier();
                     }
                     derniere = s;
@@ -1234,14 +1249,14 @@ public final class Groupes {
             int perdus = essai.nettoyer(sols, murs, Calques::estMasque);
             if (perdus == 0) return;
             if (perdus > 3 && perdus * 2 >= total) {
-                System.out.println("[Atelier] calques : " + perdus + "/" + total
+                Journal.debug("calques : " + perdus + "/" + total
                         + " id(s) absents de la salle : gardes (salle peut-etre pas finie de charger).");
                 return;
             }
             n = p.nettoyer(sols, murs, Calques::estMasque);
             if (n > 0) sauver(p);
         }
-        if (n > 0) { System.out.println("[Atelier] calques : " + n + " id(s) disparu(s) oublie(s)."); prevenir(); }
+        if (n > 0) { Journal.debug("calques : " + n + " id(s) disparu(s) oublie(s)."); prevenir(); }
     }
 
     /** A l'entree dans un appart : remasque les calques qui y etaient masques. */
@@ -1272,12 +1287,12 @@ public final class Groupes {
                     faits++;
                 } catch (Throwable t) {
                     rates++;
-                    System.err.println("[Atelier] calques : remasquer " + id + " : " + t);
+                    Journal.debug("calques : remasquer " + id + " : " + t);
                 }
             }
             prevenir();
             if (rates > 0) signaler("Calques : " + rates + " calque(s) masqué(s) pas remasqué(s) en entrant. Clique sur leur œil.");
-            else if (faits > 0) System.out.println("[Atelier] calques : " + faits + " calque(s) remasque(s).");
+            else if (faits > 0) Journal.debug("calques : " + faits + " calque(s) remasque(s).");
         });
     }
 }

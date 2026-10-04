@@ -112,32 +112,35 @@ public class OutilFauxMur {
 
     private synchronized void brancher() {
         if (installe) return;
-        GPresets gp = AtelierLauncher.gpresets();
+        GPresets gp = AtelierLauncher.moteur();
         if (gp == null) return;
         try {
-            gp.intercept(HMessage.Direction.TOSERVER, m -> {
+            // seulement le clic au sol (MoveAvatar) : pas de pose fantome sur
+            // LookTo, PickupObject ou tout autre paquet de deux entiers
+            gp.intercept(HMessage.Direction.TOSERVER, "MoveAvatar", m -> {
                 try { if (actif) poser(gp, m); } catch (Throwable ignored) { }
             });
             installe = true;
-            System.out.println("[Atelier] faux mur : écoute active.");
+            Journal.debug("faux mur : écoute active.");
         } catch (Throwable ignored) { }
     }
 
     private void poser(GPresets gp, HMessage m) {
+        int taille = m.getPacket().getBytesLength();
+        if (taille < 14 || taille > 20) return;      // un clic au sol : deux entiers
+
         SelectionMur.Mur ref = SelectionMur.courant();
         if (ref == null || ref.typeId < 0) return;
 
         FloorState s = gp.getFloorState();
         if (s == null || !s.inRoom()) return;
 
-        HPacket p = new HPacket(m.getPacket());
-        int taille = p.getBytesLength();
-        if (taille < 14 || taille > 20) return;      // un clic au sol : deux entiers
-
+        HPacket p = m.getPacket();                    // lecture a position fixe : pas de copie
         int cx, cy;
         try { cx = p.readInteger(6); cy = p.readInteger(10); }
         catch (Throwable e) { return; }
         if (cx < 0 || cx > 200 || cy < 0 || cy > 200) return;
+        if (Salle.hauteurSol(cx, cy) < 0) return;    // case non jouable
 
         WallPosition w;
         try { w = new WallPosition(ref.position); } catch (Throwable e) { return; }
@@ -156,7 +159,8 @@ public class OutilFauxMur {
         PoseMur.Source src = source;
         poses.submit(() -> {
             PoseMur.Resultat r = PoseMur.poser(gp, ref.typeId, ref.etat, cible, src, invUtilises);
-            dire(r.ok ? "Posé " + r.detail + "   " + cible : "Échec : " + r.detail);
+            // la pose se voit dans le jeu : seul l'echec est dit
+            dire(r.ok ? "" : "Échec de la pose : " + r.detail + ".");
         });
     }
 

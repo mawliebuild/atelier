@@ -1693,16 +1693,14 @@ VBox > .split-menu-button.last > .arrow-button {
 /* --- police du jeu (Ubuntu, embarquee) et notes facon maquette --- */
 .fenetre *, .barre *, .connexion-corps * { -fx-font-family: "Ubuntu", "Helvetica Neue", "Arial"; }
 .fenetre .note, .connexion-corps .note {
-    -fx-background-color: #D8BE6A, #FFF7DA;
-    -fx-background-insets: 0, 1;
-    -fx-background-radius: 4, 3;
-    -fx-padding: 6 8 6 8;
-    -fx-text-fill: #1D1C19;
+    -fx-background-color: transparent;
+    -fx-padding: 2 0 2 0;
+    -fx-text-fill: #6F6B60;
     -fx-opacity: 1;
 }
-.fenetre .note.reussite {
-    -fx-background-color: #8FC48C, #E5F4E3;
-}
+/* Ligne d'etat (Ui.etat) : progression et consignes, sans encadre. */
+.etat-ligne { -fx-text-fill: #6F6B60; -fx-font-size: 11px; -fx-padding: 2 0 2 0; }
+.fenetre .note.reussite { -fx-background-color: transparent; }
 .fenetre .aide-vide { -fx-text-fill: #5A574F; -fx-font-style: italic; }
 .fenetre .table-view .column-header .label { -fx-font-family: "Ubuntu"; }
 .fenetre .table-row-cell .table-cell { -fx-padding: 4 6 4 6; }

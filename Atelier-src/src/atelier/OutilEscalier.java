@@ -14,7 +14,7 @@ import java.util.Locale;
  * Escalier : des copies d'un mobi, chacune un peu plus loin et un peu plus haut.
  *
  * Rien n'est pose ici : l'escalier devient un appart temporaire
- * (_atelier_escalier.json) que G-Presets pose avec sa dalle magique, ce qui
+ * (_atelier_escalier.json) que le moteur de pose installe avec sa dalle magique, ce qui
  * donne les hauteurs exactes sans rien empiler a la main. S'il n'y a pas de
  * dalle magique dans la salle, Generateur en pose une (1×1) a cote du depart
  * et la ramasse quand l'escalier est fini.
@@ -99,7 +99,7 @@ public class OutilEscalier {
         remplir.selectedProperty().addListener((o, a, b) -> majApercu());
 
         Tab t = new Tab("Escalier", Generateur.defiler(
-                Ui.aide("Génère un escalier comme appart temporaire, que G-Presets pose "
+                Ui.aide("Génère un escalier comme appart temporaire, que l'Atelier pose "
                         + "avec sa dalle magique (hauteurs exactes). Pas de dalle dans la salle ? "
                         + "Je pose une dalle 1×1 à côté du départ (inventaire, sinon BC), "
                         + "puis je la ramasse à la fin."),

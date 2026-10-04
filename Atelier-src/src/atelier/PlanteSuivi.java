@@ -15,11 +15,11 @@ import java.util.concurrent.CopyOnWriteArrayList;
 /**
  * Suivi des monster plants de la salle ouverte.
  *
- * G-Presets ne suit que les mobis, pas les avatars ni les animaux : on tient
+ * Le moteur de l'Atelier ne suit que les mobis, pas les avatars ni les animaux : on tient
  * donc ici notre propre liste, a partir des paquets du serveur.
  *
  *   Users        (TOCLIENT) liste des avatars / bots / animaux, parsee par
- *                G-Earth (HEntity.parse). Une monster plant est un animal de
+ *                la connexion (HEntity.parse). Une monster plant est un animal de
  *                type 16 : son « figure » commence par « 16 ».
  *   UserRemove   (TOCLIENT) un avatar / animal quitte la salle (index en texte).
  *   UserUpdate   (TOCLIENT) positions ; une plante ne bouge pas, mais on suit.
@@ -172,10 +172,10 @@ public final class PlanteSuivi {
                     try {
                         brancher(gp);
                         branche = true;
-                        System.out.println("[Atelier] suivi des monster plants actif.");
+                        Journal.debug("suivi des monster plants actif.");
                         return;
                     } catch (Throwable e) {
-                        System.err.println("[Atelier] suivi des plantes : " + e);
+                        Journal.debug("suivi des plantes : " + e);
                     }
                 }
                 try { Thread.sleep(1000); } catch (InterruptedException e) { return; }
@@ -186,13 +186,20 @@ public final class PlanteSuivi {
     }
 
     private static void ecoute(GPresets gp, String nom, java.util.function.Consumer<HPacket> f) {
+        ecoute(gp, nom, () -> true, f);
+    }
+
+    /** utile : test tres bon marche fait AVANT la copie du paquet (UserUpdate est tres frequent). */
+    private static void ecoute(GPresets gp, String nom, java.util.function.BooleanSupplier utile,
+                               java.util.function.Consumer<HPacket> f) {
         try {
             gp.intercept(HMessage.Direction.TOCLIENT, nom, m -> {
+                if (!utile.getAsBoolean()) return;
                 try { f.accept(new HPacket(m.getPacket())); }
                 catch (Throwable e) { System.err.println("[Atelier] " + nom + " : " + e); }
             });
         } catch (Throwable e) {
-            System.err.println("[Atelier] intercept " + nom + " indisponible : " + e);
+            Journal.debug("intercept " + nom + " indisponible : " + e);
         }
     }
 
@@ -203,8 +210,8 @@ public final class PlanteSuivi {
             Salle.tache("plantes-soins", () -> { Salle.sommeil(1500); try { demanderProfil(); } catch (Throwable ignored) { } });
         });
         ecoute(gp, "Users", PlanteSuivi::surUsers);
-        ecoute(gp, "UserRemove", PlanteSuivi::surUserRemove);
-        ecoute(gp, "UserUpdate", PlanteSuivi::surUserUpdate);
+        ecoute(gp, "UserRemove", () -> !indexVersId.isEmpty(), PlanteSuivi::surUserRemove);
+        ecoute(gp, "UserUpdate", () -> !indexVersId.isEmpty(), PlanteSuivi::surUserUpdate);
         ecoute(gp, "PetInfo", PlanteSuivi::surPetInfo);
         ecoute(gp, "PetStatusUpdate", PlanteSuivi::surPetStatus);
         ecoute(gp, "PetLevelUpdate", PlanteSuivi::surPetLevel);
@@ -223,7 +230,7 @@ public final class PlanteSuivi {
                 } catch (Throwable ignored) { }
             });
         } catch (Throwable e) {
-            System.err.println("[Atelier] plantes : écoutes soins / fiches : " + e);
+            Journal.debug("plantes : écoutes soins / fiches : " + e);
         }
         // Reproduction : demande de confirmation, puis resultat (une graine).
         ecoute(gp, "PetBreeding", p -> { dernierePropositionReproduction = System.currentTimeMillis(); });
@@ -235,7 +242,7 @@ public final class PlanteSuivi {
                 try { Reproduction.observer(new HPacket(m.getPacket())); } catch (Throwable ignored) { }
             });
         } catch (Throwable e) {
-            System.err.println("[Atelier] intercept BreedPets indisponible : " + e);
+            Journal.debug("intercept BreedPets indisponible : " + e);
         }
     }
 
@@ -271,7 +278,7 @@ public final class PlanteSuivi {
             pl.index = e.getIndex();
             pl.nom = e.getName() == null ? "?" : e.getName();
             if (e.getTile() != null) { pl.x = e.getTile().getX(); pl.y = e.getTile().getY(); }
-            // Champs d'un animal (G-Earth, ordre du client Flash) :
+            // Champs d'un animal (connexion de l'Atelier, ordre du client Flash) :
             // 0 type, 1 ownerId, 2 ownerName, 3 rarity, 4 hasSaddle, 5 isRiding,
             // 6 canBreed, 7 canHarvest, 8 canRevive, 9 hasBreedingPermission,
             // 10 petLevel, 11 posture
@@ -404,7 +411,7 @@ public final class PlanteSuivi {
         } catch (Throwable e) {
             lu.append(" [arret : ").append(e.getClass().getSimpleName()).append(']');
         }
-        System.out.println("[Atelier] PetInfo decode : " + lu);
+        Journal.debug("PetInfo decode : " + lu);
 
         boolean coherent = niveau >= 0 && niveau <= 50 && niveauMax >= 0 && niveauMax <= 50;
         // Animal inconnu : on ne l'ajoute que s'il ressemble a une plante
@@ -440,7 +447,6 @@ public final class PlanteSuivi {
     /** PetStatusUpdate, suppose : int index, int idAnimal, bool reproduire, bool recolter, bool ranimer, bool permission. */
     private static void surPetStatus(HPacket p) {
         nbStatus++;
-        journal("PetStatusUpdate", p);
         try {
             p.readInteger();
             Plante pl = plantes.get(p.readInteger());
@@ -454,7 +460,6 @@ public final class PlanteSuivi {
 
     /** PetLevelUpdate, suppose : int index, int idAnimal, int niveau. */
     private static void surPetLevel(HPacket p) {
-        journal("PetLevelUpdate", p);
         try {
             p.readInteger();
             Plante pl = plantes.get(p.readInteger());
@@ -472,7 +477,6 @@ public final class PlanteSuivi {
             soinsRestants--;
             dernierSoinEnvoye = 0;
         }
-        journal("PetRespectNotification", p);
         try {
             int r = p.readInteger();
             p.readInteger();
@@ -498,10 +502,10 @@ public final class PlanteSuivi {
             int recus = p.readInteger(), aDonner = p.readInteger();
             int r = p.readInteger();
             if (r >= 0 && r < 1000) soinsRestants = r;
-            System.out.println("[Atelier] UserObject : " + monNom + " #" + monId + ", respects reçus " + recus
+            Journal.debug("UserObject : " + monNom + " #" + monId + ", respects reçus " + recus
                     + ", respects à donner " + aDonner + ", soins animaux restants " + r);
         } catch (Throwable e) {
-            System.out.println("[Atelier] UserObject partiel : " + monNom + " #" + monId);
+            Journal.debug("UserObject partiel : " + monNom + " #" + monId);
         }
         prevenir();
     }
@@ -596,7 +600,7 @@ public final class PlanteSuivi {
 
     /**
      * Redemande le contenu de la salle sans la recharger : c'est ce que fait
-     * G-Presets (FloorState.requestRoom envoie GetHeightMap). Le serveur
+     * le moteur de l'Atelier (FloorState.requestRoom envoie GetHeightMap). Le serveur
      * renvoie alors aussi la liste Users.
      */
     public static boolean redemanderSalle() {
@@ -620,12 +624,12 @@ public final class PlanteSuivi {
     }
 
     private static void journal(String nom, HPacket p) {
-        try {
+        if (Journal.DEBUG) try {
             byte[] b = p.toBytes();
             StringBuilder sb = new StringBuilder();
             for (int i = 0; i < b.length && i < 400; i++) sb.append(String.format("%02x", b[i] & 0xff));
             if (b.length > 400) sb.append("...");
-            System.out.println("[Atelier] " + nom + " (" + b.length + " o) " + sb);
+            Journal.debug(nom + " (" + b.length + " o) " + sb);
         } catch (Throwable ignored) { }
         try { p.resetReadIndex(); } catch (Throwable ignored) { }
     }

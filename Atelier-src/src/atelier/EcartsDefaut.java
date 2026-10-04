@@ -155,7 +155,7 @@ public final class EcartsDefaut {
                 if (in != null) r = lire(new String(in.readAllBytes(), StandardCharsets.UTF_8));
             } catch (Throwable t) {
                 erreur = "Écarts par défaut illisibles : " + t.getMessage();
-                System.out.println("[Atelier] " + erreur);
+                Journal.erreur(erreur, t);
             }
             livres = Collections.unmodifiableList(r);
             return livres;

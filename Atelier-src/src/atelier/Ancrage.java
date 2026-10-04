@@ -14,6 +14,11 @@ import javafx.application.Platform;
  * le NOM DE L'APPLICATION reste lisible sans rien autoriser — et Habbo en est
  * une, pas un onglet de navigateur. C'est donc sur ce nom qu'on la reconnait.
  *
+ * Sous Windows (WindowsFenetres.cadreHabbo) : la plus grande fenetre visible
+ * dont l'executable est « Habbo.exe », bords visibles lus par DWM (sans les
+ * bords invisibles de Windows 10/11), convertis en coordonnees JavaFX
+ * (mise a l'echelle de l'ecran ou elle se trouve).
+ *
  * L'Atelier se pose PAR-DESSUS le jeu : la fenetre du jeu n'est jamais
  * redimensionnee.
  */
@@ -61,8 +66,9 @@ public final class Ancrage {
         panneaux = (p == null) ? new Ancrable[0] : p;
         if (demarre) return;
         demarre = true;
-        if (!charger()) {
-            System.err.println("[Atelier] ancrage indisponible : " + probleme);
+        if (WindowsFenetres.windows() ? !WindowsFenetres.charger() : !charger()) {
+            if (WindowsFenetres.windows()) probleme = WindowsFenetres.probleme();
+            Journal.debug("ancrage indisponible : " + probleme);
             return;
         }
         Thread t = new Thread(() -> {
@@ -73,7 +79,7 @@ public final class Ancrage {
         }, "atelier-ancrage");
         t.setDaemon(true);
         t.start();
-        System.out.println("[Atelier] ancrage à la fenêtre Habbo actif.");
+        Journal.debug("ancrage à la fenêtre Habbo actif.");
     }
 
     private static String probleme = null;
@@ -134,7 +140,7 @@ public final class Ancrage {
     }
 
     private static void suivre() {
-        double[] f = fenetreHabbo();
+        double[] f = WindowsFenetres.windows() ? WindowsFenetres.cadreHabbo() : fenetreHabbo();
         if (f == null) return;
 
         // Ne rien faire tant que Habbo n'a pas bouge : sans ce garde-fou, il

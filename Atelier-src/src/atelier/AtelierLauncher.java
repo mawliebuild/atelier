@@ -22,7 +22,7 @@ import javafx.stage.Stage;
 import java.lang.reflect.Field;
 
 /**
- * L'Atelier : G-Earth en francais, avec G-Presets embarque, presente comme
+ * L'Atelier : son proxy en francais, avec son module Presets embarque, presente comme
  * une barre d'outils et une fenetre posees sur le jeu.
  *
  * On herite de gearth.GEarth et on laisse son start() faire son travail
@@ -30,24 +30,24 @@ import java.lang.reflect.Field;
  * construite : aucun bytecode d'origine n'est modifie.
  *
  * Les onglets retires ne sont pas detruits, seulement decroches du TabPane :
- * leurs controleurs restent vivants, car d'autres parties de G-Earth s'y
+ * leurs controleurs restent vivants, car d'autres parties du proxy s'y
  * referent (ExtensionsController interroge par exemple ExtraController).
  */
 public class AtelierLauncher extends GEarth {
 
     public static final String NOM = "Atelier";
 
-    private static volatile GPresets gpresets;
+    private static volatile GPresets moteur;
 
-    /** L'instance de G-Presets vivant dans cette JVM, ou null si pas encore prete. */
-    public static GPresets gpresets() { return gpresets; }
+    /** L'instance du module Presets vivant dans cette JVM, ou null si pas encore prete. */
+    public static GPresets moteur() { return moteur; }
 
     @Override
     public void start(Stage stage) throws Exception {
-        // G-Earth est deja traduit et lit sa langue depuis son cache au demarrage.
+        // Le proxy est deja traduit et lit sa langue depuis son cache au demarrage.
         // On n'appelle setLanguage() que si elle n'est pas deja en francais : cet
         // appel parcourt toutes les chaines a rafraichir et leve une NPE quand la
-        // fenetre du Extension Store n'est pas ouverte (bug de G-Earth).
+        // fenetre du Extension Store n'est pas ouverte (bug du proxy).
         try {
             if (gearth.ui.translations.LanguageBundle.getLanguage()
                     != gearth.ui.translations.Language.FRENCH) {
@@ -108,12 +108,12 @@ public class AtelierLauncher extends GEarth {
 
         Tab apparts = ongletProvisoire("Apparts",
                 "Chargement des apparts...",
-                "G-Presets démarre à l'intérieur de l'Atelier.");
+                "Le moteur de l'Atelier démarre.");
         onglets.getTabs().add(apparts);
 
-        // L'onglet Build porte nos deux outils muraux. G-BuildTools a ete
-        // ECARTE : son jar embarque une classe furnidata.FurniDataTools homonyme
-        // de celle de G-Presets, avec un constructeur different. Deux classes de
+        // L'onglet Build porte nos deux outils muraux. L'ancien module d'outils de
+        // construction a ete ECARTE : son jar embarquait une classe
+        // furnidata.FurniDataTools homonyme de celle du module Presets, avec un constructeur different. Deux classes de
         // meme nom ne peuvent pas cohabiter dans un chargeur — d'ou le
         // NoSuchMethodError pendant connectionStart, et la deconnexion. Son
         // « Poster mover » est reecrit dans OutilDeplacer.
@@ -135,7 +135,7 @@ public class AtelierLauncher extends GEarth {
         // Le resume de la salle vit dans la barre d'outils (BarreOutils).
         Parent parent = onglets.getParent();
 
-        // 4. Rendre l'interieur elastique : le FXML de G-Earth fige
+        // 4. Rendre l'interieur elastique : le FXML du proxy fige
         //    prefWidth/prefHeight sur le TabPane sans aucun VGrow, donc agrandir
         //    la fenetre laissait le contenu a sa taille d'origine.
         onglets.setMaxSize(Double.MAX_VALUE, Double.MAX_VALUE);
@@ -190,7 +190,6 @@ public class AtelierLauncher extends GEarth {
         Tab tHistorique = new OutilHistorique().construire();
         Tab tCapture = new OutilCapture().construire();
         Tab tAnalyse = new OngletAnalyseWired().construire();
-        Tab tFloor = new EditeurFloor().construire();
         Tab tPlantes = new OngletPlantes().construire();
 
         // Le volet « Calques » quitte les menus : il vit dans son propre
@@ -228,10 +227,8 @@ public class AtelierLauncher extends GEarth {
         // (le miroir, lui, est dans ses Actions). Aucun bouton dans les barres.
         nav.ajouter("composant-escalier", "Escalier / rampe", Icones.ESCALIER,
                 Navigation.source(tConstruction, "Escalier", "Escalier / rampe").avec(SALLE, DROITS, NOMS, INV, BC));
-        Tab tGrille = new GrilleJeu().construire();
-        nav.ajouter("floor", "Floor", Icones.FLOOR,
-                Navigation.source(tFloor, "\u00c9diteur de floor").avec(SALLE, DROITS),
-                Navigation.source(tGrille, null, "Grille dans le jeu").avec(SALLE, NOMS));
+        // Floor : plus de fenetre d'editeur ; le bouton Floor met l'appart en edition
+        // directe (grille du jeu + fenetre d'outils, voir ModeCases / CalqueActions.cases).
         nav.ajouter("apparts", "Apparts", Icones.APPARTS,
                 Navigation.source(tApparts, "Dupliquer un appart"));
         Tab tCollageWired = new OngletCollageWired().construire();
@@ -251,6 +248,9 @@ public class AtelierLauncher extends GEarth {
         // Galerie : des photos d'apparts a garder a cote du jeu pendant qu'on construit.
         Tab tGalerie = new OngletGalerie(css).construire();
         nav.ajouter("galerie", "Galerie", Icones.GALERIE, Navigation.source(tGalerie)).pleineHauteur();
+        // Documentation : toutes les commandes clavier et souris.
+        Tab tDoc = new OngletDocumentation().construire();
+        nav.ajouter("documentation", "Documentation", Icones.DOCUMENTATION, Navigation.source(tDoc)).pleineHauteur();
         java.util.List<Navigation.Source> reglages = new java.util.ArrayList<>();
         if (tConnexion != null) reglages.add(Navigation.source(tConnexion, null, "Connexion"));
         reglages.add(Navigation.source(tParam));
@@ -344,10 +344,11 @@ public class AtelierLauncher extends GEarth {
             // Deplacer un mur : deux blocs de fleches, 80 px de moins suffisent.
             double ecran = javafx.stage.Screen.getPrimary().getVisualBounds().getWidth();
             fenetre.largeur("reglages".equals(m.cle) ? Math.min(1300, ecran * 0.82)
-                    : "salle-mobis".equals(m.cle) || "galerie".equals(m.cle) ? 580
+                    : "salle-mobis".equals(m.cle) || "galerie".equals(m.cle) || "documentation".equals(m.cle) ? 580
                     : "salle-couleur".equals(m.cle) ? Fenetre.LARGEUR - 50
                     : "murs-deplacer".equals(m.cle) ? Fenetre.LARGEUR - 80 : 0);
             fenetre.montrer(m.nom, m.contenu(), m.info());
+            MiseEnValeur.fenetre(m.cle);
         });
         java.util.function.Consumer<String> basculer = cle -> {
             Navigation.Menu m = nav.actif();
@@ -371,10 +372,11 @@ public class AtelierLauncher extends GEarth {
         // ouvre l'apercu ; « Plus de reglages » ouvre la fenetre Capture.
         final String cssPhoto = css;
         barreMesure.surSalle(() -> basculer.accept("salle-mobis"));
-        barreMesure.surFloor(() -> basculer.accept("floor"));
+        barreMesure.surFloor(panneauCalques::ouvrirFloor);
         barreMesure.surPhoto(() -> OutilCapture.photo(cssPhoto, () -> ouvrir.accept("salle-capture")));
         barre.surEtat(() -> ouvrir.accept("salle-mobis"));
         fenetre.surFermeture(() -> {
+            MiseEnValeur.fenetre(null);         // plus rien a mettre en valeur pour la fenetre
             WiredLecteur.actif(false);
             barre.actif(construction[0] ? "construction" : null);
             barreSalle.actif(null);
@@ -453,7 +455,7 @@ public class AtelierLauncher extends GEarth {
         };
         HConnection hc = connexionHabbo();
         if (hc == null) {
-            System.err.println("[Atelier] connexion introuvable, l'Atelier s'affiche directement.");
+            Journal.info("connexion introuvable, l'Atelier s'affiche directement.");
             afficherAtelier.run();
         } else {
             new EcranConnexion(css, hc,
@@ -465,8 +467,8 @@ public class AtelierLauncher extends GEarth {
     // -------------------------------------------------------- embarquements
 
     /**
-     * Fait tourner G-Presets DANS la JVM de l'Atelier, via le mecanisme que
-     * G-Earth utilise pour ses propres extensions internes (logger, store).
+     * Fait tourner le module Presets DANS la JVM de l'Atelier, via le mecanisme que
+     * le proxy utilise pour ses propres extensions internes (logger, store).
      *
      * ExtensionFormCreator.runExtensionForm est inutilisable : il appelle
      * Application.launch(), interdit une seconde fois dans la meme JVM.
@@ -475,8 +477,9 @@ public class AtelierLauncher extends GEarth {
     private void brancherApparts(Stage stage, Tab onglet) {
         ExtensionHandler handler = gestionnaireExtensions();
         if (handler == null) {
+            Journal.erreur("Module Presets introuvable : le gestionnaire de modules de l'Atelier manque.");
             majOnglet(onglet, "Apparts indisponibles",
-                    "Le gestionnaire d'extensions de G-Earth n'a pas été trouvé.");
+                    "Le gestionnaire de modules de l'Atelier n'a pas été trouvé.");
             return;
         }
         final AppartsCreator creator = new AppartsCreator();
@@ -485,12 +488,14 @@ public class AtelierLauncher extends GEarth {
                 GPresets gp = new InternalExtensionFormLauncher<AppartsCreator, GPresets>()
                         .launch(creator, observer);
                 if (gp == null) {
+                    Journal.erreur("Échec du chargement du module Presets : rien n'a été rendu.");
                     majOnglet(onglet, "Échec du chargement",
                             "InternalExtensionFormLauncher n'a rien rendu.");
                     return;
                 }
-                gpresets = gp;
-                System.out.println("[Atelier] G-Presets embarque."
+                moteur = gp;
+                Journal.info("Atelier démarré.");
+                Journal.debug("Module Presets embarque."
                         + " catalogue=" + (gp.getCatalog() != null)
                         + " inventaire=" + (gp.getInventory() != null)
                         + " furnidata=" + (gp.getFurniDataTools() != null)
@@ -499,8 +504,7 @@ public class AtelierLauncher extends GEarth {
                 Platform.runLater(() -> onglet.setContent(new OngletApparts().construire()));
                 ChargementAuto.demarrer();
             } catch (Throwable t) {
-                System.err.println("[Atelier] embarquement de G-Presets impossible : " + t);
-                t.printStackTrace();
+                Journal.erreur("Chargement du module Presets impossible", t);
                 majOnglet(onglet, "Échec du chargement", String.valueOf(t));
             }
         });

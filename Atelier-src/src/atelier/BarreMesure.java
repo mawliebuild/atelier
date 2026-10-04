@@ -87,6 +87,16 @@ public class BarreMesure implements Ancrage.Ancrable {
         barre.getStyleClass().add("barre");
         barre.setAlignment(Pos.CENTER_LEFT);
 
+        // Petite fleche a gauche pour reduire / deplier, comme les autres barres :
+        // reduite, il ne reste qu'elle. La barre reste ancree a droite.
+        fleche.getStyleClass().add("barre-bouton");
+        fleche.setFocusTraversable(false);
+        fleche.setStyle("-fx-min-width: 14; -fx-pref-width: 14; -fx-max-width: 14;"
+                + " -fx-min-height: 36; -fx-pref-height: 36; -fx-max-height: 36; -fx-padding: 0;");
+        fleche.setOnAction(a -> { reduite = !reduite; prefs.putBoolean("barre.mesure.reduite", reduite); appliquerReduite(barre); });
+        barre.getChildren().add(0, fleche);
+        appliquerReduite(barre);
+
         bulleTexte.setStyle("-fx-background-color: #ECEAE0; -fx-text-fill: #1D1C19;"
                 + " -fx-border-color: #000000; -fx-border-radius: 4; -fx-background-radius: 4;"
                 + " -fx-padding: 3 7 3 7; -fx-font-size: 12px; -fx-font-weight: bold;");
@@ -94,13 +104,32 @@ public class BarreMesure implements Ancrage.Ancrable {
 
         HBox racine = new HBox(barre);
         racine.setStyle("-fx-background-color: transparent; -fx-padding: 0 0 3 0;");
+        Deplacement.activer(stage, racine, "mesure", this::placer);
         Scene scene = new Scene(racine);
         scene.setFill(Color.TRANSPARENT);
         if (css != null) scene.getStylesheets().add(css);
         stage.setScene(scene);
         BarrePremierPlan.menu(stage);
+        // repliee ou depliee, la barre garde son bord droit
+        stage.widthProperty().addListener((o, a, b) -> { if (stage.isShowing()) placer(); });
 
         suivre();
+    }
+
+    private final Button fleche = new Button();
+    private final java.util.prefs.Preferences prefs = java.util.prefs.Preferences.userRoot().node("atelier");
+    private boolean reduite = prefs.getBoolean("barre.mesure.reduite", false);
+
+    private void appliquerReduite(HBox barre) {
+        fleche.setGraphic(Icones.trace(BarreIcones.trace(false, reduite), "icone-barre"));
+        for (javafx.scene.Node n : barre.getChildren()) {
+            if (n == fleche) continue;
+            n.setVisible(!reduite);
+            n.setManaged(!reduite);
+        }
+        survol(fleche, reduite ? "Déplier le menu" : "Réduire le menu");
+        bulle.hide();
+        if (stage.isShowing()) { stage.sizeToScene(); placer(); }
     }
 
     public Stage fenetre() { return stage; }
@@ -153,7 +182,7 @@ public class BarreMesure implements Ancrage.Ancrable {
 
     private volatile boolean branche = false;
 
-    /** Retient les clics au sol pendant la mesure (meme paquet que G-Presets : MoveAvatar). */
+    /** Retient les clics au sol pendant la mesure (meme paquet que le moteur de l'Atelier : MoveAvatar). */
     private synchronized void brancher() {
         if (branche) return;
         GPresets gp = Salle.gp();
@@ -194,7 +223,12 @@ public class BarreMesure implements Ancrage.Ancrable {
             // Le resultat est dit : les dalles n'ont plus rien a montrer.
             if (tour == mesures) retirerDalles();
         });
-        Platform.runLater(() -> regle.setStyle(""));
+        Platform.runLater(this::regleInactive);
+    }
+
+    private void regleInactive() {
+        regle.getStyleClass().remove("actif");
+        regle.setStyle("");
     }
 
     // ------------------------------------------------- dalles fictives
@@ -278,7 +312,7 @@ public class BarreMesure implements Ancrage.Ancrable {
                         planVu = p;
                         Platform.runLater(() -> {
                             if (dedans) { brancher(); majCases(); stage.sizeToScene(); stage.show(); placer(); }
-                            else { mesure = false; stage.hide(); }
+                            else { mesure = false; premier = null; regleInactive(); stage.hide(); }
                         });
                     }
                 } catch (Throwable ignored) { }
@@ -293,7 +327,7 @@ public class BarreMesure implements Ancrage.Ancrable {
 
     private void survol(Button b, String texte) {
         b.setOnMouseEntered(e -> {
-            bulleTexte.setText(texte);
+            bulleTexte.setText(WindowsClavier.texte(texte));
             javafx.geometry.Bounds r = b.localToScreen(b.getBoundsInLocal());
             if (r == null) return;
             bulle.show(stage, r.getMinX(), r.getMinY() - 30);
@@ -319,7 +353,7 @@ public class BarreMesure implements Ancrage.Ancrable {
             x = e.getMaxX() - stage.getWidth() - MARGE_DROITE;
             y = e.getMaxY() - stage.getHeight() - MARGE_BAS;
         }
-        stage.setX(x);
-        stage.setY(y);
+        stage.setX(x + Deplacement.dx("mesure"));      // glissee ailleurs (Deplacement)
+        stage.setY(y + Deplacement.dy("mesure"));
     }
 }

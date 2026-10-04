@@ -18,8 +18,8 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * Annuler / Retablir pour les constructions dans la salle.
  *
  * Principe : on ne cherche pas a deviner QUI a modifie la salle (le jeu, un
- * outil de l'Atelier, G-Presets...). On photographie l'etat que tient
- * G-Presets (Salle.sols() / Salle.murs()) toutes les ~280 ms et on compare
+ * outil de l'Atelier, le moteur de pose...). On photographie l'etat que tient
+ * le moteur de l'Atelier (Salle.sols() / Salle.murs()) toutes les ~280 ms et on compare
  * avec la photo precedente :
  *
  *   present avant et apres, place differente  ->  deplace (ou pivote)
@@ -116,7 +116,7 @@ public final class Historique {
     private static volatile boolean enPause = false;
     private static volatile boolean occupe = false;
     private static volatile boolean demarre = false;
-    private static volatile String message = "En attente de G-Presets…";
+    private static volatile String message = "En attente du moteur de l'Atelier…";
 
     private static final List<Runnable> ecouteurs = new CopyOnWriteArrayList<>();
 
@@ -171,7 +171,9 @@ public final class Historique {
     public static void pause(boolean p) {
         enPause = p;
         synchronized (VERROU) { ouverte = null; }
-        dire(p ? "Enregistrement en pause." : "Enregistrement actif.");
+        String m = p ? "Enregistrement en pause." : "Enregistrement repris.";
+        dire(m);
+        Journal.succes(m);
     }
 
     public static boolean enPause() { return enPause; }
@@ -192,6 +194,7 @@ public final class Historique {
             aAnnuler.clear(); aRetablir.clear(); ouverte = null;
         }
         dire("Historique vidé.");
+        Journal.succes("Historique vidé.");
     }
 
     /** Types de mobis dont les changements ne sont pas enregistres, avec leur echeance. */
@@ -199,7 +202,7 @@ public final class Historique {
 
     /**
      * Pendant ms millisecondes, les changements des mobis de ce type ne sont pas
-     * enregistres (la dalle magique que G-Presets promene pendant un import, ou
+     * enregistres (la dalle magique que le moteur de pose promene pendant un import, ou
      * que l'Atelier pose et ramasse lui-meme). Un nouvel appel remplace l'echeance.
      */
     public static void ignorerType(int type, long ms) {
@@ -251,7 +254,7 @@ public final class Historique {
     }
 
     private static void photographier() {
-        if (Salle.gp() == null) { signaler("En attente de G-Presets…"); return; }
+        if (Salle.gp() == null) { signaler("En attente du moteur de l'Atelier…"); return; }
         FloorState s = Salle.etat();
         long now = System.currentTimeMillis();
         if (s == null) {
@@ -271,7 +274,7 @@ public final class Historique {
             entree = now;
             synchronized (VERROU) { base = null; }
             videSilencieux();
-            dire("Nouvelle salle : historique vidé.");
+            dire("Nouvelle salle : l'historique repart de zéro.");
             return;
         }
         Map<Long, Place> photo = lire();
@@ -284,7 +287,7 @@ public final class Historique {
                 // On laisse la salle finir de charger avant de prendre la reference.
                 if (now - entree < REPOS_SALLE) return;
                 base = photo;
-                dire("Salle suivie (" + photo.size() + " mobis). Les modifications sont enregistrées.");
+                dire("Salle suivie (" + photo.size() + " mobis) : chaque modification peut s'annuler.");
                 return;
             }
             // Salle rechargee (meme id) : tout disparait d'un coup -> nouvelle reference.
@@ -365,8 +368,7 @@ public final class Historique {
         ouverte.derniere = now;
         if (ouverte.changements.isEmpty()) { aAnnuler.remove(ouverte); ouverte = null; }
         aRetablir.clear();
-        Action a = aAnnuler.peekFirst();
-        if (a != null) message = "Enregistré : " + decrire(a);
+        // pas de message a chaque modification : la liste de l'onglet suffit
     }
 
     private static void videSilencieux() {
@@ -381,30 +383,58 @@ public final class Historique {
 
     private static void executer(boolean arriere) {
         Action a;
+        String quoi = arriere ? "Annulation" : "Rétablissement";
+        String interrompu = arriere ? "Annulation interrompue" : "Rétablissement interrompu";
         synchronized (VERROU) {
-            if (occupe) { dire("Une annulation est déjà en cours…"); return; }
-            if (!Salle.dansUneSalle()) { dire("Pas dans une salle."); return; }
-            a = arriere ? aAnnuler.poll() : aRetablir.poll();
-            if (a == null) { dire(arriere ? "Rien à annuler." : "Rien à rétablir."); return; }
+            String refus = null;
+            if (occupe) refus = quoi + " impossible : une annulation est déjà en cours.";
+            else if (!Salle.dansUneSalle()) refus = quoi + " impossible : entre d'abord dans une salle.";
+            a = refus != null ? null : arriere ? aAnnuler.poll() : aRetablir.poll();
+            if (refus == null && a == null)
+                refus = arriere ? "Rien à annuler." : "Rien à rétablir.";
+            if (refus != null) {
+                message = refus;
+                notifierHorsVerrou(refus);
+                return;
+            }
             occupe = true;
             ouverte = null;
         }
-        dire((arriere ? "Annulation : " : "Rétablissement : ") + decrire(a) + "…");
+        int salleDepart = Salle.salleId();
+        dire(quoi + " : " + decrire(a) + "…");
         Salle.tache("historique-envoi", () -> {
             String bilan;
-            try { bilan = jouer(a, arriere); }
-            catch (Throwable t) { bilan = "Erreur : " + t.getMessage(); }
+            boolean ok = false;
+            try {
+                bilan = jouer(a, arriere, salleDepart);
+                ok = bilan != null && !bilan.contains("Échec") && !bilan.contains("introuvable");
+            } catch (Throwable t) {
+                bilan = interrompu + " : " + t;
+                t.printStackTrace();
+            }
+            boolean memeSalle = Salle.salleId() == salleDepart;
+            if (!memeSalle || bilan == null) { bilan = interrompu + " : tu as changé de salle."; ok = false; }
             synchronized (VERROU) {
-                (arriere ? aRetablir : aAnnuler).push(a);
-                while (aAnnuler.size() > LIMITE) aAnnuler.removeLast();
+                // dans une autre salle, l'action (ids, cases) ne veut plus rien dire : on la jette
+                if (memeSalle) {
+                    (arriere ? aRetablir : aAnnuler).push(a);
+                    while (aAnnuler.size() > LIMITE) aAnnuler.removeLast();
+                }
                 occupe = false;
             }
             dire(bilan);
+            if (ok) Journal.succes(bilan); else Journal.erreur(bilan);
         });
     }
 
+    /** Refus d'executer : ligne d'etat + un message. */
+    private static void notifierHorsVerrou(String refus) {
+        notifier();
+        if (refus.startsWith("Rien")) Journal.succes(refus); else Journal.erreur(refus);
+    }
+
     /** Envoie l'inverse (arriere) ou la repetition (avant) d'une action. Hors fil FX. */
-    private static String jouer(Action a, boolean arriere) {
+    private static String jouer(Action a, boolean arriere, int salleDepart) {
         List<Changement> ramasser = new ArrayList<>(), deplacer = new ArrayList<>(), poser = new ArrayList<>();
         for (Changement c : a.changements) {
             Place cible = arriere ? c.avant : c.apres;
@@ -416,14 +446,18 @@ public final class Historique {
         List<Long> mesCles = new ArrayList<>();
         List<PoseAttendue> mesPoses = new ArrayList<>();
         int introuvables = 0;
+        java.util.function.BooleanSupplier partie = () -> Salle.salleId() != salleDepart;
 
+        try {
         // 1. ramasser (libere la place), 2. deplacer, 3. reposer depuis l'inventaire.
         for (Changement c : ramasser) {
+            if (partie.getAsBoolean()) return null;
             attendre(mesCles, c);
             Salle.ramasser(c.id, c.mural);
             Salle.sommeil(PAUSE_ENVOI);
         }
         for (Changement c : deplacer) {
+            if (partie.getAsBoolean()) return null;
             Place cible = arriere ? c.avant : c.apres;
             attendre(mesCles, c);
             if (c.mural) Salle.deplacerMur(c.id, cible.pos);
@@ -433,20 +467,22 @@ public final class Historique {
         // Repasse : un mobi bloque par un voisin pas encore revenu retente sa place.
         if (!deplacer.isEmpty()) Salle.sommeil(900);
         for (Changement c : deplacer) {
+            if (partie.getAsBoolean()) return null;
             if (c.mural) continue;
             Place cible = arriere ? c.avant : c.apres;
             HFloorItem it = Salle.sol(c.id);
-            if (it != null && (it.getTile().getX() != cible.x || it.getTile().getY() != cible.y)) {
+            if (it != null && it.getTile() != null && (it.getTile().getX() != cible.x || it.getTile().getY() != cible.y)) {
                 Salle.deplacerSol(c.id, cible.x, cible.y, cible.rot);
                 Salle.sommeil(PAUSE_ENVOI);
             }
         }
-        if (!poser.isEmpty()) {
+        if (!poser.isEmpty() && !partie.getAsBoolean()) {
             GPresets gp = Salle.gp();
             if (!ramasser.isEmpty()) Salle.sommeil(600);   // laisser l'inventaire se mettre a jour
             inventairePret(gp);
             Set<Integer> pris = new HashSet<>();
             for (Changement c : poser) {
+                if (partie.getAsBoolean()) return null;
                 Place cible = arriere ? c.avant : c.apres;
                 Integer inv = chercherInventaire(gp, c, cible, pris);
                 if (inv == null) { introuvables++; continue; }
@@ -457,20 +493,22 @@ public final class Historique {
                 mesPoses.add(p);
                 if (c.mural) Salle.envoyer(new HPacket("PlaceObject", HMessage.Direction.TOSERVER,
                         inv + " " + cible.pos));
-                // Format de G-Presets 1.3.8 pour un mobi de sol depuis l'inventaire
+                // Format du moteur de pose (v1.3.8) pour un mobi de sol depuis l'inventaire
                 // (GPresetImporter : "-%d %d %d %d", HInventoryItem.getId()).
                 else Salle.envoyer(new HPacket("PlaceObject", HMessage.Direction.TOSERVER,
                         "-" + inv + " " + cible.x + " " + cible.y + " " + cible.rot));
                 Salle.sommeil(PAUSE_ENVOI);
             }
         }
-
-        // Fin des envois : les retours restent ignores encore quelques secondes.
-        long fin = System.currentTimeMillis() + GRACE;
-        synchronized (VERROU) {
-            for (Long k : mesCles) attendus.put(k, fin);
-            for (PoseAttendue p : mesPoses) p.limite = fin;
+        } finally {
+            // Fin des envois (meme sur erreur) : les retours restent ignores encore quelques secondes.
+            long fin = System.currentTimeMillis() + GRACE;
+            synchronized (VERROU) {
+                for (Long k : mesCles) attendus.put(k, fin);
+                for (PoseAttendue p : mesPoses) p.limite = fin;
+            }
         }
+        if (partie.getAsBoolean()) return null;
 
         // Verification de la hauteur, une fois le serveur repondu.
         Salle.sommeil(1200);
@@ -479,7 +517,7 @@ public final class Historique {
             Place cible = arriere ? c.avant : c.apres;
             if (cible == null || c.mural) continue;
             HFloorItem it = Salle.sol(c.id);
-            if (it == null) { absents++; continue; }
+            if (it == null || it.getTile() == null) { absents++; continue; }
             try {
                 if (Math.abs(it.getTile().getZ() - cible.z) > 0.01) hauteur++;
             } catch (Throwable ignored) { }
@@ -489,7 +527,7 @@ public final class Historique {
         StringBuilder sb = new StringBuilder(arriere ? "Annulé : " : "Rétabli : ").append(decrire(a)).append('.');
         if (hauteur > 0) sb.append(" Hauteur non restaurée sur ").append(mobis(hauteur)).append('.');
         if (introuvables > 0) sb.append(' ').append(mobis(introuvables)).append(" introuvable(s) dans l'inventaire.");
-        if (absents > 0) sb.append(' ').append(mobis(absents)).append(" pas (encore) revenu(s) en place.");
+        if (absents > 0) sb.append(" Échec pour ").append(mobis(absents)).append(" : pas revenu(s) en place.");
         return sb.toString();
     }
 
@@ -499,7 +537,7 @@ public final class Historique {
         synchronized (VERROU) { attendus.put(k, Long.MAX_VALUE); }
     }
 
-    /** Charge l'inventaire si G-Presets ne l'a pas encore (attend au plus ~3 s). */
+    /** Charge l'inventaire si le moteur de l'Atelier ne l'a pas encore (attend au plus ~3 s). */
     private static void inventairePret(GPresets gp) {
         if (gp == null) return;
         try {

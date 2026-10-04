@@ -39,7 +39,7 @@ public final class ChargementAuto {
     }
 
     private static void verifier() {
-        GPresets gp = AtelierLauncher.gpresets();
+        GPresets gp = AtelierLauncher.moteur();
         if (gp == null) return;
 
         FloorState s = gp.getFloorState();
@@ -53,7 +53,7 @@ public final class ChargementAuto {
             dernierEssaiInv = maintenant;
             try {
                 gp.getInventory().requestInventory();
-                System.out.println("[Atelier] inventaire demande automatiquement.");
+                Journal.debug("inventaire demande automatiquement.");
             } catch (Throwable t) {
                 System.err.println("[Atelier] demande d'inventaire impossible : " + t);
             }
@@ -66,7 +66,7 @@ public final class ChargementAuto {
             dernierEssaiBc = maintenant;
             try {
                 gp.getCatalog().requestIndex();
-                System.out.println("[Atelier] catalogue BC demande automatiquement.");
+                Journal.debug("catalogue BC demande automatiquement.");
             } catch (Throwable t) {
                 System.err.println("[Atelier] demande de catalogue impossible : " + t);
             }

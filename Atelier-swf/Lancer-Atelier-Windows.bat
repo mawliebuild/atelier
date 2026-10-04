@@ -1,11 +1,19 @@
 @echo off
+rem Le chemin du fichier passe par la variable SELF : une apostrophe dans son nom cassait la demande administrateur.
 chcp 65001 >nul
 title L'Atelier
 rem L'Atelier - double-clic : installe (dans Documents), applique les modifs du jeu, puis lance.
 net session >nul 2>&1
 if %errorlevel% neq 0 (
   echo Demande des droits administrateur...
-  powershell -NoProfile -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
+  set "SELF=%~f0"
+  powershell -NoProfile -Command "Start-Process -FilePath $env:SELF -Verb RunAs"
+  if errorlevel 1 (
+    echo.
+    echo PROBLEME : la demande administrateur n'a pas pu s'ouvrir.
+    echo     -^> Fais clic droit sur ce fichier ^> Executer en tant qu'administrateur.
+    pause
+  )
   exit /b
 )
 cd /d "%~dp0"
@@ -40,6 +48,13 @@ for %%J in ("%JAVA%") do set "JBIN=%%~dpJ"
 for %%H in ("%JBIN%..") do set "JAVA_HOME=%%~fH"
 if exist "%DOCS%\Atelier\python\python.exe" (
   "%DOCS%\Atelier\python\python.exe" "%DOCS%\Atelier-swf\modifier-jeu.py"
+  if errorlevel 1 (
+    echo.
+    echo Les modifs du jeu ne sont pas installees ^(voir le message au-dessus^).
+    echo Le detail est dans Documents\Atelier-swf\modifier-jeu.log : envoie ce fichier si besoin.
+    echo Appuie sur une touche pour lancer l'Atelier quand meme.
+    pause >nul
+  )
 ) else (
   echo !   Python embarque introuvable : les modifs du jeu ne sont pas installees ^(l'Atelier marche quand meme^).
 )

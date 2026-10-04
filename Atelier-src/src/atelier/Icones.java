@@ -52,6 +52,12 @@ public final class Icones {
     public static final String REGLE      = "M3 17L17 3l4 4L7 21z M7 13l2 2 M10 10l2 2 M13 7l2 2";
     /** Un cadre photo (paysage) : la Galerie. */
     public static final String GALERIE    = "M3 5h18v14H3z M3 16l5-5 4 4 3-3 6 6 M15.5 8.5a1.5 1.5 0 1 0 0.01 0z";
+    /** Un carre rempli de petites cases : remplir une zone avec un mobi. */
+    public static final String REMPLIR = "M4 4h16v16H4z M4 9.3h16 M4 14.6h16 M9.3 4v16 M14.6 4v16";
+    /** Un interrupteur : changer l'etat des mobis. */
+    public static final String ETAT = "M7 7h10a5 5 0 0 1 0 10H7A5 5 0 0 1 7 7z M16 9.5a2.5 2.5 0 1 0 0.01 0z";
+    /** Un livre ouvert : la Documentation. */
+    public static final String DOCUMENTATION = "M3 5c3-1 6-1 9 1v14c-3-2-6-2-9-1z M21 5c-3-1-6-1-9 1v14c3-2 6-2 9-1z";
     public static final String CAPTURE    = "M4 8h3l2-3h6l2 3h3v11H4z M12 10.5a3.5 3.5 0 1 0 0.01 0z";
     public static final String LOUPE      = "M10.5 4a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13z M15.5 15.5L20 20";
     public static final String GOUTTE     = "M12 3s6 6.5 6 11a6 6 0 0 1-12 0c0-4.5 6-11 6-11z";

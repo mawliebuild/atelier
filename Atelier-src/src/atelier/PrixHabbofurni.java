@@ -101,7 +101,7 @@ public final class PrixHabbofurni {
         if (afaire.isEmpty()) { if (fin != null) fin.accept(null); return; }
         echecsReseau = 0;
         CountDownLatch reste = new CountDownLatch(afaire.size());
-        final String[] erreur = {null};
+        java.util.concurrent.atomic.AtomicReference<String> erreur = new java.util.concurrent.atomic.AtomicReference<>();
         for (String c : afaire) {
             fils.submit(() -> {
                 try {
@@ -111,21 +111,24 @@ public final class PrixHabbofurni {
                     echecsReseau = 0;
                 } catch (IOException ex) {
                     echecsReseau++;
-                    erreur[0] = "habbofurni.xyz injoignable (" + ex.getClass().getSimpleName()
-                            + (ex.getMessage() == null ? "" : " : " + ex.getMessage()) + ")";
+                    erreur.set("habbofurni.xyz injoignable (" + ex.getClass().getSimpleName()
+                            + (ex.getMessage() == null ? "" : " : " + ex.getMessage()) + ")");
                 } catch (Throwable t) {
-                    erreur[0] = "erreur de lecture des prix : " + t;
+                    erreur.set("erreur de lecture des prix : " + t);
                 } finally {
                     enCours.remove(c);
-                    reste.countDown();
+                    // « chaque » AVANT countDown : « fin » passe toujours apres le dernier prix
                     if (chaque != null) try { chaque.accept(c); } catch (Throwable ignored) { }
+                    reste.countDown();
                 }
             });
         }
         Salle.tache("prix-fin", () -> {
-            try { reste.await(10, TimeUnit.MINUTES); } catch (InterruptedException ignored) { }
+            boolean fini = false;
+            try { fini = reste.await(10, TimeUnit.MINUTES); } catch (InterruptedException ignored) { }
             sauver();
-            if (fin != null) fin.accept(erreur[0]);
+            if (!fini) erreur.compareAndSet(null, "prix pas tous lus en 10 minutes (" + reste.getCount() + " en attente)");
+            if (fin != null) fin.accept(erreur.get());
         });
     }
 
@@ -232,19 +235,8 @@ public final class PrixHabbofurni {
      * de root ; SUDO_USER donne le vrai nom.
      */
     static File fichier() {
-        String os = System.getProperty("os.name", "").toLowerCase();
-        String sudo = System.getenv("SUDO_USER");
-        String home = (sudo != null && !sudo.isBlank() && !"root".equals(sudo))
-                ? (os.contains("mac") ? "/Users/" + sudo : "/home/" + sudo)
-                : System.getProperty("user.home");
-        File d;
-        if (os.contains("win")) {
-            String ad = System.getenv("APPDATA");
-            d = new File(ad != null ? ad : home + "/AppData/Roaming", "Atelier");
-        } else if (os.contains("mac")) {
-            d = new File(home, "Library/Application Support/Atelier");
-        } else d = new File(home, ".atelier");
-        return new File(d, "prix.json");
+        // macOS ~/Library/Application Support/Atelier, Windows %APPDATA%\Atelier (voir Dossiers)
+        return new File(Dossiers.donneesAtelier(), "prix.json");
     }
 
     private static synchronized void chargerDisque() {
@@ -263,7 +255,7 @@ public final class PrixHabbofurni {
                 memoire.putIfAbsent(k, new Entree(v, s, e.optLong("t", 0)));
             }
         } catch (Throwable t) {
-            System.err.println("[Atelier] cache des prix illisible : " + t);
+            Journal.debug("cache des prix illisible : " + t);
         }
     }
 

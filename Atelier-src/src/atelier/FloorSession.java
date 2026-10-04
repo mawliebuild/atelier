@@ -107,7 +107,7 @@ final class FloorSession {
     static Lecture lire() {
         Lecture l = new Lecture();
         try {
-            if (Salle.gp() == null) { l.erreur = "G-Presets n'est pas encore prêt."; return l; }
+            if (Salle.gp() == null) { l.erreur = "L'Atelier n'est pas encore prêt."; return l; }
             FloorState s = Salle.etat();
             if (s == null) { l.erreur = "Pas dans une salle (ou plan pas encore reçu)."; return l; }
             try { l.salleId = s.getRoomId(); } catch (Throwable ignored) { }
@@ -161,7 +161,8 @@ final class FloorSession {
             }
             l.mobis = ms;
         } catch (Throwable t) {
-            l.erreur = "Lecture impossible : " + t.getMessage();
+            l.erreur = "Lecture du plan impossible (" + t.getClass().getSimpleName()
+                    + (t.getMessage() == null ? "" : " : " + t.getMessage()) + ").";
         }
         return l;
     }
@@ -234,7 +235,7 @@ final class FloorSession {
         if (annuler.isEmpty() || courant == null) return;
         retablir.push(courant);
         courant = annuler.pop();
-        etat.set("Annulé.");
+        etat.set("Changement défait.");   // classe « info » : reste dans la ligne, rien dans le jeu
         change();
     }
 
@@ -242,7 +243,7 @@ final class FloorSession {
         if (retablir.isEmpty() || courant == null) return;
         annuler.push(courant);
         courant = retablir.pop();
-        etat.set("Rétabli.");
+        etat.set("Changement refait.");
         change();
     }
 

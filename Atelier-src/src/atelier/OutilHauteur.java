@@ -139,14 +139,9 @@ public class OutilHauteur {
             majResume();
         });
 
-        CheckBox traversees = new CheckBox("Cliquer les mobis posés sur une dalle (pour changer leur état)");
-        traversees.setWrapText(true);
-        traversees.setSelected(DallesTraversees.actif());
-        traversees.setOnAction(e -> DallesTraversees.actif(traversees.isSelected()));
-
         VBox blocAvec = Ui.bloc("Avec dalles",
                 Ui.ligne(toutAppart, dansZone), blocZone,
-                couvrir, ramasser, resume, traversees,
+                couvrir, ramasser, resume,
                 Ui.aide("« Couvrir » pose des dalles magiques sur toutes les cases libres (de l'appart, "
                         + "ou de la zone choisie par deux clics dans le jeu) "
                         + "(8×8 d'abord, puis plus petites pour suivre la forme), prises au catalogue BC "
@@ -169,7 +164,7 @@ public class OutilHauteur {
                 interrupteur, etatSans, dejaPoses,
                 Ui.aide("Rien n'est posé, ni inventaire ni BC. Tant que le mode est actif, chaque mobi "
                         + "de sol que tu poses est remis à la hauteur choisie juste après sa pose (@altitude). "
-                        + "Les mobis déplacés, ceux des autres et les collages G-Presets ne sont pas touchés. "
+                        + "Les mobis déplacés, ceux des autres et les collages de l'Atelier ne sont pas touchés. "
                         + "Changer la hauteur vaut pour les poses suivantes."));
 
         Runnable montrer = () -> {
@@ -245,9 +240,9 @@ public class OutilHauteur {
         Double h = commande(txt);
         if (h == null) return;
         m.setBlocked(true);
-        if (h.isNaN()) { InfoJeu.dire("Hauteur actuelle : " + texte(hauteur) + ". Tape :h 10 pour la changer."); return; }
-        if (h < 0 || h > 40) { InfoJeu.dire("Hauteur entre 0 et 40, par exemple :h 10."); return; }
-        InfoJeu.dire("Hauteur : " + texte(h) + ".");
+        if (h.isNaN()) { Journal.succes("Hauteur actuelle : " + texte(hauteur) + ". Tape :h 10 pour la changer."); return; }
+        if (h < 0 || h > 40) { Journal.erreur("Hauteur impossible : choisis entre 0 et 40, par exemple :h 10."); return; }
+        Journal.succes("Hauteur réglée à " + texte(h) + ".");
         // Meme hauteur qu'avant : on reapplique quand meme (dalles posees depuis).
         if (!sansDalles && Math.abs(h - hauteur) < 0.001) { file.submit(() -> appliquer(h)); return; }
         Platform.runLater(() -> {
@@ -290,10 +285,16 @@ public class OutilHauteur {
         return String.format(java.util.Locale.FRANCE, "%.2f", h);
     }
 
-    /** Resultat d'une action : message du personnage dans le jeu, la fenetre se vide. */
+    /** Resultat reussi d'une action : un message (Journal : jeu + console), la ligne d'etat se vide. */
     static void bilan(String s) {
         dire("");
-        InfoJeu.dire(s);
+        Journal.succes(s);
+    }
+
+    /** Resultat en echec : un message d'erreur (Journal), la ligne d'etat se vide. */
+    static void echec(String s) {
+        dire("");
+        Journal.erreur(s);
     }
 
     private static void dire(String s) {
@@ -385,12 +386,15 @@ public class OutilHauteur {
                 t -> classes.computeIfAbsent(t, k -> Salle.classe(k, false)));
     }
 
-    private static void retenir(Collection<Integer> ids) {
+    private static void retenir(Collection<Integer> ids) { retenir(ids, cleSalle()); }
+
+    /** cle : celle de la salle ou les dalles ont ete posees (calculee au debut du chantier). */
+    private static void retenir(Collection<Integer> ids, String cle) {
         StringBuilder b = new StringBuilder();
         for (int id : ids) { if (b.length() > 0) b.append(','); b.append(id); }
         // Une preference ne depasse pas 8 Ko : au-dela, les plus anciennes sont oubliees.
         while (b.length() > Preferences.MAX_VALUE_LENGTH) b.delete(0, b.indexOf(",") + 1);
-        prefs.put(cleSalle(), b.toString());
+        prefs.put(cle, b.toString());
     }
 
     // ------------------------------------------------------------ chantier
@@ -398,8 +402,11 @@ public class OutilHauteur {
     /** Hors fil JavaFX : couvre les cases libres de l'appart. */
     private static void couvrir() {
         GPresets gp = Salle.gp();
-        if (gp == null || !Salle.dansUneSalle()) { dire("Entre d'abord dans un appart."); return; }
+        if (gp == null || !Salle.dansUneSalle()) { echec("Pose impossible : entre d'abord dans un appart."); return; }
         if (zoneSeule && !Zone.definie()) { Platform.runLater(OutilHauteur::choisirZone); return; }
+        final int salle = Salle.salleId();
+        final String cle = cleSalle();
+        String raisonArret = null;
         occupe = true; arret = false;
         majResume();
         Set<Integer> types = Generateur.Dalle.typesDalles();
@@ -443,7 +450,7 @@ public class OutilHauteur {
             Set<Integer> epuisees = new HashSet<>();            // rangs abandonnes
             for (int r = 0; r < rang && !arret; r++) {
                 int refusDeSuite = 0;
-                while (!arret && Salle.dansUneSalle() && !epuisees.contains(r)) {
+                while (!arret && Salle.salleId() == salle && !epuisees.contains(r)) {
                     int[] meilleur = null; Object[] forme = null;
                     for (Object[] f : formes) {
                         if ((int) f[6] != r) continue;
@@ -478,14 +485,13 @@ public class OutilHauteur {
                     if (id < 0) {
                         String msg = "Dalle " + lx + "x" + ly + " en (" + c[0] + "," + c[1] + ") " + d
                                 + " : refusée par le jeu.";
-                        System.out.println("[Atelier] " + msg);
-                        dire(msg);
+                        Journal.debug(msg);
+                        dire("Pose des dalles : " + poses + " posée(s), une refusée, je continue…");
                         // Le BC n'est fautif que s'il n'a encore rien pose : sinon,
                         // c'est la case qui bloque (meuble, avatar...), pas le BC.
                         if (Generateur.Dalle.BC.equals(d) && bcReussies == 0) {
                             if (++bcRefus >= 2) {
-                                bilan("Le BC refuse de poser les dalles (Builders Club inactif ou "
-                                        + "limite atteinte ?) : arrêt.");
+                                raisonArret = "le BC a refusé les dalles (Builders Club inactif ou limite atteinte ?)";
                                 arret = true;
                             }
                             continue;
@@ -494,7 +500,8 @@ public class OutilHauteur {
                         if (lx * ly == 1) refusees.add(cle(c[0], c[1]));
                         // une grande dalle refusee a la suite : les petites feront le reste
                         if (++refusDeSuite >= 6 && lx * ly > 1) {
-                            dire("Dalles " + taille + " refusées 6 fois de suite : je passe à la taille suivante.");
+                            Journal.debug("Dalles " + taille + " refusées 6 fois de suite : taille suivante.");
+                            dire("Pose des dalles : " + poses + " posée(s), taille suivante…");
                             epuisees.add(r);
                         }
                         continue;
@@ -505,14 +512,14 @@ public class OutilHauteur {
                     for (int i = 0; i < lx; i++)
                         for (int j = 0; j < ly; j++) prises.add(cle(c[0] + i, c[1] + j));
                     ids.add(id);
-                    retenir(ids);
+                    retenir(ids, cle);
                     poses++;
-                    dire("Dalle " + lx + "×" + ly + " posée en (" + c[0] + "," + c[1] + ") " + d
-                            + " — " + poses + " posée(s).");
+                    dire("Pose des dalles : " + poses + " posée(s)…");
                     majResume();
                 }
             }
-            if (poses > 0) {
+            boolean partie = Salle.salleId() != salle;
+            if (poses > 0 && !partie) {
                 Salle.sommeil(300);
                 appliquer(hauteur);
             }
@@ -535,10 +542,19 @@ public class OutilHauteur {
             String fin = (arret ? "Arrêté : " : "Terminé : ") + poses + " dalle(s) posée(s)"
                     + (libres > 0 ? ", " + libres + " case(s) restée(s) sans dalle." : ", tout l'appart est couvert.")
                     + (detail.length() > 0 ? " " + detail : "");
-            System.out.println("[Atelier] " + fin);
-            bilan(arret ? poses + " dalle(s) posée(s), pose arrêtée." : "Dalles posées.");
+            Journal.info(fin);
+            String lieu = zoneSeule ? "toute la zone" : "tout l'appart";
+            if (partie) echec("Pose interrompue : tu as changé de salle (" + poses + " dalle(s) posée(s)).");
+            else if (raisonArret != null)
+                echec((poses == 0 ? "Aucune dalle posée : " : poses + " dalle(s) posée(s), puis arrêt : ") + raisonArret + ".");
+            else if (arret) bilan("Pose arrêtée : " + poses + " dalle(s) posée(s).");
+            else if (poses == 0 && libres == 0) bilan("Aucune dalle à poser : " + lieu + " est déjà couvert" + (zoneSeule ? "e." : "."));
+            else if (poses == 0) echec("Aucune dalle posée : " + libres + " case(s) refusée(s) par le jeu.");
+            else if (libres > 0) bilan(poses + " dalle(s) posée(s), " + libres + " case(s) restée(s) sans dalle.");
+            else bilan(poses + " dalle(s) posée(s), " + lieu + " est couvert" + (zoneSeule ? "e." : "."));
         } catch (Throwable t) {
-            bilan("Pose des dalles interrompue : " + t);
+            Journal.erreur("Pose des dalles interrompue", t);
+            dire("");
         } finally {
             for (int type : types) Historique.ignorerType(type, 2500);
             occupe = false; arret = false;
@@ -590,7 +606,7 @@ public class OutilHauteur {
             for (int id : aFaire) if (!prise(Salle.sol(id), h)) manquees.add(id);
             int prises = aFaire.size() - manquees.size();
             if (prises > 0) relue = true;
-            System.out.println("[Atelier] hauteur " + texte(h) + " : tour " + (tour + 1) + " (pause "
+            Journal.debug("hauteur " + texte(h) + " : tour " + (tour + 1) + " (pause "
                     + pause + " ms), " + prises + " / " + aFaire.size() + " prise(s)." + (tour == 0 ? temoin(aFaire) : ""));
             // Rien de relu apres deux tours : on ne sait pas lire la hauteur, on arrete.
             if (!relue && tour >= 1) break;
@@ -602,7 +618,7 @@ public class OutilHauteur {
         }
         int deja = HauteurLogique.compte(new ArrayList<>(ids), nos)[1];
         // Pas de message dans le jeu a chaque changement de hauteur : journal seulement.
-        System.out.println("[Atelier] " + ids.size() + " dalle(s) réglée(s) à " + texte(h)
+        Journal.info(ids.size() + " dalle(s) réglée(s) à " + texte(h)
                 + (deja > 0 ? " (dont " + deja + " déjà là)" : "")
                 + (!relue || aFaire.isEmpty() ? "." : ", " + aFaire.size() + " n'ont pas répondu."));
         dire("");
@@ -640,8 +656,14 @@ public class OutilHauteur {
         int verrou = ids.size();
         ids.removeIf(OutilHauteur::verrouillee);          // dalles d'un calque verrouille : laissees
         verrou -= ids.size();
-        if (verrou > 0) InfoJeu.consigne(verrou + " dalle(s) d'un calque verrouillé laissée(s) en place.");
-        if (ids.isEmpty()) { majResume(); return; }
+        String laissees = verrou > 0 ? " " + verrou + " dalle(s) d'un calque verrouillé laissée(s) en place." : "";
+        if (ids.isEmpty()) {
+            if (verrou > 0) bilan("Rien à ramasser :" + laissees);
+            majResume();
+            return;
+        }
+        final int salle = Salle.salleId();
+        final String cle = cleSalle();
         occupe = true;
         majResume();
         Set<Integer> types = Generateur.Dalle.typesDalles();
@@ -649,16 +671,24 @@ public class OutilHauteur {
         try {
             int n = 0;
             for (int id : ids) {
-                if (arret || !Salle.dansUneSalle()) break;
+                if (arret || Salle.salleId() != salle) break;
                 Salle.ramasser(id, false);
                 for (int i = 0; i < 10 && Salle.sol(id) != null; i++) Salle.sommeil(100);
                 n++;
                 dire("Ramassage : " + n + " / " + ids.size());
             }
+            if (Salle.salleId() != salle) {
+                echec("Ramassage interrompu : tu as changé de salle (" + n + " / " + ids.size() + ").");
+                return;
+            }
             Salle.sommeil(300);
-            int restent = toutesDalles().size();
-            retenir(nosDalles());
-            bilan(restent == 0 ? "Dalles ramassées." : restent + " dalle(s) n'ont pas pu être ramassées.");
+            List<Integer> reste = toutesDalles();
+            reste.removeIf(OutilHauteur::verrouillee);    // celles-la sont laissees exprès
+            int restent = reste.size();
+            retenir(nosDalles(), cle);
+            if (restent == 0) bilan((arret ? "Ramassage arrêté : " + n + " dalle(s) ramassée(s)." : "Dalles ramassées.") + laissees);
+            else if (arret) bilan("Ramassage arrêté : " + n + " dalle(s) ramassée(s), " + restent + " encore là." + laissees);
+            else echec("Échec pour " + restent + " dalle(s) : pas pu être ramassée(s)." + laissees);
         } finally {
             for (int type : types) Historique.ignorerType(type, 2500);
             occupe = false; arret = false;
@@ -683,7 +713,7 @@ public class OutilHauteur {
 
     /**
      * Cases deja couvertes par une dalle magique. Les autres mobis ne comptent
-     * pas : une dalle se glisse dessous (c'est ce que fait G-Presets en la
+     * pas : une dalle se glisse dessous (c'est ce que fait le moteur de pose en la
      * deplacant sous chaque meuble). Sans ca, un appart meuble ne recevait que
      * des petites dalles entre les meubles.
      */
@@ -719,6 +749,9 @@ public class OutilHauteur {
         Set<Integer> invPris = new HashSet<>();
         Set<Integer> types = Generateur.Dalle.typesDalles();
         for (int type : types) Historique.ignorerType(type, 10 * 60_000L);
+        final int salle = Salle.salleId();
+        java.util.function.BooleanSupplier stop0 = stop;
+        stop = () -> stop0.getAsBoolean() || Salle.salleId() != salle;   // autre salle : on s'arrete
         try {
             for (StackTileSetting t : ORDRE) {
                 Integer type = fd.getFloorTypeId(t.getClassName());

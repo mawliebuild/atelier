@@ -336,7 +336,7 @@ final class GroupeActions {
         int total = cibles.size();
         boolean arrete = false;
         Set<Integer> sansTourner = new HashSet<>();      // envoyes avec leur rotation d'origine
-        System.out.println("[Atelier] calques : pivot " + (horaire ? "horaire" : "inverse") + ", "
+        Journal.debug("calques : pivot " + (horaire ? "horaire" : "inverse") + ", "
                 + reste.size() + " sol(s), centre double " + (centre == null ? "-" : centre[0] + "," + centre[1]));
 
         historiqueGrouper(true);
@@ -350,8 +350,10 @@ final class GroupeActions {
                         if (t.arretee() || !memeSalle(salle)) { arrete = true; break; }
                         int rot = GroupeCalcul.rotationEssai(c.rot, c.e.rot, essai);
                         if (rot < 0) continue;
-                        // rotation d'origine : utile seulement si le mobi change de case
-                        if (essai == 2 && c.x == c.e.x && c.y == c.e.y) continue;
+                        // rotation d'origine : utile seulement si le mobi change de case, et
+                        // seulement pour une emprise carree (un mobi a une seule orientation).
+                        // Sinon il serait pose dans l'autre sens que le bloc : on le signale.
+                        if (essai == 2 && (c.x == c.e.x && c.y == c.e.y || c.e.ex != c.e.ey)) continue;
                         if (essai == 2) sansTourner.add(c.e.id);
                         Salle.deplacerSol(c.e.id, c.x, c.y, rot);
                         envoyes.add(c);
@@ -424,7 +426,7 @@ final class GroupeActions {
         int total = cibles.size();
         boolean arrete = false;
         Set<Integer> sansTourner = new HashSet<>();      // envoyes avec leur rotation d'origine
-        System.out.println("[Atelier] calques : deplacement avec pivot (" + quarts + " quart(s)), "
+        Journal.debug("calques : deplacement avec pivot (" + quarts + " quart(s)), "
                 + reste.size() + " sol(s), centre double " + (centre == null ? "-" : centre[0] + "," + centre[1]));
 
         historiqueGrouper(true);
@@ -438,8 +440,10 @@ final class GroupeActions {
                         if (t.arretee() || !memeSalle(salle)) { arrete = true; break; }
                         int rot = GroupeCalcul.rotationEssai(c.rot, c.e.rot, essai);
                         if (rot < 0) continue;
-                        // rotation d'origine : utile seulement si le mobi change de case
-                        if (essai == 2 && c.x == c.e.x && c.y == c.e.y) continue;
+                        // rotation d'origine : utile seulement si le mobi change de case, et
+                        // seulement pour une emprise carree (un mobi a une seule orientation).
+                        // Sinon il serait pose dans l'autre sens que le bloc : on le signale.
+                        if (essai == 2 && (c.x == c.e.x && c.y == c.e.y || c.e.ex != c.e.ey)) continue;
                         if (essai == 2) sansTourner.add(c.e.id);
                         Salle.deplacerSol(c.e.id, c.x, c.y, rot);
                         envoyes.add(c);
@@ -608,7 +612,7 @@ final class GroupeActions {
                                       Generateur.Source source) {
         int salle = Groupes.salleCourante();
         GPresets gp = Salle.gp();
-        if (gp == null) return Groupes.Resultat.refus("G-Presets pas encore prêt.");
+        if (gp == null) return Groupes.Resultat.refus("L'Atelier n'est pas encore prêt.");
         if (!Salle.furnidataPrete()) return Groupes.Resultat.refus("Furnidata pas encore chargée.");
         List<GroupeCalcul.Element> els = elements(ids.get(0), ids.get(1));
         if (els.isEmpty()) return Groupes.Resultat.refus("Aucun mobi de ce calque dans la salle.");
@@ -651,39 +655,35 @@ final class GroupeActions {
                 + (muraux > 0 ? muraux + " mobi(s) mural(aux) laissé(s) de côté. " : "");
         if (voulus == 0) return Groupes.Resultat.refus("Rien à dupliquer. " + ignores);
 
-        // 2. la salle avant
-        Set<Integer> avantS = Groupes.idsSols(), avantM = Groupes.idsMurs();
-
-        // 3. la pose (appart temporaire + dalle magique)
-        GPresetImporter imp = gp.getImporter();
-        if (imp == null) return Groupes.Resultat.refus("Importeur de G-Presets introuvable.");
-        Consumer<String> dire = t::dire;
-        boolean lance;
-        try { lance = poser(gp, imp, mobis, murs, source, dire); }
-        catch (Throwable e) { return Groupes.Resultat.refus("Pose impossible : " + e); }
-        if (!lance) return new Groupes.Resultat(false, false, voulus, 0, voulus, "La pose n'a pas démarré. " + ignores, null);
-
-        // 4. attendre la fin de G-Presets, en comptant les nouveaux mobis
-        long fin = System.currentTimeMillis() + 30 * 60_000L;
-        boolean arrete = false, sortie = false;
-        while (System.currentTimeMillis() < fin) {
-            Salle.sommeil(500);
-            if (!memeSalle(salle)) { sortie = true; break; }
-            if (t.arretee() && !arrete) { arrete = true; abandonner(imp, gp); }
-            GPresetImporter.BuildingImportState st;
-            try { st = imp.getState(); } catch (Throwable e) { st = GPresetImporter.BuildingImportState.NONE; }
-            int n = nouveaux(avantS, attendusSols, false).size() + nouveaux(avantM, attendusMurs, true).size();
-            t.progres(Math.min(n, voulus), voulus, "G-Presets pose la copie : " + n + "/" + voulus
-                    + (st == GPresetImporter.BuildingImportState.AWAITING_UNOCCUPIED_SPACE ? " — clique une case LIBRE dans le jeu pour la dalle magique" : ""));
-            if (st == GPresetImporter.BuildingImportState.NONE) break;
+        // 2. la pose : mobi par mobi, chacun a son altitude (@altitude), sans dalle magique
+        List<PoseDirecte.Sol> aPoser = new ArrayList<>();
+        for (GroupeCalcul.Cible c : cibles) {
+            if (c.e.mural || c.horsPlan) continue;
+            HFloorItem it = Salle.sol(c.e.id);
+            String cls = it == null ? null : Salle.classe(it.getTypeId(), false);
+            if (cls == null || Wired.estWired(cls)) continue;
+            aPoser.add(new PoseDirecte.Sol(cls, c.x, c.y, c.z, c.rot, Generateur.etatDe(it)));
         }
-        if (sortie) return new Groupes.Resultat(false, true, voulus, 0, voulus, "Tu as quitté la salle pendant la pose.", null);
-        Salle.sommeil(3500);           // la dalle de l'Atelier est ramassee ~1,5 s apres la fin
+        List<PoseDirecte.Mur> mursAPoser = new ArrayList<>();
+        for (MurPose w : murs) mursAPoser.add(new PoseDirecte.Mur(w.classe, w.position));
+        boolean arrete;
+        historiqueGrouper(true);
+        PoseDirecte.Resultat pr;
+        try {
+            pr = PoseDirecte.poser(aPoser, mursAPoser, source, t::dire, t::arretee,
+                    (f, n) -> t.progres(f, n, "Pose de la copie : " + f + "/" + n));
+        } finally {
+            historiqueGrouper(false);
+        }
+        arrete = t.arretee();
+        if (!memeSalle(salle)) return new Groupes.Resultat(false, true, voulus, 0, voulus, "Tu as quitté la salle pendant la pose.", null);
 
-        // 5. les nouveaux mobis -> nouveau calque
-        List<Integer> nS = nouveaux(avantS, attendusSols, false), nM = nouveaux(avantM, attendusMurs, true);
+        // 3. les nouveaux mobis -> nouveau calque
+        List<Integer> nS = pr.sols, nM = pr.murs;
         int obtenus = nS.size() + nM.size();
         String nouveau = obtenus > 0 ? Groupes.creer(null, nS, nM, dessus) : null;
+        if (pr.hauteursFausses > 0) ignores += pr.hauteursFausses + " mobi(s) à une hauteur différente. ";
+        if (pr.etatsFaux > 0) ignores += pr.etatsFaux + " mobi(s) dans un autre état (couleur, allumé…). ";
         int echecs = Math.max(0, voulus - obtenus);
         String msg = (arrete ? "Arrêté. " : "") + obtenus + "/" + voulus + " mobi(s) posé(s)"
                 + (nouveau != null ? " — nouveau calque créé" : "")
@@ -697,7 +697,7 @@ final class GroupeActions {
     /**
      * Dupliquer avec les choix de la fenetre : quoi copier (sols, murs, wired)
      * et d'ou viennent les mobis. La copie est posee A LA MEME PLACE (dalle
-     * magique de G-Presets : hauteurs exactes). Avec les wired, sols et wired
+     * magique du moteur de pose : hauteurs exactes). Avec les wired, sols et wired
      * passent ensemble par le collage wired (reglages et selections remappes
      * vers les mobis de la copie). Ensuite, s'il n'y a pas de dalle magique
      * dans la copie, des dalles (BC) sont posees sur sa zone et rangees dans
@@ -731,7 +731,7 @@ final class GroupeActions {
             voulus = tous.size() + m.size();
             obtenus = nS.size() + nM.size();
             nouveau = obtenus > 0 ? Groupes.creer(null, nS, nM, dessus) : null;
-            msg = obtenus + "/" + voulus + " mobi(s) posé(s), wired avec leur réglage"
+            msg = (t.arretee() ? "Arrêté. " : "") + obtenus + "/" + voulus + " mobi(s) posé(s), wired avec leur réglage"
                     + (nouveau != null ? " — nouveau calque créé" : "") + ".";
         } else {
             Groupes.Resultat r = dupliquer(t, List.of(s, m), dessus,
@@ -742,30 +742,10 @@ final class GroupeActions {
         if (nouveau == null || t.arretee() || !memeSalle(salle))
             return new Groupes.Resultat(false, t.arretee(), voulus, obtenus, voulus - obtenus, msg, nouveau);
 
-        // dalles magiques sous la copie (si elle n'en a pas)
-        Set<Integer> types = Generateur.Dalle.typesDalles();
-        Set<Long> cases = new HashSet<>();
-        boolean aDesDalles = false;
-        for (int id : Groupes.mobis(nouveau).get(0)) {
-            HFloorItem it = Salle.sol(id);
-            if (it == null) continue;
-            if (types.contains(it.getTypeId())) { aDesDalles = true; break; }
-            int[] e = Salle.emprise(it);
-            for (int i = 0; i < e[0]; i++)
-                for (int j = 0; j < e[1]; j++) cases.add(OutilHauteur.cle(it.getTile().getX() + i, it.getTile().getY() + j));
-        }
-        if (!aDesDalles && !cases.isEmpty()) {
-            t.dire("Dalles magiques sous la copie…");
-            List<Integer> dalles = OutilHauteur.couvrirCases(cases, t::dire, t::arretee);
-            if (!dalles.isEmpty()) {
-                Groupes.ajouterSansVerrou(nouveau, dalles, List.of());
-                msg += " " + dalles.size() + " dalle(s) magique(s) posée(s) sous la copie : elles la suivront au déplacement.";
-            }
-        }
         return new Groupes.Resultat(obtenus == voulus, false, voulus, obtenus, voulus - obtenus, msg, nouveau);
     }
 
-    /** Copie des muraux donnes a leur place (G-Presets). Ids des nouveaux muraux. */
+    /** Copie des muraux donnes a leur place (moteur de pose). Ids des nouveaux muraux. */
     private static List<Integer> poserMursSurPlace(Groupes.Tache t, Set<Integer> murs, Generateur.Source source) {
         GPresets gp = Salle.gp();
         if (gp == null) return List.of();
@@ -789,6 +769,7 @@ final class GroupeActions {
             GPresetImporter.BuildingImportState st;
             try { st = imp.getState(); } catch (Throwable e) { st = GPresetImporter.BuildingImportState.NONE; }
             if (st == GPresetImporter.BuildingImportState.NONE) break;
+            if (t.arretee()) { abandonner(imp, gp); break; }   // Arreter : on rend la main (verrou)
         }
         Salle.sommeil(1500);
         return nouveaux(avant, attendus, true);
@@ -865,7 +846,7 @@ final class GroupeActions {
                 boolean ok = false;
                 for (int essai = 0; essai <= 2 && !ok; essai++) {
                     int rot = GroupeCalcul.rotationEssai(c.rot, c.e.rot, essai);
-                    if (rot < 0) continue;
+                    if (rot < 0 || essai == 2 && c.e.ex != c.e.ey) continue;   // pas dans l'autre sens que le bloc
                     Salle.deplacerSol(c.e.id, c.x, c.y, rot);
                     for (int i = 0; i < 8 && !ok; i++) { Salle.sommeil(150); ok = place(c) || placeTourne(c, rot); }
                 }
@@ -953,7 +934,7 @@ final class GroupeActions {
     /**
      * Comme Generateur.poser, mais avec des murs : sols et murs aux positions
      * ABSOLUES voulues. Le preset est ramene a l'origine (min x, min y) et la
-     * racine mise a ce coin : G-Presets pose sols et murs a racine + (x, y)
+     * racine mise a ce coin : le moteur de pose pose sols et murs a racine + (x, y)
      * (placeWallItems : WallPosition.x + rootLocation.x).
      */
     static boolean poser(GPresets gp, GPresetImporter imp, List<Generateur.Mobi> mobis, List<MurPose> murs,
@@ -961,7 +942,7 @@ final class GroupeActions {
         if (!Salle.dansUneSalle()) { dire.accept("Tu n'es pas dans une salle."); return false; }
         try {
             if (imp.getState() != GPresetImporter.BuildingImportState.NONE) {
-                dire.accept("G-Presets est déjà en train d'importer — termine ou tape :abort dans le jeu.");
+                dire.accept("Le moteur de pose est déjà en train d'importer — termine ou tape :abort dans le jeu.");
                 return false;
             }
         } catch (Throwable ignored) { }
@@ -1022,12 +1003,12 @@ final class GroupeActions {
         if (!dossier.exists()) dossier.mkdirs();
         Files.write(new File(dossier, fichier + ".json").toPath(), json.getBytes(StandardCharsets.UTF_8));
 
-        String entete = (furni.size() + wall.size()) + " mobi(s) envoyés à G-Presets. ";
+        String entete = (furni.size() + wall.size()) + " mobi(s) envoyés au moteur de pose. ";
         if (furni.isEmpty()) {
-            // murs seuls : G-Presets les pose des « :ip x,y », sans dalle magique
+            // murs seuls : le moteur de pose les pose des « :ip x,y », sans dalle magique
             boolean ok = Generateur.importer(gp, imp, relu, fichier, source, racine, s -> { }, entete, null);
             if (ok) dire.accept(entete + "Pose des murs en cours (:abort dans le jeu pour arrêter).");
-            else dire.accept("G-Presets n'a pas lancé la pose (regarde son message dans le jeu).");
+            else dire.accept("Le moteur de pose n'a pas lancé la pose (regarde son message dans le jeu).");
             return ok;
         }
         List<int[]> trace = Generateur.Dalle.trace(relatifs, 0, 0, racine);
