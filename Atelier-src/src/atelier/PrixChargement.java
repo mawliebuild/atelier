@@ -82,7 +82,7 @@ final class PrixChargement {
             if (PrixSite.dernierEchec() != null && PrixSite.nombre() == 0 && !siteMuetDit
                     && !"lecture arrêtée".equals(PrixSite.dernierEchec())) {
                 siteMuetDit = true;
-                Journal.erreur("Les prix de habbofurni.xyz n'ont pas pu être lus (" + PrixSite.dernierEchec()
+                Journal.debug("Les prix de habbofurni.xyz n'ont pas pu être lus (" + PrixSite.dernierEchec()
                         + ") : prix du marché du jeu seulement. « Actualiser les prix » pour réessayer.");
             }
             // prix du site connus : on complete par le marche du jeu
@@ -126,7 +126,7 @@ final class PrixChargement {
             if ("lecture arrêtée".equals(probleme)) return;
             if (probleme != null) {
                 long d = PrixSite.misAJour();
-                Journal.erreur("Le site habbofurni.xyz n'a pas pu être relu (" + probleme + ")"
+                Journal.debug("Le site habbofurni.xyz n'a pas pu être relu (" + probleme + ")"
                         + (d > 0 ? " : prix gardés du " + PrixTexte.date(d) + "." : "."));
             }
             lancerJeu(true, nJeu -> {
@@ -211,7 +211,7 @@ final class PrixChargement {
                     if (suite >= 5) {
                         if (!jeuMuetDit) {
                             jeuMuetDit = true;
-                            Journal.erreur("Le marché du jeu ne répond pas : prix manquants redemandés plus tard.");
+                            Journal.debug("Le marché du jeu ne répond pas : prix manquants redemandés plus tard.");   // chargement de fond : pas de message dans le jeu
                         }
                         break;
                     }

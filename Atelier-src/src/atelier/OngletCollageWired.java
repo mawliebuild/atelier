@@ -42,6 +42,8 @@ public class OngletCollageWired {
     private final Set<Long> cases = ConcurrentHashMap.newKeySet();
     private volatile int salleCases = -1;
     private volatile boolean modeCases = false, zoneDemandee = false, deuxiemeDit = false;
+    /** Le mode « Choisir des cases » est-il allume (les clics traversent les mobis) ? Lu par GrilleVue. */
+    static volatile boolean choixCasesActif = false;
     private volatile long clicMobiA = 0;
 
     public Tab construire() {
@@ -259,6 +261,7 @@ public class OngletCollageWired {
         if (!Salle.dansUneSalle()) { Journal.erreur("Tu n'es pas dans une salle."); return; }
         verifierSalle();
         modeCases = true;
+        choixCasesActif = true;
         choisirCases.setText("Arrêter le choix");
         Salle.tache("wired-cases-clics", () -> GrilleVue.clicsAuSol(true));
         InfoJeu.consigne("Clique les cases des piles à copier : un clic ajoute, un autre retire.");
@@ -268,6 +271,7 @@ public class OngletCollageWired {
     private void arreterModeCases(boolean dire) {
         if (!modeCases) return;
         modeCases = false;
+        choixCasesActif = false;
         Runnable r = () -> { if (choisirCases != null) choisirCases.setText("Choisir des cases"); };
         if (Platform.isFxApplicationThread()) r.run(); else Platform.runLater(r);
         if (!Zone.choixEnCours()) Salle.tache("wired-cases-clics", () -> GrilleVue.clicsAuSol(false));

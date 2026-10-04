@@ -7,7 +7,11 @@ import gearth.protocol.HMessage;
 import gearth.protocol.HPacket;
 
 import javafx.application.Platform;
+import javafx.geometry.Pos;
 import javafx.scene.control.*;
+import javafx.scene.layout.HBox;
+import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 
 import java.util.*;
@@ -31,23 +35,32 @@ import java.util.prefs.Preferences;
  * par toi) : toutes les dalles de la salle montent. « Ramasser » reprend aussi
  * TOUTES les dalles magiques de l'appart, les tiennes comprises.
  *
- * Mode « Sans dalles » (HauteurSansDalles) : rien n'est pose ; tant qu'il est
- * actif, chaque mobi que tu poses est remis a la hauteur par @altitude.
- * Le mode choisi est retenu (preference « hauteur.mode »).
+ * La fenetre ne montre que la hauteur, les actions et la progression : la zone
+ * choisie, le nombre de dalles, les cases restees nues... partent en messages
+ * dans le jeu (Journal / InfoJeu), une fois, apres chaque action.
+ *
+ * L'ancien mode « Sans dalles » (@altitude a chaque pose) est retire : la
+ * preference « hauteur.mode = sans » est remise a « avec » au chargement.
  */
 public class OutilHauteur {
 
     private static final Preferences prefs = Preferences.userRoot().node("atelier");
+    static {
+        // Mode « Sans dalles » retire : s'il etait retenu, on repasse aux dalles.
+        try { if ("sans".equals(prefs.get("hauteur.mode", "avec"))) prefs.put("hauteur.mode", "avec"); }
+        catch (Throwable ignored) { }
+    }
     /** Toujours 0 au lancement (demande de l'utilisatrice) : pas de valeur retenue. */
     private static volatile double hauteur = 0.0;
-    private static Label etat, resume, etatSans;
+    /** Ligne de progression (phase en cours), vide sinon. */
+    private static Label etat;
     /** Le champ Hauteur, mis a jour quand la hauteur vient de « :h » dans le chat. */
     private static Spinner<Double> champ;
-    private static Button couvrir, ramasser, interrupteur, dejaPoses;
-    /** Ou poser les dalles : true = seulement dans la zone (Zone), sinon tout l'appart. */
-    private static volatile boolean zoneSeule = prefs.getBoolean("hauteur.zone", false);
-
-    private static String libelleCouvrir() { return zoneSeule ? "Couvrir la zone de dalles" : "Couvrir l'appart de dalles"; }
+    private static Button couvrirAppart, couvrirZone, ramasser;
+    private static ProgressBar barre;
+    private static HBox ligneProgres;
+    /** Chantier en cours : true = seulement dans la zone (Zone), sinon tout l'appart. */
+    private static volatile boolean zoneSeule = false;
 
     /** Choix de la zone lance par cet outil : on guide dans le jeu, point par point. */
     private static volatile boolean choixZone = false;
@@ -59,23 +72,36 @@ public class OutilHauteur {
         InfoJeu.consigne("Choisis le premier point de la zone.");
     }
 
-    /** Ecouteur de Zone (fil JavaFX). */
+    /** Ecouteur de Zone (fil JavaFX) : la zone fermee, on la dit dans le jeu et on la couvre. */
     private static void suivreZone() {
         if (!choixZone) return;
-        if (!Zone.choixEnCours()) { choixZone = false; return; }
+        if (!Zone.choixEnCours()) {
+            choixZone = false;
+            if (!Zone.definie()) { Journal.erreur("Zone pas choisie : clique « Couvrir une zone » pour recommencer."); return; }
+            int l = Zone.largeur(), L = Zone.longueur();
+            Journal.succes("Zone choisie : de (" + Zone.minX() + "," + Zone.minY() + ") à (" + Zone.maxX() + ","
+                    + Zone.maxY() + "), " + l + " × " + L + " = " + (l * L) + " case(s).");
+            lancer(true);
+            return;
+        }
         if (Zone.premierCoinChoisi() && !deuxiemeDit) {
             deuxiemeDit = true;
             InfoJeu.consigne("Choisis le deuxième point de la zone.");
         }
     }
 
-    /** Mode choisi : true = « Sans dalles ». */
-    private static volatile boolean sansDalles = "sans".equals(prefs.get("hauteur.mode", "avec"));
+    private static void lancer(boolean zone) {
+        if (occupe) return;
+        zoneSeule = zone;
+        file.submit(OutilHauteur::couvrir);
+    }
 
     /** Un seul chantier a la fois : poses, reglages et ramassage passent ici l'un apres l'autre. */
     private static final ExecutorService file = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "atelier-hauteur-fixe"); t.setDaemon(true); return t; });
     private static volatile boolean arret = false, occupe = false;
+    /** Un reglage de hauteur est en cours (barre visible, « Arreter » l'abandonne). */
+    private static volatile boolean regle = false;
     /** Chaque reglage de hauteur incremente : seul le dernier est applique. */
     private static final AtomicInteger reglage = new AtomicInteger();
 
@@ -99,109 +125,51 @@ public class OutilHauteur {
         valeur.valueProperty().addListener((o, a, b) -> { if (b != null) regler(b); });
 
         etat = Ui.etat();
-        resume = Ui.valeur("");
-        resume.setWrapText(true);
-        couvrir = Generateur.principal(libelleCouvrir(), () -> {
-            if (occupe) { arret = true; dire("Arrêt demandé…"); }
-            else file.submit(OutilHauteur::couvrir);
-        });
-        Icones.sur(couvrir, Icones.COUVRIR);
-        ramasser = Icones.sur(new Button("Ramasser toutes les dalles de l'appart"), Icones.RAMASSER);
+        couvrirAppart = Generateur.principal("Couvrir l'appart", () -> lancer(false));
+        Icones.sur(couvrirAppart, Icones.COUVRIR);
+        couvrirZone = Icones.sur(new Button("Couvrir une zone"), Icones.CIBLE);
+        couvrirZone.setMaxWidth(Double.MAX_VALUE);
+        couvrirZone.setTooltip(Ui.bulle("Clique deux points dans le jeu : la zone entre les deux est couverte."));
+        couvrirZone.setOnAction(e -> { if (!occupe) choisirZone(); });
+        ramasser = Icones.sur(new Button("Ramasser les dalles"), Icones.RAMASSER);
         ramasser.setMaxWidth(Double.MAX_VALUE);
         ramasser.setOnAction(e -> { if (!occupe) file.submit(OutilHauteur::ramasserTout); });
-
-        // --- mode : deux choix en haut de l'outil
-        ToggleGroup g = new ToggleGroup();
-        RadioButton avec = new RadioButton("Avec dalles");
-        RadioButton sans = new RadioButton("Sans dalles");
-        avec.setToggleGroup(g); sans.setToggleGroup(g);
-        Icones.sur(avec, Icones.AVEC_DALLE); Icones.sur(sans, Icones.SANS_DALLE);
-        (sansDalles ? sans : avec).setSelected(true);
-
-        // --- ou : tout l'appart, ou la zone choisie (deux clics dans le jeu)
-        ToggleGroup gz = new ToggleGroup();
-        RadioButton toutAppart = new RadioButton("Tout l'appart");
-        RadioButton dansZone = new RadioButton("Zone seulement");
-        toutAppart.setToggleGroup(gz); dansZone.setToggleGroup(gz);
-        (zoneSeule ? dansZone : toutAppart).setSelected(true);
-        Label zoneTexte = Ui.valeur(Zone.texte());
-        Button zoneChoisir = Icones.sur(new Button("Choisir dans le jeu"), Icones.CIBLE);
-        zoneChoisir.setOnAction(e -> choisirZone());
-        Button zoneEffacer = Icones.sur(new Button("Effacer"), Icones.VIDER);
-        zoneEffacer.setOnAction(e -> Zone.effacer());
-        Zone.ecouter(() -> zoneTexte.setText(Zone.texte()));
         Zone.ecouter(OutilHauteur::suivreZone);
-        VBox blocZone = Ui.bloc("Zone", zoneTexte, Ui.ligne(zoneChoisir, zoneEffacer));
-        blocZone.setVisible(zoneSeule); blocZone.setManaged(zoneSeule);
-        gz.selectedToggleProperty().addListener((o, a, b) -> {
-            if (b == null) { (zoneSeule ? dansZone : toutAppart).setSelected(true); return; }
-            zoneSeule = b == dansZone;
-            prefs.putBoolean("hauteur.zone", zoneSeule);
-            blocZone.setVisible(zoneSeule); blocZone.setManaged(zoneSeule);
-            if (zoneSeule && !Zone.definie()) choisirZone();
-            majResume();
+
+        // --- progression : barre + Arreter, seulement pendant une action
+        barre = new ProgressBar(ProgressBar.INDETERMINATE_PROGRESS);
+        barre.setMaxWidth(Double.MAX_VALUE);
+        HBox.setHgrow(barre, Priority.ALWAYS);
+        Button arreter = Icones.sur(new Button("Arrêter"), Icones.ARRET);
+        arreter.setMinWidth(Region.USE_PREF_SIZE);
+        arreter.setOnAction(e -> {
+            if (occupe) arret = true;
+            else if (regle) reglage.incrementAndGet();      // le reglage en cours s'arrete au tour suivant
+            progres("Arrêt demandé…", -1);
         });
-
-        VBox blocAvec = Ui.bloc("Avec dalles",
-                Ui.ligne(toutAppart, dansZone), blocZone,
-                couvrir, ramasser, resume,
-                Ui.aide("« Couvrir » pose des dalles magiques sur toutes les cases libres (de l'appart, "
-                        + "ou de la zone choisie par deux clics dans le jeu) "
-                        + "(8×8 d'abord, puis plus petites pour suivre la forme), prises au catalogue BC "
-                        + "(ton inventaire n'est pas touché). Changer la hauteur règle toutes les dalles "
-                        + "magiques de l'appart, y compris celles déjà là : les mobis que tu poses dessus "
-                        + "arrivent à cette hauteur, et y restent quand tu la changes."),
-                Ui.aide("« Ramasser » reprend toutes les dalles magiques de l'appart, celles posées par l'Atelier comme les tiennes."));
-
-        etatSans = Ui.valeur("");
-        etatSans.setWrapText(true);
-        interrupteur = new Button("Activer");
-        interrupteur.getStyleClass().add("primaire");
-        Icones.sur(interrupteur, Icones.MARCHE);
-        interrupteur.setMaxWidth(Double.MAX_VALUE);
-        interrupteur.setOnAction(e -> {
-            if (HauteurSansDalles.actif()) HauteurSansDalles.arreter(); else HauteurSansDalles.activer();
-        });
-        dejaPoses = Icones.sur(new Button("Appliquer aux mobis déjà posés"), Icones.HAUTEUR);
-        dejaPoses.setTooltip(new Tooltip("Remet à la hauteur les mobis posés depuis que le mode est actif."));
-        dejaPoses.getTooltip().setShowDelay(javafx.util.Duration.millis(150));
-        dejaPoses.setMaxWidth(Double.MAX_VALUE);
-        dejaPoses.setOnAction(e -> HauteurSansDalles.appliquerDejaPoses());
-        VBox blocSans = Ui.bloc("Sans dalles",
-                interrupteur, etatSans, dejaPoses,
-                Ui.aide("Rien n'est posé, ni inventaire ni BC. Tant que le mode est actif, chaque mobi "
-                        + "de sol que tu poses est remis à la hauteur choisie juste après sa pose (@altitude). "
-                        + "Les mobis déplacés, ceux des autres et les collages de l'Atelier ne sont pas touchés. "
-                        + "Changer la hauteur vaut pour les poses suivantes."));
-
-        Runnable montrer = () -> {
-            blocAvec.setVisible(!sansDalles); blocAvec.setManaged(!sansDalles);
-            blocSans.setVisible(sansDalles); blocSans.setManaged(sansDalles);
-        };
-        g.selectedToggleProperty().addListener((o, a, b) -> {
-            if (b == null) { (sansDalles ? sans : avec).setSelected(true); return; }
-            sansDalles = b == sans;
-            prefs.put("hauteur.mode", sansDalles ? "sans" : "avec");
-            if (!sansDalles) HauteurSansDalles.arreter();
-            montrer.run();
-            majResume();
-        });
-        montrer.run();
-
-        HauteurSansDalles.configurer(() -> hauteur, OutilHauteur::dire, OutilHauteur::majSans);
+        ligneProgres = new HBox(8, barre, arreter);
+        ligneProgres.setAlignment(Pos.CENTER_LEFT);
+        ligneProgres.setVisible(false); ligneProgres.setManaged(false);
 
         VBox v = new VBox(12,
                 Ui.bloc("Hauteur fixe",
-                        Ui.ligne(avec, sans),
                         Ui.ligne(Ui.etiquette("Hauteur"), valeur),
                         Ui.discret("Dans le jeu : tape :h 10 pour la changer."),
-                        Ui.aide("Comme :setz sur les rétros. 0,25 = un quart de case ; une case pleine = 1.")),
-                blocAvec, blocSans,
-                etat);
+                        Ui.aide("Comme :setz sur les rétros. 0,25 = un quart de case ; une case pleine = 1. "
+                                + "Changer la hauteur règle toutes les dalles magiques de l'appart, y compris "
+                                + "celles déjà là : les mobis que tu poses dessus arrivent à cette hauteur, "
+                                + "et y restent quand tu la changes.")),
+                Ui.bloc("Dalles magiques",
+                        couvrirAppart, couvrirZone, ramasser,
+                        ligneProgres, etat,
+                        Ui.aide("« Couvrir » pose des dalles magiques sur toutes les cases libres "
+                                + "(8×8 d'abord, puis plus petites pour suivre la forme), prises au catalogue BC "
+                                + "(ton inventaire n'est pas touché). « Couvrir une zone » : clique deux points "
+                                + "dans le jeu. Le résultat s'affiche dans le jeu."),
+                        Ui.aide("« Ramasser » reprend toutes les dalles magiques de l'appart, celles posées par l'Atelier comme les tiennes.")));
         v.setFillWidth(true);
         v.setPadding(new javafx.geometry.Insets(12, 14, 14, 14));
-        majResume();
-        majSans();
+        majBoutons();
         surveiller();
 
         ScrollPane sp = new ScrollPane(v);
@@ -250,9 +218,9 @@ public class OutilHauteur {
         m.setBlocked(true);
         if (h.isNaN()) { Journal.succes("Hauteur actuelle : " + texte(hauteur) + ". Tape :h 10 pour la changer."); return; }
         if (h < 0 || h > 40) { Journal.erreur("Hauteur impossible : choisis entre 0 et 40, par exemple :h 10."); return; }
-        Journal.succes("Hauteur réglée à " + texte(h) + ".");
+        // Le message (dalles reglees) part a la fin du reglage, une seule fois.
         // Meme hauteur qu'avant : on reapplique quand meme (dalles posees depuis).
-        if (!sansDalles && Math.abs(h - hauteur) < 0.001) { file.submit(() -> appliquer(h)); return; }
+        if (Math.abs(h - hauteur) < 0.001) { file.submit(() -> appliquer(h, true)); return; }
         Platform.runLater(() -> {
             if (champ != null) champ.getValueFactory().setValue(h);   // declenche regler(h)
             else regler(h);
@@ -279,13 +247,11 @@ public class OutilHauteur {
         if (Math.abs(h - hauteur) < 0.001) return;
         hauteur = h;
         prefs.putDouble("hauteur.fixe", h);
-        // Sans dalles : la nouvelle hauteur vaut pour les poses suivantes.
-        if (sansDalles) { majSans(); return; }
         // La frappe au clavier donne une valeur par touche : on attend qu'elle se pose.
         int n = reglage.incrementAndGet();
         Salle.tache("hauteur-reglage", () -> {
             Salle.sommeil(400);
-            if (reglage.get() == n) file.submit(() -> { if (reglage.get() == n) appliquer(hauteur); });
+            if (reglage.get() == n) file.submit(() -> { if (reglage.get() == n) appliquer(hauteur, true); });
         });
     }
 
@@ -293,60 +259,52 @@ public class OutilHauteur {
         return String.format(java.util.Locale.FRANCE, "%.2f", h);
     }
 
-    /** Resultat reussi d'une action : un message (Journal : jeu + console), la ligne d'etat se vide. */
+    /** Resultat reussi d'une action : un message (Journal : jeu + console), la progression disparait. */
     static void bilan(String s) {
-        dire("");
+        finProgres();
         Journal.succes(s);
     }
 
-    /** Resultat en echec : un message d'erreur (Journal), la ligne d'etat se vide. */
+    /** Resultat en echec : un message d'erreur (Journal), la progression disparait. */
     static void echec(String s) {
-        dire("");
+        finProgres();
         Journal.erreur(s);
     }
 
-    private static void dire(String s) {
-        Label l = etat;
-        if (l == null) return;
-        String t = Ui.majuscule(s);
-        Platform.runLater(() -> l.setText(t));
+    /**
+     * Progression visible : phase (texte court, sans compte de dalles) et part
+     * faite (0..1), ou negative pour une barre sans fin connue.
+     */
+    private static void progres(String phase, double part) {
+        String t = Ui.majuscule(phase);
+        Platform.runLater(() -> {
+            if (ligneProgres != null) { ligneProgres.setVisible(true); ligneProgres.setManaged(true); }
+            if (barre != null) barre.setProgress(part < 0 ? ProgressBar.INDETERMINATE_PROGRESS : Math.min(1, part));
+            if (etat != null) etat.setText(t);
+        });
+    }
+
+    private static void finProgres() {
+        Platform.runLater(() -> {
+            if (ligneProgres != null) { ligneProgres.setVisible(false); ligneProgres.setManaged(false); }
+            if (etat != null) etat.setText("");
+        });
     }
 
     static boolean occupe() { return occupe; }
 
-    private static void majResume() {
-        int[] c = HauteurLogique.compte(toutesDalles(), nosDalles());
-        int n = c[0];
-        String t = HauteurLogique.resume(c[0], c[1], texte(hauteur));
-        boolean o = occupe;
+    /** Boutons : grises pendant une action ; « Ramasser » grise s'il n'y a aucune dalle. */
+    private static void majBoutons() {
+        int n = toutesDalles().size();
+        boolean o = occupe || regle;
         Platform.runLater(() -> {
-            if (resume != null) resume.setText(t);
-            if (couvrir != null) couvrir.setText(o ? "Arrêter" : libelleCouvrir());
-            if (ramasser != null) {
-                ramasser.setDisable(o || n == 0);
-                ramasser.setText(n == 0 ? "Ramasser toutes les dalles de l'appart"
-                        : "Ramasser toutes les dalles de l'appart (" + n + ")");
-            }
+            if (couvrirAppart != null) couvrirAppart.setDisable(o);
+            if (couvrirZone != null) couvrirZone.setDisable(o);
+            if (ramasser != null) ramasser.setDisable(o || n == 0);
         });
     }
 
-    private static void majSans() {
-        boolean a = HauteurSansDalles.actif();
-        String t = Ui.majuscule(HauteurSansDalles.etat());
-        boolean rien = HauteurSansDalles.traites() == 0;
-        Platform.runLater(() -> {
-            if (etatSans != null) {
-                etatSans.setText(t);
-                etatSans.getStyleClass().removeAll("etat-ok", "etat-absent");
-                // arrete n'est pas une erreur : texte neutre ; actif en vert
-                if (a) etatSans.getStyleClass().add("etat-ok");
-            }
-            if (interrupteur != null) interrupteur.setText(a ? "Arrêter" : "Activer");
-            if (dejaPoses != null) dejaPoses.setDisable(rien);
-        });
-    }
-
-    /** Resume tenu a jour tout seul (changement de salle, dalle posee ou ramassee). */
+    /** Boutons tenus a jour tout seuls (changement de salle, dalle posee ou ramassee) : rien n'est dit. */
     private static volatile boolean surveille = false;
     private static void surveiller() {
         if (surveille) return;
@@ -356,9 +314,9 @@ public class OutilHauteur {
             while (true) {
                 Salle.sommeil(2000);
                 try {
-                    if (sansDalles || occupe) continue;
-                    String sig = Salle.salleId() + "/" + toutesDalles().size() + "/" + nosDalles().size();
-                    if (!sig.equals(vu)) { vu = sig; majResume(); }
+                    if (occupe) continue;
+                    String sig = Salle.salleId() + "/" + toutesDalles().size();
+                    if (!sig.equals(vu)) { vu = sig; majBoutons(); }
                 } catch (Throwable ignored) { }
             }
         });
@@ -417,12 +375,23 @@ public class OutilHauteur {
         final String cle = cleSalle();
         String raisonArret = null;
         occupe = true; arret = false;
-        majResume();
+        majBoutons();
+        progres(zoneSeule ? "Pose des dalles dans la zone…" : "Pose des dalles…", -1);
         Set<Integer> types = Generateur.Dalle.typesDalles();
         for (int type : types) Historique.ignorerType(type, 60 * 60_000L);
-        List<Integer> ids = new ArrayList<>(nosDalles());
         int poses = 0;
         try {
+            // 1. Les dalles deja la (appart entier, ou seulement celles de la zone)
+            //    sont ramassees d'abord : le nouveau tapis part d'un sol propre.
+            int dejaLa = viderAvantPose(salle);
+            if (arret || Salle.salleId() != salle) {
+                if (Salle.salleId() != salle) echec("Pose interrompue : tu as changé de salle.");
+                else bilan("Arrêté avant la pose : " + dejaLa + " dalle(s) ramassée(s).");
+                return;
+            }
+            if (dejaLa > 0) Journal.debug("hauteur : " + dejaLa + " dalle(s) ramassée(s) avant la pose");
+            List<Integer> ids = new ArrayList<>(nosDalles());
+            progres(zoneSeule ? "Pose des dalles dans la zone…" : "Pose des dalles…", -1);
             int[][] sol = plan();
             if (zoneSeule)       // hors zone : comme une case vide, aucune dalle n'y va
                 for (int x = 0; x < sol.length; x++)
@@ -495,7 +464,6 @@ public class OutilHauteur {
                         String msg = "Dalle " + lx + "x" + ly + " en (" + c[0] + "," + c[1] + ") " + d
                                 + " : refusée par le jeu.";
                         Journal.debug(msg);
-                        dire("Pose des dalles : " + poses + " posée(s), une refusée, je continue…");
                         // Le BC n'est fautif que s'il n'a encore rien pose : sinon,
                         // c'est la case qui bloque (meuble, avatar...), pas le BC.
                         if (Generateur.Dalle.BC.equals(d) && bcReussies == 0) {
@@ -510,7 +478,6 @@ public class OutilHauteur {
                         // une grande dalle refusee a la suite : les petites feront le reste
                         if (++refusDeSuite >= 6 && lx * ly > 1) {
                             Journal.debug("Dalles " + taille + " refusées 6 fois de suite : taille suivante.");
-                            dire("Pose des dalles : " + poses + " posée(s), taille suivante…");
                             epuisees.add(r);
                         }
                         continue;
@@ -523,14 +490,13 @@ public class OutilHauteur {
                     ids.add(id);
                     retenir(ids, cle);
                     poses++;
-                    dire("Pose des dalles : " + poses + " posée(s)…");
-                    majResume();
                 }
             }
             boolean partie = Salle.salleId() != salle;
             if (poses > 0 && !partie) {
                 Salle.sommeil(300);
-                appliquer(hauteur);
+                progres("Réglage de la hauteur…", -1);
+                appliquer(hauteur, false);      // le bilan de la pose suffit : pas de 2e message
             }
             int libres = 0;
             for (int x = 0; x < sol.length; x++)
@@ -563,11 +529,11 @@ public class OutilHauteur {
             else bilan(poses + " dalle(s) posée(s), " + lieu + " est couvert" + (zoneSeule ? "e." : "."));
         } catch (Throwable t) {
             Journal.erreur("Pose des dalles interrompue", t);
-            dire("");
         } finally {
             for (int type : types) Historique.ignorerType(type, 2500);
             occupe = false; arret = false;
-            majResume();
+            finProgres();
+            majBoutons();
         }
     }
 
@@ -585,15 +551,36 @@ public class OutilHauteur {
         return -1;
     }
 
-    /** Met toutes les dalles de l'Atelier a la hauteur h. */
-    /** Met toutes les dalles magiques de la salle (les notres + celles deja la) a la hauteur h. */
-    private static void appliquer(double h) {
+    /**
+     * Met toutes les dalles magiques de la salle (les notres + celles deja la)
+     * a la hauteur h. dire : un message dans le jeu a la fin (reglage demande
+     * par toi) ; false quand « Couvrir » enchaine (son bilan suffit).
+     */
+    private static void appliquer(double h, boolean dire) {
+        if (!dire) { appliquer0(h, false); return; }
+        regle = true;
+        majBoutons();
+        try { appliquer0(h, true); }
+        finally {
+            regle = false;
+            finProgres();
+            majBoutons();
+        }
+    }
+
+    private static void appliquer0(double h, boolean dire) {
         GPresets gp = Salle.gp();
         List<Integer> nos = nosDalles();
         LinkedHashSet<Integer> ids = new LinkedHashSet<>(nos);
         ids.addAll(toutesDalles());
+        int verrou = ids.size();
         ids.removeIf(OutilHauteur::verrouillee);          // dalles d'un calque verrouille : intouchables
-        if (gp == null || ids.isEmpty()) { majResume(); return; }
+        verrou -= ids.size();
+        if (gp == null || !Salle.dansUneSalle() || ids.isEmpty()) {
+            if (dire) Journal.succes(HauteurLogique.messageReglage(texte(h), Salle.dansUneSalle(), 0, 0, 0, verrou));
+            return;
+        }
+        if (dire) progres("Réglage de la hauteur…", 0);
         // Premier tour en rafale, sans pause : toutes les dalles montent ensemble.
         // Le serveur en laisse tomber une partie (constate : toutes sauf la
         // premiere) : on relit la hauteur de chaque dalle et on renvoie a celles
@@ -621,17 +608,17 @@ public class OutilHauteur {
             if (!relue && tour >= 1) break;
             // A la pause la plus longue, un tour sans progres : le serveur ne veut plus.
             if (prises == 0 && tour >= pauses.length - 1) break;
-            if (!manquees.isEmpty())
-                dire("Réglage : " + (ids.size() - manquees.size()) + " / " + ids.size() + " dalle(s)…");
+            if (!manquees.isEmpty() && dire)
+                progres("Réglage de la hauteur…", (ids.size() - manquees.size()) / (double) ids.size());
             aFaire = manquees;
         }
         int deja = HauteurLogique.compte(new ArrayList<>(ids), nos)[1];
-        // Pas de message dans le jeu a chaque changement de hauteur : journal seulement.
-        Journal.info(ids.size() + " dalle(s) réglée(s) à " + texte(h)
-                + (deja > 0 ? " (dont " + deja + " déjà là)" : "")
-                + (!relue || aFaire.isEmpty() ? "." : ", " + aFaire.size() + " n'ont pas répondu."));
-        dire("");
-        majResume();
+        int ratees = !relue ? 0 : aFaire.size();
+        String m = HauteurLogique.messageReglage(texte(h), true, ids.size(), deja, ratees, verrou);
+        // Une autre hauteur demandee entre-temps : c'est elle qui donnera le message.
+        if (!dire || reglage.get() != demande) Journal.info(m);
+        else if (ratees > 0) Journal.erreur(m);
+        else Journal.succes(m);
     }
 
     /**
@@ -658,6 +645,39 @@ public class OutilHauteur {
         catch (Throwable t) { return ""; }
     }
 
+    /**
+     * Avant de couvrir : ramasse en rafale les dalles magiques deja la (toutes celles
+     * de l'appart, ou seulement celles de la zone), sauf celles d'un calque verrouille.
+     * Rend le nombre de dalles envoyees au ramassage.
+     */
+    private static int viderAvantPose(int salle) {
+        List<Integer> ids = new ArrayList<>(new LinkedHashSet<>(toutesDalles()));
+        ids.removeIf(OutilHauteur::verrouillee);
+        if (zoneSeule) ids.removeIf(id -> {
+            HFloorItem it = Salle.sol(id);
+            return it == null || !Zone.contient(it.getTile().getX(), it.getTile().getY());
+        });
+        if (ids.isEmpty()) return 0;
+        progres("Ramassage des dalles déjà là…", 0);
+        int n = 0;
+        for (int passe = 1; passe <= 2 && !arret; passe++) {
+            List<Integer> encore = new ArrayList<>();
+            for (int id : ids) if (Salle.sol(id) != null) encore.add(id);
+            if (encore.isEmpty()) break;
+            for (int id : encore) {
+                if (arret || Salle.salleId() != salle) return n;
+                Salle.espacer();
+                Salle.ramasser(id, false);
+                if (passe == 1) n++;
+                progres("Ramassage des dalles déjà là…", n / (double) ids.size());
+            }
+            PoseDirecte.suivre(() -> { int r = 0; for (int id : encore) if (Salle.sol(id) != null) r++; return r; },
+                    800, 3000);
+        }
+        Salle.sommeil(300);             // l'inventaire se met a jour : les dalles ramassees resservent
+        return n;
+    }
+
     private static void ramasserTout() {
         LinkedHashSet<Integer> tous = new LinkedHashSet<>(nosDalles());
         tous.addAll(toutesDalles());
@@ -666,15 +686,17 @@ public class OutilHauteur {
         ids.removeIf(OutilHauteur::verrouillee);          // dalles d'un calque verrouille : laissees
         verrou -= ids.size();
         String laissees = verrou > 0 ? " " + verrou + " dalle(s) d'un calque verrouillé laissée(s) en place." : "";
+        if (!Salle.dansUneSalle()) { echec("Ramassage impossible : entre d'abord dans un appart."); return; }
         if (ids.isEmpty()) {
-            if (verrou > 0) bilan("Rien à ramasser :" + laissees);
-            majResume();
+            bilan(verrou > 0 ? "Rien à ramasser :" + laissees : "Aucune dalle magique à ramasser dans cet appart.");
+            majBoutons();
             return;
         }
         final int salle = Salle.salleId();
         final String cle = cleSalle();
-        occupe = true;
-        majResume();
+        occupe = true; arret = false;
+        majBoutons();
+        progres("Ramassage des dalles…", 0);
         Set<Integer> types = Generateur.Dalle.typesDalles();
         for (int type : types) Historique.ignorerType(type, 30 * 60_000L);
         try {
@@ -690,7 +712,7 @@ public class OutilHauteur {
                     Salle.espacer();
                     Salle.ramasser(id, false);
                     if (passe == 1) n++;
-                    dire("Ramassage" + (passe > 1 ? " (2e passe)" : "") + " : " + n + " / " + ids.size());
+                    progres(passe > 1 ? "Ramassage des dalles (2e passe)…" : "Ramassage des dalles…", n / (double) ids.size());
                 }
                 if (Salle.salleId() != salle) break;
                 PoseDirecte.suivre(() -> { int r = 0; for (int id : encore) if (Salle.sol(id) != null) r++; return r; },
@@ -711,7 +733,8 @@ public class OutilHauteur {
         } finally {
             for (int type : types) Historique.ignorerType(type, 2500);
             occupe = false; arret = false;
-            majResume();
+            finProgres();
+            majBoutons();
         }
     }
 

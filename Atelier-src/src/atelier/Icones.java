@@ -117,6 +117,24 @@ public final class Icones {
     /** Deux fleches opposees : trier. */
     public static final String TRIER      = "M7 4v16 M4 7l3-3 3 3 M17 20V4 M14 17l3 3 3-3";
 
+    // --- ajouts (mode Floor : BarreFloor) ---
+    /** Une case, un plus et un moins : ajoute dans le vide, retire sur une case. */
+    public static final String CASE_AUTO  = "M3 15l9-4.5 9 4.5-9 4.5z M6 2.5v6 M3 5.5h6 M15 5.5h6";
+    /** Un bloc de sol et une fleche qui monte. */
+    public static final String CASE_MONTER = "M3 14l9-4.5 9 4.5-9 4.5z M3 14v3l9 4.5 9-4.5v-3 M12 7.5V1.5 M9.5 4l2.5-2.5 2.5 2.5";
+    /** Un bloc de sol et une fleche qui descend. */
+    public static final String CASE_DESCENDRE = "M3 14l9-4.5 9 4.5-9 4.5z M3 14v3l9 4.5 9-4.5v-3 M12 1.5v6 M9.5 5l2.5 2.5 2.5-2.5";
+    /** Un bloc de sol et un signe egal : fixer a N. */
+    public static final String CASE_FIXER = "M3 14l9-4.5 9 4.5-9 4.5z M3 14v3l9 4.5 9-4.5v-3 M8.5 2.5h7 M8.5 6h7";
+    /** Une case et un plus : ajouter. */
+    public static final String CASE_AJOUTER = "M3 15l9-4.5 9 4.5-9 4.5z M12 1.5v7 M8.5 5h7";
+    /** Une case et une croix : retirer. */
+    public static final String CASE_RETIRER = "M3 15l9-4.5 9 4.5-9 4.5z M9 2l6 6 M15 2l-6 6";
+    /** Une porte entrouverte. */
+    public static final String PORTE      = "M6 21V3h12v18 M3 21h18 M14.5 12h.01";
+    /** Une pipette : prendre une hauteur. */
+    public static final String PIPETTE    = "M19.5 4.5a2.1 2.1 0 0 0-3-3L14 4l3 3z M12 5l7 7 M15.5 8.5L6 18l-2.5 3 3-2.5 9.5-9.5";
+
     private Icones() { }
 
     /**

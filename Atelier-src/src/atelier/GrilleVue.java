@@ -80,7 +80,32 @@ final class GrilleVue {
      * (client modifie), pour viser la case du sol derriere un mobi haut.
      * Hors fil JavaFX de preference (lecture du client la premiere fois).
      */
+    private static volatile boolean auSol = false, gardeLancee = false;
+
+    /**
+     * Garde-fou : tant que le jeu laisse passer les clics au sol, les mobis et
+     * les ANIMAUX ne se cliquent plus. Des que plus rien ne le demande (choix
+     * de zone fini ou abandonne, choix de cases wired coupe), on le coupe.
+     */
+    private static synchronized void garde() {
+        if (gardeLancee) return;
+        gardeLancee = true;
+        Salle.tache("clics-au-sol-garde", () -> {
+            while (true) {
+                Salle.sommeil(1500);
+                try {
+                    if (auSol && !Zone.choixEnCours() && !OngletCollageWired.choixCasesActif) {
+                        Journal.debug("clics au sol : plus rien ne les demande, coupés.");
+                        clicsAuSol(false);
+                    }
+                } catch (Throwable ignored) { }
+            }
+        });
+    }
+
     static void clicsAuSol(boolean oui) {
+        auSol = oui;
+        if (oui) garde();
         if (!ClientModifie.saitZone()) return;
         extension.GPresets gp = Salle.gp();
         if (gp == null || !Salle.dansUneSalle()) return;

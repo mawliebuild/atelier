@@ -101,6 +101,26 @@ final class CalqueActions {
         if (occupe()) { refus("Une action est déjà en cours."); return; }
         CalqueFenetre f = ouvrir(apresCopie ? "Déplacer la copie" : "Déplacer « " + i.nom + " »");
         int[] d = {0, 0, 0};                        // dx, dy, quarts
+        // Pendant l'apercu, les mobis d'origine sont caches chez toi : seuls les fantomes
+        // bougent (pas d'impression de copie). Ils reviennent avant le vrai deplacement.
+        boolean[] caches = {false};
+        Runnable cacher = () -> {
+            if (caches[0]) return;
+            caches[0] = true;
+            Salle.tache("deplacer-cacher", () -> {
+                List<java.util.Set<Integer>> ids = Groupes.mobis(i.id);
+                List<HFloorItem> sols = new ArrayList<>();
+                List<gearth.extensions.parsers.HWallItem> murs = new ArrayList<>();
+                for (int id : ids.get(0)) { HFloorItem it = Salle.sol(id); if (it != null) sols.add(it); }
+                for (int id : ids.get(1)) { gearth.extensions.parsers.HWallItem w = Salle.mur(id); if (w != null) murs.add(w); }
+                Calques.masquer(APERCU_DEPLACER, sols, murs);
+            });
+        };
+        Runnable montrer = () -> {
+            if (!caches[0]) return;
+            caches[0] = false;
+            Calques.reafficher(APERCU_DEPLACER);
+        };
         Label quoi = new Label();
         quoi.getStyleClass().add("calques-valeur");
         Button confirmer = CalqueFenetre.bouton("Confirmer", true, () -> { });
@@ -110,6 +130,7 @@ final class CalqueActions {
             quoi.setText(decalage(d[0], d[1], d[2]));
             if (d[0] == 0 && d[1] == 0 && d[2] == 0) {
                 Groupes.annulerApercu();
+                montrer.run();
                 f.dire(apresCopie ? "La copie est posée sur l'original. Déplace-la avec les flèches, pivote-la si besoin, puis Confirmer. Fermer la laisse ici."
                         : "Choisis où aller avec les flèches : des fantômes montrent l'arrivée dans le jeu (chez toi seulement).");
                 confirmer.setDisable(true);
@@ -117,10 +138,12 @@ final class CalqueActions {
                 Groupes.Simulation s = Groupes.simuler(i.id, d[0], d[1]);
                 f.dire(Ui.majuscule(s.toString()) + ". Les fantômes montrent l'arrivée.");
                 Groupes.previsualiser(i.id, d[0], d[1]);
+                cacher.run();
                 confirmer.setDisable(false);
             } else {
                 f.dire("Chaque mobi part à sa place finale et garde sa hauteur. Les muraux ne pivotent pas. Les fantômes montrent l'arrivée.");
                 Groupes.previsualiser(i.id, d[0], d[1], d[2]);
+                cacher.run();
                 confirmer.setDisable(false);
             }
         };
@@ -149,13 +172,18 @@ final class CalqueActions {
             arreter.setVisible(true);
             int dx = d[0], dy = d[1], q = d[2];
             f.dire("Envoi au jeu…");
+            Groupes.annulerApercu();
+            montrer.run();                          // les vrais mobis reviennent, puis partent
             tache = Groupes.deplacer(i.id, dx, dy, q, progression(f, r -> f.fermer()));
         });
         f.boutons(fermer, arreter, confirmer);
-        f.surFermeture(Groupes::annulerApercu);
+        f.surFermeture(() -> { Groupes.annulerApercu(); montrer.run(); });
         maj.run();
         f.montrer();
     }
+
+    /** Raison de masquage des mobis d'origine pendant l'apercu de Deplacer. */
+    static final String APERCU_DEPLACER = "apercu-deplacer";
 
     /** Icone du panneau : deplacer le calque vise. */
     void deplacerDepuisPanneau(Groupes.Info i) { deplacer(i, false); }
@@ -518,142 +546,13 @@ final class CalqueActions {
     // ================================================================ cases
 
     /**
-     * Floor dans l'appart (bouton Floor) : la grille du jeu montre le plan en
-     * travail en permanence (cases fantomes autour) ; chaque clic dans le jeu
-     * applique l'outil (ModeCases). « Appliquer » envoie tout en un seul
-     * rechargement. Fermer la fenetre quitte le mode.
+     * Floor dans l'appart (bouton Floor) : c'est maintenant un MODE, comme
+     * Construction, avec sa palette a la place du panneau des calques
+     * (BarreFloor). Garde pour les anciens appels.
      */
     void cases() {
-        if (ModeCases.actif() && courante != null) { courante.montrer(); return; }
-        CalqueFenetre f = ouvrir("Floor");
-        boolean[] maj = {false};
-
-        // outils
-        ToggleGroup gOutils = new ToggleGroup();
-        javafx.scene.layout.FlowPane outils = new javafx.scene.layout.FlowPane(5, 5);
-        Label aideOutil = Ui.discret(ModeCases.outil().aide);
-        aideOutil.setWrapText(true);
-        for (ModeCases.Outil o : ModeCases.Outil.values()) {
-            ToggleButton b = new ToggleButton(o.libelle);
-            b.setToggleGroup(gOutils);
-            b.setUserData(o);
-            b.setFocusTraversable(false);
-            b.setTooltip(CalqueFenetre.bulle(o.aide));
-            if (o == ModeCases.outil()) b.setSelected(true);
-            outils.getChildren().add(b);
-        }
-        gOutils.selectedToggleProperty().addListener((ob, x, y) -> {
-            if (y == null) { if (x != null) x.setSelected(true); return; }
-            ModeCases.Outil o = (ModeCases.Outil) y.getUserData();
-            ModeCases.outil(o);
-            aideOutil.setText(o.aide);
-        });
-        Spinner<Integer> n = new Spinner<>(0, FloorModele.HAUTEUR_MAX, ModeCases.valeur());
-        n.setEditable(true);
-        n.setPrefWidth(75);
-        n.valueProperty().addListener((o, x, y) -> { if (y != null && !maj[0]) ModeCases.valeur(y); });
-        ToggleGroup gPinceau = new ToggleGroup();
-        HBox pinceaux = new HBox(4);
-        for (int i = 1; i <= 5; i++) {
-            final int k = i;
-            ToggleButton b = new ToggleButton(i + "×" + i);
-            b.setToggleGroup(gPinceau);
-            b.setFocusTraversable(false);
-            if (i == 1) b.setSelected(true);
-            b.setOnAction(e -> { if (!b.isSelected()) b.setSelected(true); ModeCases.pinceau(k); });
-            pinceaux.getChildren().add(b);
-        }
-        CheckBox rect = new CheckBox("Rectangle (deux clics)");
-        rect.selectedProperty().addListener((o, x, y) -> ModeCases.rectangle(y));
-        pinceaux.disableProperty().bind(rect.selectedProperty());
-
-        // murs et sol
-        Spinner<Integer> mur = new Spinner<>(-1, 15, -1);
-        mur.setEditable(true);
-        mur.setPrefWidth(75);
-        ComboBox<String> epMur = new ComboBox<>(), epSol = new ComboBox<>();
-        for (ComboBox<String> c : List.of(epMur, epSol)) {
-            c.getItems().addAll("Très fin (−2)", "Fin (−1)", "Normal (0)", "Épais (1)");
-            c.getSelectionModel().select(2);
-        }
-        Runnable murs = () -> {
-            if (maj[0] || mur.getValue() == null) return;
-            ModeCases.murs(mur.getValue(), epMur.getSelectionModel().getSelectedIndex() - 2,
-                    epSol.getSelectionModel().getSelectedIndex() - 2);
-        };
-        mur.valueProperty().addListener((o, x, y) -> murs.run());
-        epMur.valueProperty().addListener((o, x, y) -> murs.run());
-        epSol.valueProperty().addListener((o, x, y) -> murs.run());
-
-        // changements
-        Label compte = Ui.valeur("");
-        compte.setWrapText(true);
-        Button an = CalqueFenetre.bouton(Icones.ANNULER, "", "Annuler le dernier changement", false, ModeCases::annuler);
-        Button re = CalqueFenetre.bouton(Icones.RETABLIR, "", "Rétablir", false, ModeCases::retablir);
-        Button effacer = CalqueFenetre.bouton(Icones.CORBEILLE, "Tout effacer", "Effacer tous les changements pas encore appliqués", false, ModeCases::effacer);
-        Button revenir = CalqueFenetre.bouton(Icones.PIVOTER_INVERSE, "Remettre le floor d'avant", null, false,
-                () -> Salle.tache("floor-revenir", ModeCases::revenir));
-        Button appliquer = CalqueFenetre.bouton("Appliquer", true, () -> Salle.tache("floor-appliquer", ModeCases::appliquer));
-
-        Runnable rafraichir = () -> Platform.runLater(() -> {
-            int[] c = ModeCases.changements();
-            int total = c[0] + c[1] + c[2] + c[3];
-            compte.setText(total == 0 ? "Aucun changement."
-                    : Ui.accorder(c[0] + " case(s) ajoutée(s), " + c[1] + " retirée(s), " + c[2] + " hauteur(s) changée(s)"
-                    + (c[3] > 0 ? ", porte ou murs changés" : "") + "."));
-            boolean libre = !ModeCases.occupe();
-            appliquer.setDisable(total == 0 || !libre);
-            effacer.setDisable(total == 0 || !libre);
-            an.setDisable(!ModeCases.peutAnnuler() || !libre);
-            re.setDisable(!ModeCases.peutRetablir() || !libre);
-            revenir.setDisable(!ModeCases.peutRevenir());
-            maj[0] = true;
-            try {
-                if (n.getValue() == null || n.getValue() != ModeCases.valeur()) n.getValueFactory().setValue(ModeCases.valeur());
-                FloorModele t = ModeCases.travail();
-                if (t != null) {
-                    mur.getValueFactory().setValue(t.hauteurMur);
-                    epMur.getSelectionModel().select(Math.max(0, Math.min(3, t.epMur + 2)));
-                    epSol.getSelectionModel().select(Math.max(0, Math.min(3, t.epSol + 2)));
-                }
-            } finally { maj[0] = false; }
-        });
-        ModeCases.surChangement(rafraichir);
-        f.surFermeture(() -> { ModeCases.arreter(); ModeCases.surChangement(null); });
-        f.contenu(
-                Ui.bloc("Outil", outils, aideOutil, Ui.ligne(new Label("N"), n),
-                        Ui.aide("Clique les cases dans l'appart : la grille montre le floor prévu "
-                                + "(vert : ajoutée, rouge : retirée, bleu : hauteur changée, orange : porte, "
-                                + "blanc pâle : case possible). Rien ne change avant « Appliquer » : "
-                                + "l'appart se recharge une seule fois.")),
-                Ui.bloc("Pinceau", pinceaux, rect),
-                Ui.bloc("Murs et sol", grilleMurs(mur, epMur, epSol)),
-                Ui.bloc("Changements", compte, Ui.ligne(an, re, effacer), revenir));
-        f.boutons(CalqueFenetre.bouton("Fermer", false, f::fermer), appliquer);
-        f.dire("Lecture du floor…");
-        f.montrer();
-        Salle.tache("floor-demarrer", () -> {
-            String err = ModeCases.demarrer();
-            Platform.runLater(() -> {
-                if (err != null) { Journal.erreur(err); f.fermer(); return; }
-                f.dire("");
-                rafraichir.run();
-            });
-        });
-    }
-
-    /** Murs et sol : libelles a gauche, saisies alignees dans une meme colonne. */
-    private static GridPane grilleMurs(Spinner<Integer> mur, ComboBox<String> epMur, ComboBox<String> epSol) {
-        GridPane g = new GridPane();
-        g.setHgap(8); g.setVgap(6);
-        g.addRow(0, new Label("Hauteur des murs"), mur, Ui.discret("−1 = auto"));
-        g.addRow(1, new Label("Épaisseur des murs"), epMur);
-        g.addRow(2, new Label("Épaisseur du sol"), epSol);
-        GridPane.setColumnSpan(epMur, 2);
-        GridPane.setColumnSpan(epSol, 2);
-        for (javafx.scene.Node n : g.getChildren())
-            if (n instanceof Label) GridPane.setValignment(n, javafx.geometry.VPos.CENTER);
-        return g;
+        fermer();
+        BarreFloor.demander();
     }
 
     // ========================================================= etats d'une zone
@@ -712,11 +611,28 @@ final class CalqueActions {
             envoi[0] = true;
             Salle.tache("etats-zone", () -> {
                 try {
-                    for (HFloorItem it : l) {
-                        Salle.envoyer(new gearth.protocol.HPacket("UseFurniture",
-                                gearth.protocol.HMessage.Direction.TOSERVER, it.getId(), 0));
-                        Salle.sommeil(40);
+                    // au rythme commun (150 ms) : plus vite, le jeu en ignorait une partie
+                    java.util.Map<Integer, String> avant = new java.util.LinkedHashMap<>();
+                    for (HFloorItem it : l) avant.put(it.getId(), Generateur.etatDe(it));
+                    java.util.function.Supplier<List<Integer>> inchanges = () -> {
+                        List<Integer> r = new ArrayList<>();
+                        for (java.util.Map.Entry<Integer, String> e : avant.entrySet()) {
+                            HFloorItem now = Salle.sol(e.getKey());
+                            if (now != null && Generateur.etatDe(now).equals(e.getValue())) r.add(e.getKey());
+                        }
+                        return r;
+                    };
+                    List<Integer> aFaire = new ArrayList<>(avant.keySet());
+                    for (int passe = 0; passe < 2 && !aFaire.isEmpty(); passe++) {
+                        for (int id : aFaire)
+                            Salle.envoyerEspace(new gearth.protocol.HPacket("UseFurniture",
+                                    gearth.protocol.HMessage.Direction.TOSERVER, id, 0));
+                        PoseDirecte.suivre(() -> inchanges.get().size(), 600, 2500);
+                        aFaire = inchanges.get();       // seconde passe : seulement ceux qui n'ont pas bouge
                     }
+                    if (!aFaire.isEmpty())
+                        Journal.erreur(Ui.accorder(aFaire.size() + " mobi(s) sur " + avant.size()
+                                + " n'ont pas changé d'état (pas d'autre état, ou refusé par le jeu)."));
                 } finally {
                     envoi[0] = false;
                     Platform.runLater(maj);

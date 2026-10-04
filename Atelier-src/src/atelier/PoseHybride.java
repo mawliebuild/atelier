@@ -175,7 +175,7 @@ final class PoseHybride {
         if (dire != null) dire.accept("Recherche de @altitude…");
         Salle.espacer();
         try { OutilMiroir.Altitude.demanderListe(); } finally { Salle.envoiFait(); }
-        boolean ok = OutilMiroir.Altitude.connue();
+        boolean ok = OutilMiroir.Altitude.possible();      // verifiee sur le premier mobi de la rafale
         Journal.debug("pose hybride : @altitude " + (ok ? "disponible (" + OutilMiroir.Altitude.variable() + ")" : "inconnue : les mobis en hauteur passent par la dalle"));
         return ok;
     }

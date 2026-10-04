@@ -225,8 +225,8 @@ public class AtelierLauncher extends GEarth {
         // (le miroir, lui, est dans ses Actions). Aucun bouton dans les barres.
         nav.ajouter("composant-escalier", "Escalier", Icones.ESCALIER,
                 Navigation.source(tConstruction, "Escalier", "Escalier").avec(SALLE, DROITS, NOMS, INV, BC));
-        // Floor : plus de fenetre d'editeur ; le bouton Floor met l'appart en edition
-        // directe (grille du jeu + fenetre d'outils, voir ModeCases / CalqueActions.cases).
+        // Floor : plus de fenetre d'editeur ; le bouton Floor ouvre le mode Floor
+        // (grille du jeu + palette a la place des calques, voir ModeCases / BarreFloor).
         nav.ajouter("apparts", "Apparts", Icones.APPARTS,
                 Navigation.source(tApparts, "Dupliquer un appart"));
         Tab tCollageWired = new OngletCollageWired().construire();
@@ -363,9 +363,8 @@ public class AtelierLauncher extends GEarth {
             if (fenetre.ouverte() && m != null && m.cle.equals(cle)) fenetre.fermer();
             else ouvrir.accept(cle);
         };
-        barre.surChoix(cle -> {
-            if (!"construction".equals(cle)) { basculer.accept(cle); return; }
-            boolean on = !construction[0];
+        // Changer le mode Construction (meme effet qu'un clic sur son bouton).
+        java.util.function.Consumer<Boolean> changerConstruction = on -> {
             Navigation.Menu m = nav.actif();
             if (!on && fenetre.ouverte() && m != null && lateral.contains(m.cle)
                     && !java.util.Set.of("salle-capture", "salle-mobis", "floor").contains(m.cle))
@@ -373,6 +372,21 @@ public class AtelierLauncher extends GEarth {
             modeConstruction.accept(on);
             barre.actif(on ? "construction"
                     : (fenetre.ouverte() && m != null ? m.cle : null));
+        };
+        // Mode Floor (bouton Floor de la barre du bas) : il sort du mode
+        // Construction et sa palette remplace le panneau des calques. Le
+        // quitter avec des changements en attente demande quoi en faire.
+        BarreFloor barreFloor = new BarreFloor(css);
+        barreFloor.surEtat(barreMesure::floorActif);
+        Runnable entrerFloor = () -> {
+            if (construction[0]) changerConstruction.accept(false);
+            barreFloor.entrer();
+        };
+        BarreFloor.surDemande(entrerFloor);
+        barre.surChoix(cle -> {
+            if (!"construction".equals(cle)) { basculer.accept(cle); return; }
+            if (barreFloor.actif()) { barreFloor.quitter(() -> changerConstruction.accept(true)); return; }
+            changerConstruction.accept(!construction[0]);
         });
         barreSalle.surChoix(basculer);
         barreConstruction.surChoix(basculer);
@@ -380,7 +394,7 @@ public class AtelierLauncher extends GEarth {
         // ouvre l'apercu ; « Plus de reglages » ouvre la fenetre Capture.
         final String cssPhoto = css;
         barreMesure.surSalle(() -> basculer.accept("salle-mobis"));
-        barreMesure.surFloor(panneauCalques::ouvrirFloor);
+        barreMesure.surFloor(() -> { if (barreFloor.actif()) barreFloor.quitter(null); else entrerFloor.run(); });
         // appareil photo : format (et reglages GIF) avant la photo, puis l'apercu
         barreMesure.surPhoto(() -> PhotoAppart.ouvrir(cssPhoto));
         barre.surEtat(() -> ouvrir.accept("salle-mobis"));
@@ -438,7 +452,7 @@ public class AtelierLauncher extends GEarth {
         stage.setOpacity(0);
         stage.setWidth(1);
         stage.setHeight(1);
-        Ancrage.demarrer(barre, fenetre, panneauCalques, barreMesure, barreSalle, barreConstruction);
+        Ancrage.demarrer(barre, fenetre, panneauCalques, barreMesure, barreSalle, barreConstruction, barreFloor);
 
         // 7. A l'ouverture, seul l'ecran de connexion s'affiche, et se connecte
         //    de lui-meme. Une fois connectee : la barre seulement, aucun menu
@@ -458,6 +472,7 @@ public class AtelierLauncher extends GEarth {
             fenetre.fenetre().hide();
             barre.fenetre().hide();
             barreSalle.visible(false);
+            barreFloor.arreter();
             modeConstruction.accept(false);
             barreConstruction.visible(false);
             barreMesure.actif(false);
@@ -512,6 +527,7 @@ public class AtelierLauncher extends GEarth {
 
                 Platform.runLater(() -> onglet.setContent(new OngletApparts().construire()));
                 ChargementAuto.demarrer();
+                try { Comparateur.demarrer(); } catch (Throwable t) { Journal.debug("Briques : vérification non lancée : " + t); }
             } catch (Throwable t) {
                 Journal.erreur("Chargement du module Presets impossible", t);
                 majOnglet(onglet, "Échec du chargement", String.valueOf(t));

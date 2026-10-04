@@ -51,6 +51,8 @@ public final class OngletDocumentation {
         c(jeu, MAC ? "OPT+SHIFT+V" : "CMD+SHIFT+V", "Coller le calque copié (dans le même appart : à sa place puis Déplacer ; ailleurs : collage complet).");
         c(jeu, "Échap", "Pendant un déplacement lancé par " + touche("OPT") + "+clic : lâcher le mobi, il reste où il était.");
         c(jeu, "OPT+Clic", "Prendre ou déplacer un mobi (commande du jeu) ; sert aussi à choisir un mobi mural pour Déplacer un mur.");
+        c(jeu, "Clic", "Sur une dalle magique : la sélectionner (comme dans le jeu normal).");
+        c(jeu, "Double-clic", "Sur un mobi posé sur une dalle magique : changer son état (le double-clic traverse la dalle).");
 
         Section chat = section("Commandes du chat", "À taper dans le chat du jeu : le message n'est pas envoyé.");
         c(chat, ":h 2,5", "Hauteur fixe des dalles magiques (de 0 à 40, virgule ou point).");
@@ -81,6 +83,12 @@ public final class OngletDocumentation {
         c(floor, "Clic", "Outil Porte : place la porte ; un clic sur la porte la tourne.");
         c(floor, "Entrée", "Fenêtre Floor active : Appliquer (l'appart se recharge une fois).");
         c(floor, "Échap", "Fenêtre Floor active : fermer et quitter l'édition.");
+
+        Section modeFloor = section("Mode Floor", WindowsClavier.texte("Pendant le mode Floor, dans le jeu (Habbo au premier plan, barre de chat vide)."));
+        c(modeFloor, "1 | 2 | 3 | 4 | 5 | 6 | 7 | 8", WindowsClavier.texte("Choisir l'outil, dans l'ordre de la palette (Auto, Monter, Descendre, Fixer, Ajouter, Supprimer, Porte, Pipette). Rangée des chiffres, sans Maj (en AZERTY : & é \" ' ( - è _)."));
+        c(modeFloor, "Échap", WindowsClavier.texte("Quitter le mode Floor (question s'il reste des changements). Avec un premier coin de rectangle en attente : l'oublier d'abord."));
+        c(modeFloor, "CMD+Z", WindowsClavier.texte("Annuler le dernier changement du floor (pas des mobis)."));
+        c(modeFloor, "CMD+SHIFT+Z | CMD+Y", WindowsClavier.texte("Rétablir le changement du floor annulé."));
 
         Section plan = section("Plan de l'appart", "Plan de la salle et mesure.");
         c(plan, "Molette", "Zoomer.");

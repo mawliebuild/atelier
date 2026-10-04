@@ -21,7 +21,7 @@ import javafx.stage.StageStyle;
  * Petite barre en bas a droite du jeu, dans le meme gris que la barre du haut :
  *
  *   [salle]           ouvre la fenetre Salle (liste des mobis, prix)
- *   [floor]           ouvre l'editeur de floor (a droite de la photo)
+ *   [floor]           entre dans le mode Floor (BarreFloor), ou en sort ; allume pendant le mode
  *   [appareil photo]  prend la photo de l'appart
  *   [regle]               un clic, puis deux cases dans le jeu : le nombre
  *                         de cases entre les deux est dit dans le chat ;
@@ -38,6 +38,7 @@ public class BarreMesure implements Ancrage.Ancrable {
     private final Stage stage = new Stage();
     private final Label cases = new Label("—");
     private final Button regle = new Button();
+    private Button floorB;
     private final Popup bulle = new Popup();
     private final Label bulleTexte = new Label();
 
@@ -59,7 +60,7 @@ public class BarreMesure implements Ancrage.Ancrable {
         survol(inventaire, "Inventaire");
 
         Button salleB = bouton(Icones.SALLE, "Salle", () -> surSalle.run());
-        Button floorB = bouton(Icones.FLOOR, "Floor", () -> surFloor.run());
+        floorB = bouton(Icones.FLOOR, "Mode Floor : éditer les cases dans le jeu", () -> surFloor.run());
 
         Button photo = new Button();
         photo.setGraphic(Icones.trace(Icones.CAPTURE, "icone-barre"));
@@ -138,6 +139,18 @@ public class BarreMesure implements Ancrage.Ancrable {
     private Runnable surInventaire = () -> { }, surSalle = () -> { }, surFloor = () -> { };
     public void surSalle(Runnable r) { surSalle = r; }
     public void surFloor(Runnable r) { surFloor = r; }
+
+    /** Mode Floor ouvert : le bouton Floor reste allume (comme la regle pendant une mesure). */
+    public void floorActif(boolean on) {
+        Runnable r = () -> {
+            floorB.getStyleClass().remove("actif");
+            if (on) {
+                floorB.getStyleClass().add("actif");
+                floorB.setStyle("-fx-background-color: #9FD2EA, #7AB6D3, #3E86AC;");
+            } else floorB.setStyle("");
+        };
+        if (Platform.isFxApplicationThread()) r.run(); else Platform.runLater(r);
+    }
 
     private Button bouton(String icone, String nom, Runnable action) {
         Button b = new Button();

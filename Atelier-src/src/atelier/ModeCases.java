@@ -12,14 +12,21 @@ import java.util.Deque;
  * Edition du floor DIRECTEMENT dans l'appart (bouton Floor) : la grille du jeu
  * montre en permanence le plan en cours de travail, avec des cases fantomes
  * autour (la ou l'on peut en ajouter). Le client modifie
- * (« atelier:cases=1:<h> ») avale les clics et ecrit la case visee, meme dans
+ * (« atelier:cases=1:<h>:<pinceau> ») avale les clics et ecrit la case visee, meme dans
  * le vide, dans ~/.atelier-case.txt (« n:x,y ») ; chaque clic applique l'outil
  * choisi (comme l'ancien editeur : monter, descendre, fixer a N, ajouter,
  * supprimer, porte, pipette, ou « Auto » : ajoute dans le vide, retire sur une
  * case), au pinceau 1×1..5×5 ou en rectangle (deux clics).
  *
  * Marques envoyees a la grille (« plan|marques ») : a ajout (vert), r retrait
- * (rouge), h hauteur changee (bleu), p porte (orange), g case fantome.
+ * (rouge), h hauteur changee (bleu), p porte (orange), g case fantome,
+ * c premier coin d'un rectangle (en attente du deuxieme clic).
+ *
+ * Message de mode : « atelier:cases=1:<h>:<p> » (h = hauteur des cases
+ * fantomes, p = taille du pinceau 1..5, 1 en mode rectangle) ; le client
+ * dessine lui-meme le pinceau sous la souris (d = (p-1)/2, comme clic()). Il
+ * est renvoye a chaque changement de pinceau ou de rectangle. Arret :
+ * « atelier:cases=0 ».
  * Rien ne part au serveur avant « Appliquer » : un seul UpdateFloorProperties,
  * l'appart se recharge une fois. Une case sous un mobi ne se retire pas.
  */
@@ -47,6 +54,8 @@ final class ModeCases {
     private static final File FICHIER = new File(Capture.maisonReelle(), ".atelier-case.txt");
 
     private static volatile boolean actif = false, occupe = false;
+    /** « Arreter » pendant l'attente du floor (BarreFloor) : on cesse d'attendre le retour du jeu. */
+    private static volatile boolean abandon = false;
     /** base = floor de l'appart ; travail = ce qu'on prepare ; precedent = avant le dernier Appliquer. */
     private static volatile FloorModele base, travail, precedent;
     private static final Deque<FloorModele> annuler = new ArrayDeque<>(), retablir = new ArrayDeque<>();
@@ -65,15 +74,42 @@ final class ModeCases {
 
     static Outil outil() { return outil; }
 
-    static void outil(Outil o) { outil = o; coin = null; }
+    static void outil(Outil o) {
+        outil = o;
+        if (coin != null) { coin = null; redessiner(); }
+    }
 
     static int valeur() { return valeur; }
 
     static void valeur(int v) { valeur = Math.max(0, Math.min(FloorModele.HAUTEUR_MAX, v)); }
 
-    static void pinceau(int n) { pinceau = Math.max(1, Math.min(5, n)); }
+    static void pinceau(int n) {
+        int p = Math.max(1, Math.min(5, n));
+        if (p == pinceau) return;
+        pinceau = p;
+        if (actif) envoyerMode(true);
+    }
 
-    static void rectangle(boolean r) { rectangle = r; coin = null; }
+    static void rectangle(boolean r) {
+        boolean avait = coin != null;
+        coin = null;
+        if (r != rectangle) { rectangle = r; if (actif) envoyerMode(true); }
+        if (avait) redessiner();
+    }
+
+    /** Oublie le premier coin d'un rectangle en attente. true s'il y en avait un. */
+    static boolean oublierCoin() {
+        if (coin == null) return false;
+        coin = null;
+        redessiner();
+        return true;
+    }
+
+    static boolean coinEnAttente() { return coin != null; }
+
+    static int pinceau() { return pinceau; }
+
+    static boolean rectangle() { return rectangle; }
 
     static FloorModele travail() { return travail; }
 
@@ -99,7 +135,7 @@ final class ModeCases {
         envoyerMode(true);
         redessiner();
         Salle.tache("mode-cases", ModeCases::ecouter);
-        InfoJeu.consigne("Floor : clique les cases dans l'appart, puis « Appliquer ».");
+        InfoJeu.consigne("Mode Floor : clique les cases dans le jeu. Appliquer pour valider.");
         return null;
     }
 
@@ -167,7 +203,12 @@ final class ModeCases {
         int x0, y0, x1, y1;
         if (rectangle) {
             int[] c = coin;
-            if (c == null) { coin = new int[]{x, y}; InfoJeu.consigne("Rectangle : clique le deuxième coin."); return; }
+            if (c == null) {
+                coin = new int[]{x, y};
+                InfoJeu.consigne("Rectangle : clique le deuxième coin.");
+                redessiner();                                       // marque « c » sur le premier coin
+                return;
+            }
             coin = null;
             x0 = Math.min(c[0], x); y0 = Math.min(c[1], y); x1 = Math.max(c[0], x); y1 = Math.max(c[1], y);
         } else {
@@ -300,11 +341,23 @@ final class ModeCases {
 
     // ---------------------------------------------------------- dessin
 
+    /**
+     * Logique pure : le message de mode pour le client. « atelier:cases=1:<h>:<p> »
+     * (p = pinceau 1..5, 1 en rectangle) ou « atelier:cases=0 » a l'arret.
+     */
+    static String messageMode(boolean oui, int hauteur, int pinceau, boolean rectangle) {
+        if (!oui) return "atelier:cases=0";
+        int p = rectangle ? 1 : Math.max(1, Math.min(5, pinceau));
+        return "atelier:cases=1:" + hauteur + ":" + p;
+    }
+
     private static void envoyerMode(boolean oui) {
         extension.GPresets gp = Salle.gp();
         if (gp == null) return;
+        String m = messageMode(oui, hauteurFantome, pinceau, rectangle);
+        Journal.debug("mode floor : " + m);
         gp.sendToClient(new gearth.protocol.HPacket("Whisper", gearth.protocol.HMessage.Direction.TOCLIENT,
-                -1, "atelier:cases=" + (oui ? "1:" + hauteurFantome : "0"), 0, 0, 0, -1));
+                -1, m, 0, 0, 0, -1));
     }
 
     private static void redessiner() {
@@ -313,8 +366,10 @@ final class ModeCases {
     }
 
     /** « plan|marques » pour la grille du jeu (lignes separees par « / »). */
-    static synchronized String planEtMarques() {
-        FloorModele b = base, t = travail;
+    static synchronized String planEtMarques() { return planEtMarques(base, travail, hauteurFantome, coin); }
+
+    /** Logique pure de planEtMarques ; coin = premier coin d'un rectangle (marque « c »), ou null. */
+    static String planEtMarques(FloorModele b, FloorModele t, int hauteurFantome, int[] coin) {
         if (b == null || t == null) return "";
         int w = Math.min(MAX, Math.max(b.largeur, t.largeur) + MARGE);
         int l = Math.min(MAX, Math.max(b.longueur, t.longueur) + MARGE);
@@ -330,6 +385,7 @@ final class ModeCases {
                     m = estPorte(t, x, y) ? 'p' : a < 0 ? 'a' : a != n ? 'h' : '.';
                 } else if (a >= 0) { h = a; m = 'r'; }
                 else { h = hauteurFantome; m = 'g'; }
+                if (coin != null && coin[0] == x && coin[1] == y) m = 'c';
                 plan.append(FloorModele.car(Math.min(35, h)));
                 marques.append(m);
             }
@@ -400,14 +456,22 @@ final class ModeCases {
         }
     }
 
+    /** Cesse d'attendre le retour du jeu apres un envoi (le floor a pu partir quand meme). */
+    static void arreterAttente() { if (occupe) abandon = true; }
+
     private static boolean envoyer(FloorModele m, String bilan) {
         occupe = true;
+        abandon = false;
         surChangement.run();
         try {
             long t0 = System.currentTimeMillis();
             if (!FloorReseau.envoyerPlan(m)) { Journal.erreur("Envoi du floor impossible."); return false; }
             for (int i = 0; i < 100; i++) {          // 15 s au plus
                 Salle.sommeil(150);
+                if (abandon) {
+                    Journal.erreur("Attente arrêtée : regarde le floor dans le jeu, il a pu changer quand même.");
+                    return false;
+                }
                 if (FloorReseau.erreurRecue > t0) {
                     Journal.erreur("Le jeu a refusé le floor (" + FloorReseau.erreur + ").");
                     return false;

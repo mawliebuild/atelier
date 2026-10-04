@@ -13,6 +13,10 @@ import java.util.regex.Pattern;
 /**
  * Prix des mobis de l'hotel FR d'apres habbofurni.xyz.
  *
+ * Source : l'export JSON du site (EXPORT), mis a jour chaque heure, lu en UNE
+ * demande au plus une fois par heure (le site prefere ce fichier aux ~300 pages
+ * d'archives d'avant ; le texte qui suit decrit cette ancienne lecture).
+ *
  * Le site range environ 9 000 mobis dans ses archives (~300 pages de 30).
  * Chaque fiche porte le nom de classe du mobi, son prix moyen en credits et
  * l'origine de ce prix : « market » (moyenne de la place du marche) ou
@@ -44,7 +48,8 @@ public final class PrixSite {
     }
 
     private static final String ARCHIVES = "https://habbofurni.xyz/archives-des-mobis/";
-    static final long VALIDITE = 24 * 3600_000L;
+    /** L'export est refait toutes les heures : pas besoin de le relire plus souvent. */
+    static final long VALIDITE = 3600_000L;
     private static final String NOM = "prix-habbofurni.json";
     private static final int FILS = 3, ECHECS_MAX = 10, SAUVER_TOUTES = 20;
     private static final long ECART_MS = 300, ECART_MAX_MS = 2_000;
@@ -109,9 +114,31 @@ public final class PrixSite {
                 }
                 lire();
             } finally { enLecture = false; fini = true; notifier(); }
+            relireChaqueHeure();
         }, "atelier-prix-site");
         t.setDaemon(true);
         t.start();
+    }
+
+    /**
+     * Tant que l'Atelier est ouvert : le fichier du site est relu des qu'il a
+     * plus d'une heure (VALIDITE), sans rien a faire. Verifie toutes les
+     * 5 minutes ; jamais pendant une lecture deja en cours.
+     */
+    private static void relireChaqueHeure() {
+        long essai = System.currentTimeMillis();     // une tentative par heure au plus, meme si le site ne repond pas
+        while (true) {
+            dormir(5 * 60_000L);
+            try {
+                long t = System.currentTimeMillis();
+                if (enLecture || t - essai < VALIDITE || !PrixFichier.perime(misAJour, VALIDITE, t)) continue;
+                essai = t;
+                lire();
+                notifier();
+            } catch (Throwable t) {
+                Journal.debug("prix habbofurni : relecture automatique : " + t);
+            }
+        }
     }
 
     /**
@@ -162,97 +189,48 @@ public final class PrixSite {
         }
     }
 
+    /**
+     * L'export officiel de habbofurni.xyz (fichier JSON mis a jour toutes les
+     * heures, donne par le site pour l'Atelier) : UNE seule demande au lieu des
+     * ~300 pages des archives. Format : {"prices": {classe: [prix, "market"|"site"]}}.
+     */
+    private static final String EXPORT = "https://habbofurni.xyz/wp-content/uploads/hbf-export/prices-fr.json";
+
     private static void lireTout(long t0) {
-        if (lectureDebut <= 0 || PrixFichier.perime(lectureDebut, VALIDITE, t0)) {
-            lectureDebut = t0;
-            pagesLues.clear();
-        }
         etat = "Lecture des prix sur habbofurni.xyz…";
-        // Premiere page : elle donne le nombre de pages (et les mobis les plus recents).
-        PrixReseau.Reponse r1 = page(1);
-        String premiere = r1 != null && r1.code == 200 ? r1.corps : null;
-        if (premiere == null) { echec(0, r1 == null ? "le site ne répond pas" : "réponse " + r1.code); return; }
-        int pages = Math.max(1, dernierePage(premiere));
-        Map<String, Prix> m1 = analyser(premiere);
-        prix.putAll(m1);
-        AtomicInteger lus = new AtomicInteger(m1.size());
-        pagesLues.add(1);
-
-        List<Integer> afaire = new ArrayList<>();
-        for (int p = 2; p <= pages; p++) if (!pagesLues.contains(p)) afaire.add(p);
-        if (pagesLues.size() > 1)
-            Journal.debug("prix habbofurni : reprise de la lecture, " + afaire.size() + " pages sur " + pages + ".");
-        pagesTotal = pages;
-        pagesFaites = pages - afaire.size();
+        pagesTotal = 1;
+        pagesFaites = 0;
         notifier();
-
-        AtomicInteger echecs = new AtomicInteger();
-        List<Integer> ratees = Collections.synchronizedList(new ArrayList<>());
-        ExecutorService fils = Executors.newFixedThreadPool(FILS, r -> {
-            Thread t = new Thread(r, "atelier-prix-page");
-            t.setDaemon(true);
-            return t;
-        });
-        AtomicInteger depuisSauve = new AtomicInteger();
-        ecartMs = ECART_MS;
-        pauseJusqua = 0;
-        for (int p : afaire) {
-            fils.submit(() -> {
-                // « Site occupe » (503 / 429) : on ralentit et on redemande la meme page.
-                for (int essai = 0; essai < 4; essai++) {
-                    if (stop || echecs.get() >= ECHECS_MAX) return;
-                    attendreTour();
-                    PrixReseau.Reponse r = page(p);
-                    if (r != null && (r.code == 503 || r.code == 429)) { ralentir(r.code); continue; }
-                    if (r == null || r.code != 200) { echecs.incrementAndGet(); ratees.add(p); }
-                    else {
-                        Map<String, Prix> m = analyser(r.corps);
-                        prix.putAll(m);
-                        lus.addAndGet(m.size());
-                        pagesLues.add(p);
-                    }
-                    break;
-                }
-                if (!pagesLues.contains(p) && !ratees.contains(p)) ratees.add(p);
-                int n;
-                synchronized (PrixSite.class) { n = ++pagesFaites; }
-                etat = "Lecture des prix sur habbofurni.xyz : " + n + " / " + pages + " pages…";
-                if (n % 10 == 0) notifier();
-                if (depuisSauve.incrementAndGet() % SAUVER_TOUTES == 0) sauver();
-            });
+        PrixReseau.Reponse r = lire(EXPORT);
+        if (r == null || r.code != 200 || r.corps == null) {
+            echec(0, r == null ? "le site ne répond pas" : "réponse " + r.code);
+            return;
         }
-        fils.shutdown();
-        try { fils.awaitTermination(30, TimeUnit.MINUTES); }
-        catch (InterruptedException e) { fils.shutdownNow(); }
-
-        // Les pages ratees, une fois chacune, une a la fois.
-        if (!stop && echecs.get() < ECHECS_MAX && !ratees.isEmpty()) {
-            for (int p : new ArrayList<>(ratees)) {
-                if (stop) break;
-                dormir(1000);
-                attendreTour();
-                PrixReseau.Reponse r = page(p);
-                if (r == null || r.code != 200) continue;
-                Map<String, Prix> m = analyser(r.corps);
-                prix.putAll(m);
-                lus.addAndGet(m.size());
-                pagesLues.add(p);
-                ratees.remove((Integer) p);
+        Map<String, Prix> m = new java.util.HashMap<>();
+        try {
+            org.json.JSONObject o = new org.json.JSONObject(r.corps);
+            org.json.JSONObject p = o.getJSONObject("prices");
+            for (String classe : p.keySet()) {
+                org.json.JSONArray v = p.optJSONArray(classe);
+                if (v == null || v.length() < 1) continue;
+                int moyen = v.optInt(0, -1);
+                if (moyen < 0) continue;
+                m.put(classe, new Prix(moyen, v.length() > 1 ? v.optString(1, "site") : "site"));
             }
+        } catch (Throwable t) {
+            echec(0, "fichier des prix illisible (" + t.getMessage() + ")");
+            return;
         }
-        long ms = System.currentTimeMillis() - t0;
-        Journal.debug("prix habbofurni : " + lus.get() + " mobis, " + pagesLues.size() + "/" + pages
-                + " pages en " + (ms / 1000) + " s, " + (octets.get() / 1024) + " Ko reçus"
-                + (ratees.isEmpty() ? "" : ", " + ratees.size() + " pages ratées") + ".");
-
-        if (stop) { sauver(); etat = ""; dernierEchec = "lecture arrêtée"; return; }
-        if (echecs.get() >= ECHECS_MAX || lus.get() < 100) { echec(lus.get(), "trop de pages sans réponse"); return; }
+        if (m.size() < 100) { echec(m.size(), "fichier des prix presque vide"); return; }
+        prix.putAll(m);                 // un mobi absent du fichier garde son ancien prix
+        pagesFaites = 1;
         misAJour = System.currentTimeMillis();
-        // lecture complete (au plus quelques pages ratees) : plus de reprise
         lectureDebut = 0;
         pagesLues.clear();
         sauver();
         etat = "";
+        Journal.debug("prix habbofurni : " + m.size() + " mobis lus dans l'export en "
+                + (System.currentTimeMillis() - t0) + " ms, " + (r.octets / 1024) + " Ko reçus.");
     }
 
     /** Lecture ratee (site en panne, mise en page changee) : on garde les anciens prix. */

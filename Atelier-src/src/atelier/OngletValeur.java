@@ -184,10 +184,12 @@ public class OngletValeur {
 
         VBox v = new VBox(12,
                 Ui.bloc("Valeur estimée", valeur, resume, detail, chargement,
+                        // source citee avec un lien, comme le demande habbofurni.xyz
+                        Lien.lien("Prix moyens de habbofurni.xyz", "https://habbofurni.xyz"),
                         Ui.aide("Prix de habbofurni.xyz pour l'hôtel FR (moyenne du marché, ou "
                                 + "estimation du site pour les rares). Pour les mobis absents du site, "
                                 + "prix moyen de la place du marché du jeu. Les prix se chargent tout seuls "
-                                + "au lancement et sont gardés 24 h. C'est une estimation : le prix réel "
+                                + "au lancement, depuis le fichier que le site met à jour chaque heure. C'est une estimation : le prix réel "
                                 + "dépend des acheteurs. Les mobis BC et non échangeables ne se vendent pas.")),
                 Ui.bloc("Dans mon inventaire", outils, compteVisible, table,
                         Ui.aide("Clique une ligne (Maj ou Cmd/Ctrl pour plusieurs) : ces mobis s'entourent "

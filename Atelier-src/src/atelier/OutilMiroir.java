@@ -424,24 +424,83 @@ public class OutilMiroir {
          * internes comprises) : id -> nom. @altitude y est lue directement.
          */
         static void depuisListe(Map<String, String> idVersNom) {
+            // Plusieurs « @altitude » possibles (mobis, avatars…) : toutes CANDIDATES,
+            // aucune n'est tenue pour bonne avant d'avoir fait bouger un vrai mobi (mettre).
+            java.util.List<String> l = new java.util.ArrayList<>();
             for (Map.Entry<String, String> e : idVersNom.entrySet()) {
                 String n = e.getValue() == null ? "" : e.getValue().trim().toLowerCase(Locale.ROOT);
-                if (n.equals("@altitude") || n.equals("altitude")) {
-                    if (!e.getKey().equals(variable) || !confirmee) {
-                        Journal.debug("@altitude lue dans la liste : variable " + e.getKey());
-                        retenir(e.getKey());
-                    }
-                    return;
-                }
+                if (n.equals("@altitude") || n.equals("altitude")) l.add(e.getKey());
             }
+            if (!l.isEmpty()) {
+                candidats = l;
+                Journal.debug("@altitude : candidates de la liste du jeu " + l + ".");
+            }
+            listeRecue = true;
         }
+
+        private static volatile java.util.List<String> candidats = java.util.List.of();
+
+        /** Une @altitude possible (retenue, ou candidate de la liste du jeu) : a verifier au premier mobi. */
+        static boolean possible() { return variable != null || !candidats.isEmpty(); }
+        private static volatile boolean listeRecue = false;
 
         /** Demande la liste des variables au jeu et attend @altitude (au plus ~1,5 s). */
         static boolean demanderListe() {
             if (confirmee) return true;
-            Salle.envoyer(new HPacket("WiredGetAllVariablesDiffs", HMessage.Direction.TOSERVER, 0));
-            for (int i = 0; i < 25 && !confirmee; i++) Salle.sommeil(60);
+            if (!listeRecue) {
+                Salle.envoyer(new HPacket("WiredGetAllVariablesDiffs", HMessage.Direction.TOSERVER, 0));
+                for (int i = 0; i < 25 && !listeRecue; i++) Salle.sommeil(60);
+            }
             return confirmee;
+        }
+
+        /**
+         * Essaie une variable sur ce mobi : vraie si le mobi arrive a la hauteur
+         * voulue (environ 0,7 s au plus). Le mobi ne doit pas deja y etre.
+         */
+        private static boolean essayer(int idMobi, String cand, double z, int attentes) {
+            Salle.espacer();
+            Salle.envoyer(new HPacket("WiredSetObjectVariableValue", HMessage.Direction.TOSERVER,
+                    0, idMobi, cand, (int) Math.round(Math.max(0, z) * 100)));
+            Salle.envoiFait();
+            for (int i = 0; i < attentes; i++) {
+                Salle.sommeil(60);
+                HFloorItem it = Salle.sol(idMobi);
+                if (it != null && Math.abs(it.getTile().getZ() - z) < 0.05) return true;
+            }
+            return false;
+        }
+
+        /**
+         * Trouve la bonne @altitude sur ce mobi : la variable retenue, puis les
+         * candidates de la liste du jeu, puis une recherche (-100..-140, puis
+         * -1..-400). Seule une variable qui a fait bouger le mobi est gardee.
+         */
+        private static boolean trouver(int idMobi, double z) {
+            if (essaiRate) return false;
+            HFloorItem avant = Salle.sol(idMobi);
+            if (avant == null) return false;
+            java.util.LinkedHashSet<String> ordre = new java.util.LinkedHashSet<>();
+            if (variable != null) ordre.add(variable);
+            demanderListe();
+            ordre.addAll(candidats);
+            for (String c : ordre) {
+                if (essayer(idMobi, c, z, 12)) { Journal.debug("@altitude vérifiée : variable " + c); retenir(c); return true; }
+                Journal.debug("@altitude : la variable " + c + " ne fait pas bouger le mobi.");
+            }
+            if (variable != null) oublier(variable);
+            Journal.debug("@altitude : recherche sur le mobi " + idMobi + ".");
+            java.util.List<Integer> plage = new java.util.ArrayList<>();
+            for (int v = -100; v >= -140; v--) plage.add(v);
+            for (int v = -1; v >= -400; v--) if (v > -100 || v < -140) plage.add(v);
+            for (int v : plage) {
+                String c = String.valueOf(v);
+                if (ordre.contains(c)) continue;
+                if (essayer(idMobi, c, z, 5)) { Journal.debug("@altitude trouvée : variable " + c); retenir(c); return true; }
+            }
+            essaiRate = true;
+            Journal.erreur("@altitude introuvable : règle-la une fois dans l'éditeur :wired, puis recommence.");
+            return false;
         }
 
         /**
@@ -449,21 +508,10 @@ public class OutilMiroir {
          * que la variable retenue marche ; sinon la retrouve (liste du jeu, puis essais).
          */
         static void mettre(int idMobi, double z) {
-            if (!confirmee) demanderListe();
             if (variable != null && confirmee) { ecrire(idMobi, z); return; }
-            if (variable != null) {
-                String essai = variable;
-                HFloorItem avant = Salle.sol(idMobi);
-                if (avant != null && Math.abs(avant.getTile().getZ() - z) < 0.05) return;   // deja a sa hauteur : rien a verifier
-                ecrire(idMobi, z);
-                for (int i = 0; i < 12; i++) {
-                    Salle.sommeil(60);
-                    HFloorItem it = Salle.sol(idMobi);
-                    if (it != null && Math.abs(it.getTile().getZ() - z) < 0.05) { confirmee = true; return; }
-                }
-                oublier(essai);                   // retenue mais fausse : on cherche
-            }
-            chercher(idMobi, z);
+            HFloorItem avant = Salle.sol(idMobi);
+            if (avant != null && Math.abs(avant.getTile().getZ() - z) < 0.05) return;   // deja a sa hauteur : rien a verifier
+            trouver(idMobi, z);
         }
 
         static String variable() { return variable; }
@@ -503,30 +551,10 @@ public class OutilMiroir {
 
         /** Essaie les identifiants sur un mobi ; garde celui qui le met a la hauteur voulue. */
         static boolean chercher(int idMobi, double voulu) {
-            HFloorItem it = Salle.sol(idMobi);
-            if (it == null) return false;
-            if (demanderListe()) { ecrire(idMobi, voulu); return true; }
-            if (essaiRate) return false;
-            if (variable != null) oublier(variable);
-            Journal.debug("@altitude absente de la liste du jeu : essai des variables -100 à -140 sur le mobi " + idMobi + ".");
-            for (int v = -100; v >= -140 && variable == null; v--) {
-                String cand = String.valueOf(v);
-                Salle.envoyer(new HPacket("WiredSetObjectVariableValue", HMessage.Direction.TOSERVER,
-                        0, idMobi, cand, (int) Math.round(Math.max(0, voulu) * 100)));
-                Salle.sommeil(260);
-                HFloorItem now = Salle.sol(idMobi);
-                if (now != null && Math.abs(now.getTile().getZ() - voulu) < 0.05) {
-                    Journal.debug("miroir : @altitude = variable " + cand);
-                    retenir(cand);
-                    return true;
-                }
-            }
-            if (variable == null) {
-                essaiRate = true;
-                Journal.erreur("@altitude introuvable : règle-la une fois dans l'éditeur :wired, puis recommence.");
-            }
-            return variable != null;
+            if (variable != null && confirmee) { ecrire(idMobi, voulu); return true; }
+            return trouver(idMobi, voulu);
         }
+
 
         /** Ecoute passive des reglages faits dans l'editeur :wired. */
         static synchronized void installer() {

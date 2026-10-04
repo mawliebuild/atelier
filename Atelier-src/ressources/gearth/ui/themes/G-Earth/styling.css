@@ -2037,3 +2037,8 @@ VBox > .split-menu-button.last > .arrow-button {
 /* --- poignee de largeur, sur le bord gauche de la fenetre --- */
 .fenetre-poignee { -fx-background-color: transparent; }
 .fenetre-poignee:hover { -fx-background-color: rgba(62,134,172,0.45); -fx-background-radius: 3; }
+
+/* Boutons groupes (ex. style de mise en valeur) : une seule barre, coins aux extremites */
+.fenetre .segmente > .toggle-button { -fx-background-radius: 0; -fx-border-radius: 0; }
+.fenetre .segmente > .toggle-button:first-child { -fx-background-radius: 4 0 0 4; -fx-border-radius: 4 0 0 4; }
+.fenetre .segmente > .toggle-button:last-child { -fx-background-radius: 0 4 4 0; -fx-border-radius: 0 4 4 0; }

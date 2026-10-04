@@ -89,6 +89,7 @@ public class OngletParametres {
         parties.put("Fenêtres", partFenetres);
         parties.put("Mise en valeur", ApercuSurlignage.section());
         parties.put("Données", partDonnees);
+        parties.put("À propos", aPropos());
 
         // barre de menu a gauche
         ScrollPane droite = new ScrollPane();
@@ -132,6 +133,33 @@ public class OngletParametres {
         Tab t = new Tab("Paramètres", racine);
         t.setClosable(false);
         return t;
+    }
+
+    /**
+     * Credits : l'Atelier repose, pour la connexion au jeu, sur G-Earth
+     * (licence MIT : la mention du droit d'auteur doit accompagner le logiciel)
+     * et, pour une partie de la pose, sur G-Presets.
+     */
+    private VBox aPropos() {
+        Label atelier = Ui.aide("L'Atelier est un outil de construction pour Habbo : calques, floor dans l'appart, "
+                + "copies d'apparts et de wired, patrimoine, galerie…");
+        atelier.setWrapText(true);
+        Label base = new Label("La connexion au jeu repose sur G-Earth, de sirjonasxx (licence MIT), "
+                + "et une partie de la pose des mobis sur G-Presets, de sirjonasxx (modifié par TH et Zyker). "
+                + "Merci à eux !");
+        base.setWrapText(true);
+        Label mit = Ui.discret("G-Earth : Copyright (c) sirjonasxx. Publié sous licence MIT : utilisation, "
+                + "modification et distribution autorisées, à condition de garder cette mention.");
+        mit.setWrapText(true);
+        Label sources = new Label("Liste des messages du jeu : sulek.dev. Prix moyens des mobis : habbofurni.xyz.");
+        sources.setWrapText(true);
+        return new VBox(12,
+                Ui.bloc("L'Atelier", atelier),
+                Ui.bloc("Crédits", base,
+                        Lien.lien("G-Earth sur GitHub", "https://github.com/sirjonasxx/G-Earth"), mit),
+                Ui.bloc("Données", sources,
+                        Ui.ligne(Lien.lien("sulek.dev", "https://sulek.dev"),
+                                 Lien.lien("habbofurni.xyz", "https://habbofurni.xyz"))));
     }
 
     /** Le jeu installe contient-il les modifs de l'Atelier ? (hors fil JavaFX) */

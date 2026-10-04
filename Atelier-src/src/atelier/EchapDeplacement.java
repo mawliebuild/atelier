@@ -14,6 +14,13 @@ package atelier;
  * Meme code sous Mac et Windows : ToucheOption.echap lit CGEventSourceKeyState
  * (Mac) ou GetAsyncKeyState(VK_ESCAPE) (Windows), et Devant.app donne l'appli
  * au premier plan sur les deux.
+ *
+ * Mode Floor : Echap y est un vrai raccourci (RaccourcisGlobaux, enregistre
+ * seulement pendant ce mode) qui sort du mode. Pour qu'un seul appui ne fasse
+ * pas deux choses dans le desordre, la lecture ci-dessous se tait alors, et le
+ * raccourci du mode Floor appelle lui-meme lacherMobi() d'abord (sans effet si
+ * aucun mobi n'est tenu ; en mode Floor le jeu avale les clics, donc un
+ * deplacement Option + clic n'y commence pas), puis fait l'etape du Floor.
  */
 final class EchapDeplacement {
 
@@ -40,8 +47,15 @@ final class EchapDeplacement {
     }
 
     private static void annuler() {
+        if (ModeCases.actif()) return;          // mode Floor : c'est son raccourci Echap qui s'en charge
         if (!Salle.dansUneSalle()) return;
         if (!RaccourcisGlobaux.estHabbo(RaccourcisGlobaux.Devant.app())) return;
+        lacherMobi();
+    }
+
+    /** Demande au client modifie de relacher un mobi tenu (Option + clic). Sans effet sinon. */
+    static void lacherMobi() {
+        if (!Salle.dansUneSalle()) return;
         if (!ClientModifie.saitAnnuler()) return;
         extension.GPresets gp = Salle.gp();
         if (gp == null) return;

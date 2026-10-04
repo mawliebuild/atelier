@@ -242,7 +242,7 @@ public class PanneauCalques implements Ancrage.Ancrable {
         return l;
     }
 
-    /** Bouton Floor (barre du bas) : l'appart passe en edition du floor, fenetre d'outils a cote. */
+    /** Entrer en mode Floor (palette BarreFloor a la place de ce panneau). */
     void ouvrirFloor() { actions.cases(); }
 
     /** Une rangee d'icones avec son intitule a gauche. */

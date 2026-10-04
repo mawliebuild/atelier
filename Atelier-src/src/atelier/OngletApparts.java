@@ -815,7 +815,7 @@ public class OngletApparts {
                             l.getX(), l.getY(), l.getZ(), pf.getRotation()));
                 }
                 int n = cfg.getFurniture().size() + cfg.getWallFurniture().size();
-                gearth.extensions.parsers.HPoint racine;
+                gearth.extensions.parsers.HPoint racine, clic = null;
                 if (floor != null && floorVoulu) {
                     // Copie d'un appart complet : son floor d'abord, puis tout
                     // revient a sa place d'origine, sans clic.
@@ -826,6 +826,21 @@ public class OngletApparts {
                             + "Ton avatar ne bougera pas.");
                     racine = Generateur.Dalle.attendreClic(120_000);
                     if (racine == null) { dire.accept("Collage impossible : pas de clic dans le jeu en 2 minutes."); return; }
+                    // La case cliquee = coin haut-gauche des MOBIS copies. Une copie d'appart
+                    // complet garde les positions depuis le coin (0,0) de l'appart d'origine :
+                    // sans son floor, on les ramene a ce coin (sinon tout tombe hors du sol).
+                    int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE;
+                    for (extension.tools.presetconfig.furni.PresetFurni pf : cfg.getFurniture()) {
+                        minX = Math.min(minX, pf.getLocation().getX()); minY = Math.min(minY, pf.getLocation().getY());
+                    }
+                    for (extension.tools.presetconfig.furni.PresetWallFurni pw : cfg.getWallFurniture()) {
+                        minX = Math.min(minX, pw.getLocation().getX()); minY = Math.min(minY, pw.getLocation().getY());
+                    }
+                    if (minX != Integer.MAX_VALUE && (minX != 0 || minY != 0)) {
+                        clic = racine;
+                        racine = new gearth.extensions.parsers.HPoint(racine.getX() - minX, racine.getY() - minY);
+                        Journal.debug("collage « " + nom + " » : positions ramenées au coin des mobis (" + minX + "," + minY + ").");
+                    } else clic = racine;
                 }
 
                 // Pose directe, mobi par mobi, chacun a son altitude (@altitude), sans dalle
@@ -838,7 +853,8 @@ public class OngletApparts {
                 if (pasDirect != null) Journal.debug("collage « " + nom + " » : moteur de pose complet (" + pasDirect + ")");
                 if (pasDirect == null) {
                     double ancre = cfg.getSrcAnchorFloorHeight() == null ? 0 : cfg.getSrcAnchorFloorHeight();
-                    double sol0 = Math.max(0, Salle.hauteurSol(racine.getX(), racine.getY()));
+                    gearth.extensions.parsers.HPoint repere = clic != null ? clic : racine;   // case de reference des hauteurs
+                    double sol0 = Math.max(0, Salle.hauteurSol(repere.getX(), repere.getY()));
                     List<PoseDirecte.Sol> sols = new ArrayList<>();
                     for (extension.tools.presetconfig.furni.PresetFurni pf : cfg.getFurniture()) {
                         gearth.extensions.parsers.HPoint l = pf.getLocation();

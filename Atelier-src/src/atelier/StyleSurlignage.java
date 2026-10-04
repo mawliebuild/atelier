@@ -8,7 +8,7 @@ import java.util.prefs.Preferences;
  * couleur et epaisseur. Le reglage vaut partout.
  *
  * Le client modifie le recoit par un chuchotement qu'il n'affiche pas :
- * « atelier:style=<contour|remplissage|les2>;<RRGGBB>;<1-10> », renvoye a chaque
+ * « atelier:style=<contour|remplissage|les2>;<RRGGBB>;<1-10>;<opacite 0-100> », renvoye a chaque
  * changement, en entrant dans un appart et a la connexion (le jeu oublie tout
  * en changeant de salle).
  */
@@ -26,34 +26,64 @@ final class StyleSurlignage {
         }
     }
 
-    static final String COULEUR_DEFAUT = "FFE14A";   // le jaune d'avant
-    static final int EPAISSEUR_DEFAUT = 3;
+    static final Mode MODE_DEFAUT = Mode.LES2;
+    static final String COULEUR_DEFAUT = "FF5FA2";   // rose
+    static final int EPAISSEUR_DEFAUT = 4;
+    static final int OPACITE_DEFAUT = 45;            // % du remplissage
 
     private static final Preferences prefs = Preferences.userRoot().node("atelier");
-    private static volatile Mode mode = Mode.de(prefs.get("surlignage.mode", "contour"));
+    static {
+        // Nouveau defaut (contour + remplissage rose) : applique une fois, meme si l'ancien
+        // defaut (contour jaune) avait ete enregistre.
+        if (prefs.getInt("surlignage.version", 1) < 2) {
+            prefs.put("surlignage.mode", MODE_DEFAUT.code);
+            prefs.put("surlignage.couleur", COULEUR_DEFAUT);
+            prefs.putInt("surlignage.epaisseur", EPAISSEUR_DEFAUT);
+            prefs.putInt("surlignage.opacite", OPACITE_DEFAUT);
+            prefs.putInt("surlignage.version", 2);
+        }
+        // Defaut du contour passe de 3 a 4 px : seulement si l'ancien defaut etait garde.
+        if (prefs.getInt("surlignage.version", 2) < 3) {
+            if (prefs.getInt("surlignage.epaisseur", EPAISSEUR_DEFAUT) == 3) prefs.putInt("surlignage.epaisseur", EPAISSEUR_DEFAUT);
+            prefs.putInt("surlignage.version", 3);
+        }
+    }
+    private static volatile Mode mode = Mode.de(prefs.get("surlignage.mode", MODE_DEFAUT.code));
     private static volatile String couleur = couleurValide(prefs.get("surlignage.couleur", COULEUR_DEFAUT));
     private static volatile int epaisseur = borne(prefs.getInt("surlignage.epaisseur", EPAISSEUR_DEFAUT));
+    private static volatile int opacite = opaciteValide(prefs.getInt("surlignage.opacite", OPACITE_DEFAUT));
 
     static Mode mode() { return mode; }
     static String couleur() { return couleur; }
     static int epaisseur() { return epaisseur; }
+    static int opacite() { return opacite; }
+
+    /** Change le style (opacite inchangee), le retient et l'envoie au jeu. */
+    static void regler(Mode m, String rrggbb, int ep) { regler(m, rrggbb, ep, opacite); }
 
     /** Change le style, le retient et l'envoie au jeu. */
-    static void regler(Mode m, String rrggbb, int ep) {
+    static void regler(Mode m, String rrggbb, int ep, int op) {
         mode = m == null ? Mode.CONTOUR : m;
         couleur = couleurValide(rrggbb);
         epaisseur = borne(ep);
+        opacite = opaciteValide(op);
         prefs.put("surlignage.mode", mode.code);
         prefs.put("surlignage.couleur", couleur);
         prefs.putInt("surlignage.epaisseur", epaisseur);
+        prefs.putInt("surlignage.opacite", opacite);
         envoye = null;                       // a renvoyer
         Salle.tache("surlignage-style", StyleSurlignage::envoyerSiBesoin);
     }
 
     /** Logique pure : le message pour le client. */
-    static String message(Mode m, String rrggbb, int ep) {
-        return "atelier:style=" + (m == null ? Mode.CONTOUR : m).code + ";" + couleurValide(rrggbb) + ";" + borne(ep);
+    static String message(Mode m, String rrggbb, int ep) { return message(m, rrggbb, ep, OPACITE_DEFAUT); }
+
+    static String message(Mode m, String rrggbb, int ep, int op) {
+        return "atelier:style=" + (m == null ? Mode.CONTOUR : m).code + ";" + couleurValide(rrggbb) + ";" + borne(ep)
+                + ";" + opaciteValide(op);
     }
+
+    static int opaciteValide(int op) { return Math.max(10, Math.min(100, op)); }
 
     static String couleurValide(String c) {
         if (c == null) return COULEUR_DEFAUT;
@@ -89,7 +119,7 @@ final class StyleSurlignage {
         if (!ClientModifie.saitStyle()) return;
         extension.GPresets gp = Salle.gp();
         if (gp == null) return;
-        String m = message(mode, couleur, epaisseur);
+        String m = message(mode, couleur, epaisseur, opacite);
         String cle = Salle.salleId() + "|" + m;
         if (cle.equals(envoye)) return;
         gp.sendToClient(new gearth.protocol.HPacket("Whisper", gearth.protocol.HMessage.Direction.TOCLIENT,

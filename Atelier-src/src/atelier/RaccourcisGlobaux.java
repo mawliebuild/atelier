@@ -27,6 +27,14 @@ import java.util.function.IntFunction;
  * Option+Maj+C copie le calque vise, Option+Maj+V le colle (seulement quand un
  * calque est copie). Dans le panneau lui-meme, Cmd/Ctrl+C et V marchent aussi.
  *
+ * Mode Floor (seulement pendant ce mode) : Echap le quitte (comme « Quitter »
+ * de la palette), les touches 1 a 8 de la rangee des chiffres choisissent
+ * l'outil, et Cmd/Ctrl+Z, Cmd/Ctrl+Maj+Z (et Cmd/Ctrl+Y) annulent / retablissent
+ * dans le floor en travail (ModeCases) au lieu de l'historique des mobis.
+ * Chiffres : codes PHYSIQUES de la rangee (Mac kVK_ANSI_1..8, Windows VK_1..VK_8),
+ * sans modificateur : en AZERTY c'est la touche « & é " ' ( - è _ » sans Maj ;
+ * Maj + touche (le chiffre en AZERTY) reste au jeu.
+ *
  * Quand une fenetre de l'Atelier a le focus, c'est OutilHistorique.installerRaccourcis
  * (filtre JavaFX) qui s'en charge. Ici on couvre le cas ou l'appli Habbo est au
  * premier plan.
@@ -86,6 +94,62 @@ public final class RaccourcisGlobaux {
         try {
             Platform.runLater(() -> { if (Carbon.enregistresAlors()) { Carbon.desenregistrer(); Carbon.enregistrer(); } });
         } catch (IllegalStateException ignored) { }
+    }
+
+    // ------------------------------------------------------------ mode Floor
+
+    /** Echap (mode Floor). */
+    static final int FLOOR_ECHAP = 13;
+    /** Touches 1 a 8 de la rangee des chiffres (mode Floor) : ids 21 a 28. */
+    static final int FLOOR_CHIFFRE = 20;
+    /** Mac : codes physiques kVK_ANSI_1..8 et kVK_Escape (Events.h). */
+    static final int[] MAC_CHIFFRES = {18, 19, 20, 21, 23, 22, 26, 28};
+    static final int MAC_ECHAP = 53;
+    private static volatile boolean floorVoulu = false;
+    private static volatile Runnable surFloorEchap = () -> { };
+    private static volatile java.util.function.IntConsumer surFloorOutil = i -> { };
+    private static volatile Runnable surFloorAnnuler = () -> { }, surFloorRetablir = () -> { };
+
+    /**
+     * Ce que font les touches du mode Floor dans le jeu (appele hors fil JavaFX :
+     * a chacun de s'y remettre). outil recoit 0..7.
+     */
+    public static void surFloor(Runnable echap, java.util.function.IntConsumer outil, Runnable annuler, Runnable retablir) {
+        surFloorEchap = echap == null ? () -> { } : echap;
+        surFloorOutil = outil == null ? i -> { } : outil;
+        surFloorAnnuler = annuler == null ? () -> { } : annuler;
+        surFloorRetablir = retablir == null ? () -> { } : retablir;
+    }
+
+    /** Mode Floor ouvert ou non : Echap et 1..8 pris dans le jeu, Cmd/Ctrl+Z pour le floor. */
+    public static void floor(boolean on) {
+        if (floorVoulu == on) return;
+        floorVoulu = on;
+        Journal.debug("raccourcis globaux : mode Floor " + (on ? "actif" : "coupé"));
+        reenregistrer();
+    }
+
+    static boolean floorActif() { return floorVoulu; }
+
+    /** Logique pure : 0..7 pour les touches 1..8 du mode Floor, -1 sinon. */
+    static int floorOutil(int id) {
+        int i = id - FLOOR_CHIFFRE - 1;
+        return i >= 0 && i < 8 ? i : -1;
+    }
+
+    /** Logique pure : raccourcis du mode Floor, {id, code, modificateurs = 0}. */
+    static List<int[]> raccourcisFloor(int echap, int[] chiffres) {
+        List<int[]> r = new java.util.ArrayList<>();
+        r.add(new int[]{FLOOR_ECHAP, echap, 0});
+        for (int i = 0; i < 8 && i < chiffres.length; i++) r.add(new int[]{FLOOR_CHIFFRE + 1 + i, chiffres[i], 0});
+        return r;
+    }
+
+    /** Windows : VK_1..VK_8 = '1'..'8' (rangee des chiffres, AZERTY compris). */
+    static int[] vkChiffres() {
+        int[] t = new int[8];
+        for (int i = 0; i < 8; i++) t[i] = '1' + i;
+        return t;
     }
 
     // ---------------------------------------------- copier / coller des calques
@@ -154,6 +218,11 @@ public final class RaccourcisGlobaux {
      * z, y, s, c, v = codes physiques des touches qui produisent ces lettres.
      */
     static int[][] raccourcis(int z, int y, int s, int c, int v, int g, boolean toucheS, boolean calques, boolean coller) {
+        return raccourcis(z, y, s, c, v, g, toucheS, calques, coller, false);
+    }
+
+    /** Idem, avec les touches du mode Floor (Echap, 1..8) si floor. */
+    static int[][] raccourcis(int z, int y, int s, int c, int v, int g, boolean toucheS, boolean calques, boolean coller, boolean floor) {
         List<int[]> r = new java.util.ArrayList<>(List.of(
                 new int[]{CMD_Z, z, Carbon.CMD}, new int[]{CMD_MAJ_Z, z, Carbon.CMD | Carbon.MAJ}, new int[]{CMD_Y, y, Carbon.CMD},
                 new int[]{CTRL_Z, z, Carbon.CTRL}, new int[]{CTRL_MAJ_Z, z, Carbon.CTRL | Carbon.MAJ}, new int[]{CTRL_Y, y, Carbon.CTRL}));
@@ -167,6 +236,7 @@ public final class RaccourcisGlobaux {
             r.add(new int[]{CMD_C, c, Carbon.OPTION | Carbon.MAJ}); // copier le calque : Option + Maj + C
             if (coller) r.add(new int[]{CMD_V, v, Carbon.OPTION | Carbon.MAJ});
         }
+        if (floor) r.addAll(raccourcisFloor(MAC_ECHAP, MAC_CHIFFRES));
         return r.toArray(new int[0][]);
     }
 
@@ -180,6 +250,11 @@ public final class RaccourcisGlobaux {
      * ces modificateurs : AltGr + C ne prend donc pas Alt + C.
      */
     static int[][] raccourcisWindows(int z, int y, int c, int v, int g, boolean modeCalque, boolean calques, boolean coller) {
+        return raccourcisWindows(z, y, c, v, g, modeCalque, calques, coller, false);
+    }
+
+    /** Idem, avec les touches du mode Floor (Echap = VK_ESCAPE, 1..8 = VK_1..VK_8, sans modificateur) si floor. */
+    static int[][] raccourcisWindows(int z, int y, int c, int v, int g, boolean modeCalque, boolean calques, boolean coller, boolean floor) {
         int ctrl = WindowsClavier.MOD_CONTROL, alt = WindowsClavier.MOD_ALT, maj = WindowsClavier.MOD_SHIFT;
         List<int[]> r = new java.util.ArrayList<>(List.of(
                 new int[]{CTRL_Z, z, ctrl}, new int[]{CTRL_MAJ_Z, z, ctrl | maj}, new int[]{CTRL_Y, y, ctrl}));
@@ -192,6 +267,7 @@ public final class RaccourcisGlobaux {
             r.add(new int[]{CTRL_C, c, ctrl | maj});             // copier le calque : Ctrl + Maj + C
             if (coller) r.add(new int[]{CTRL_V, v, ctrl | maj}); // coller : Ctrl + Maj + V
         }
+        if (floor) r.addAll(raccourcisFloor(WindowsClavier.VK_ESCAPE, vkChiffres()));
         return r.toArray(new int[0][]);
     }
 
@@ -296,6 +372,20 @@ public final class RaccourcisGlobaux {
     private static volatile long dernier = 0;
 
     private static void declencher(int id) {
+        if (id == FLOOR_ECHAP) {
+            long now = System.currentTimeMillis();
+            if (now - dernier < 200) return;
+            dernier = now;
+            Journal.debug("raccourci jeu : Échap (mode Floor)");
+            try { surFloorEchap.run(); } catch (Throwable t) { Journal.erreur("Échap (mode Floor) a échoué", t); }
+            return;
+        }
+        int o = floorOutil(id);
+        if (o >= 0) {
+            Journal.debug("raccourci jeu : outil " + (o + 1) + " (mode Floor)");
+            try { surFloorOutil.accept(o); } catch (Throwable t) { Journal.erreur("Le choix d'outil a échoué", t); }
+            return;
+        }
         if (id == TOUCHE_G) {
             long now = System.currentTimeMillis();
             if (now - dernier < 200) return;
@@ -325,6 +415,12 @@ public final class RaccourcisGlobaux {
         long now = System.currentTimeMillis();
         if (now - dernier < 120) return;       // rebond
         dernier = now;
+        if (floorVoulu) {        // mode Floor : l'historique du floor en travail, pas celui des mobis
+            Journal.debug("raccourci jeu : " + (a < 0 ? "annuler" : "rétablir") + " (mode Floor)");
+            Runnable r = a < 0 ? surFloorAnnuler : surFloorRetablir;
+            try { r.run(); } catch (Throwable t) { Journal.erreur("Annuler / rétablir (mode Floor) a échoué", t); }
+            return;
+        }
         Salle.tache("raccourci", () -> {
             // Historique dit lui-meme son resultat (Journal) : rien a redire ici.
             if (a < 0) Historique.annuler(); else Historique.retablir();
@@ -379,7 +475,7 @@ public final class RaccourcisGlobaux {
         static synchronized void appliquer() {
             int[][] r = voulu ? raccourcisWindows(WindowsClavier.vkPour('z'), WindowsClavier.vkPour('y'),
                     WindowsClavier.vkPour('c'), WindowsClavier.vkPour('v'), WindowsClavier.vkPour('g'),
-                    pVoulu, calquesVoulu, collerVoulu) : new int[0][];
+                    pVoulu, calquesVoulu, collerVoulu, floorVoulu) : new int[0][];
             WindowsClavier.raccourcis(r, RaccourcisGlobaux::declencher);
             enregistres = r.length > 0;
         }
@@ -504,7 +600,7 @@ public final class RaccourcisGlobaux {
         private static Lib lib;
         private static CF cf;
         private static Gestionnaire gestionnaire;          // garde en vie (sinon ramasse par le GC)
-        private static final Pointer[] refs = new Pointer[16];
+        private static final Pointer[] refs = new Pointer[32];
         static boolean enregistresAlors() { return enregistres; }
 
         static int ostype(String s) {
@@ -582,7 +678,7 @@ public final class RaccourcisGlobaux {
             } catch (Throwable t) {
                 Journal.debug("raccourcis : disposition clavier illisible, QWERTY suppose (" + t + ")");
             }
-            int[][] r = raccourcis(z, y, p, c, v, g, pVoulu, calquesVoulu, collerVoulu);
+            int[][] r = raccourcis(z, y, p, c, v, g, pVoulu, calquesVoulu, collerVoulu, floorVoulu);
             int ok = 0;
             for (int[] k : r) {
                 EventHotKeyID.ByValue id = new EventHotKeyID.ByValue();

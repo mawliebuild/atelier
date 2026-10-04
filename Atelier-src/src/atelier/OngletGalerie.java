@@ -4,6 +4,7 @@ import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Cursor;
+import javafx.scene.Node;
 import javafx.scene.Scene;
 import javafx.scene.control.*;
 import javafx.scene.image.Image;
@@ -33,22 +34,33 @@ import java.util.*;
 public class OngletGalerie {
 
     private static final Set<String> EXTENSIONS = Set.of("png", "jpg", "jpeg", "gif", "bmp");
-    /** Vignettes : 3 par ligne dans la fenetre elargie (580 px). */
-    private static final double VIGNETTE = 140;
+    /** Largeur mini d'une carte : le nombre de colonnes suit la largeur de la fenetre. */
+    private static final double CARTE_MIN = 150;
+    /** Ecart regulier entre les cartes (en ligne et en colonne). */
+    private static final double ECART = 10;
     /** Fichier de l'ordre choisi (glisser-deposer), un nom par ligne. */
     private static final String ORDRE = "ordre.txt";
     /** Tags de chaque photo : « nom du fichier = Noël, Loft ». */
     private static final String TAGS = "tags.properties";
-    /** Tags choisis pour filtrer : une photo s'affiche si elle les a tous. */
-    private final Set<String> filtre = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
-    private final FlowPane barreTags = new FlowPane(6, 6);
 
     private final String css;
-    private final TilePane grille = new TilePane(10, 10);
+    /** La grille : des rangees de cartes de meme largeur, refaites quand la largeur change. */
+    private final VBox grille = new VBox(ECART);
+    private final TextField recherche = new TextField();
+    private final Label compteur = new Label();
+    /** Tags existants qui contiennent le mot tape : un clic les met dans la recherche. */
+    private final FlowPane suggestions = new FlowPane(4, 4);
+    /** Les cartes, dans l'ordre, et les tags de chaque photo (pour filtrer sans relire le disque). */
+    private final LinkedHashMap<File, VBox> cartes = new LinkedHashMap<>();
+    private final Map<File, List<String>> tagsPhotos = new HashMap<>();
+    private final List<VBox> visibles = new ArrayList<>();
+    private int colonnes = 0;
+    private double largeurCarte = 0;
+
     /** Messages : dans le jeu (message du personnage), pas dans la fenetre. */
     private static void dire(String m) { InfoJeu.dire(Ui.majuscule(m)); }
-    private static void succes(String m) { Journal.succes(Ui.majuscule(m)); }
-    private static void erreur(String m) { Journal.erreur(Ui.majuscule(m)); }
+    private static void succes(String m) { Journal.succes(Ui.accorder(Ui.majuscule(m))); }
+    private static void erreur(String m) { Journal.erreur(Ui.accorder(Ui.majuscule(m))); }
 
     public OngletGalerie(String css) { this.css = css; instance = this; }
 
@@ -73,33 +85,30 @@ public class OngletGalerie {
     }
 
     public Tab construire() {
-        Button ajouter = new Button("Ajouter des photos…");
+        Button ajouter = Ui.bouton(Icones.PLUS, "Ajouter des photos…");
         ajouter.getStyleClass().add("primaire");
         ajouter.setOnAction(e -> choisir());
-        ajouter.setGraphic(Icones.petite(Icones.PLUS, 16, true));
-        ajouter.setGraphicTextGap(6);
-        Button coller = new Button("Coller une image");
-        coller.setGraphic(Icones.petite(Icones.COLLER, 16, false));
-        coller.setGraphicTextGap(6);
+        Button coller = Ui.bouton(Icones.COLLER, "Coller une image");
         coller.setOnAction(e -> collerPressePapier());
 
-        grille.setPrefColumns(3);
-        grille.setPrefTileWidth(VIGNETTE + 12);
-        grille.setPadding(new Insets(4));
-        grille.setAlignment(Pos.TOP_LEFT);
-
-        VBox v = new VBox(12,
-                Ui.bloc("Photos", Ui.ligne(ajouter, coller),
-                        Ui.aide("Ajoute des captures de tes apparts ou d'autres apparts. Clique une photo pour "
+        VBox v = new VBox(10,
+                Ui.bloc("Photos", Ui.boutons(ajouter, coller),
+                        Ui.aide("Garde ici des captures de tes apparts ou d'autres apparts. Clique une photo pour "
                                 + "l'ouvrir à côté du jeu : molette pour zoomer, glisser pour se déplacer, "
-                                + "double-clic pour l'ajuster. Tu peux aussi glisser des images ici. "
-                                + "Glisse une photo sur une autre pour changer l'ordre. Clic droit, « Tags… » "
-                                + "pour lui mettre des tags (Noël, Loft, Villa…) et filtrer avec les boutons.")),
-                barreTags, grille);
+                                + "double-clic pour l'ajuster. Tu peux aussi glisser des images ici, "
+                                + "ou glisser une photo sur une autre pour changer l'ordre. "
+                                + "« + Tag » range une photo (Noël, Loft, Villa…) ; la recherche trouve "
+                                + "les photos dont un tag contient le texte tapé.")),
+                barreRecherche(), suggestions, grille);
         v.setPadding(new Insets(12, 14, 14, 14));
         v.setFillWidth(true);
+        suggestions.setVisible(false);
+        suggestions.setManaged(false);
 
-        // glisser-deposer d'images depuis le Finder
+        grille.setFillWidth(true);
+        grille.widthProperty().addListener((o, a, b) -> disposer());
+
+        // glisser-deposer d'images depuis le Finder / l'Explorateur
         v.setOnDragOver(e -> {
             if (e.getDragboard().hasFiles()) e.acceptTransferModes(TransferMode.COPY);
             e.consume();
@@ -112,12 +121,100 @@ public class OngletGalerie {
         });
 
         rafraichir();
+        Ui.rienDeCoupe(v);
         ScrollPane sp = new ScrollPane(v);
         sp.setFitToWidth(true);
         sp.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
         Tab t = new Tab("Galerie", sp);
         t.setClosable(false);
         return t;
+    }
+
+    /** Champ de recherche (loupe, croix pour effacer) et le compteur de photos. */
+    private Node barreRecherche() {
+        recherche.setPromptText("Chercher un tag…");
+        recherche.setStyle("-fx-padding: 5 28 5 28;");
+        recherche.setMaxWidth(Double.MAX_VALUE);
+        Node loupe = Ui.pictogramme(Icones.LOUPE);
+        loupe.setMouseTransparent(true);
+        loupe.setOpacity(0.7);
+        Button effacer = Ui.boutonIcone(Icones.VIDER, "Effacer la recherche");
+        effacer.setStyle("-fx-background-color: transparent; -fx-padding: 2 4 2 4; -fx-cursor: hand;");
+        effacer.setFocusTraversable(false);
+        effacer.visibleProperty().bind(recherche.textProperty().isNotEmpty());
+        effacer.setOnAction(e -> { recherche.clear(); recherche.requestFocus(); });
+        StackPane champ = new StackPane(recherche, loupe, effacer);
+        StackPane.setAlignment(loupe, Pos.CENTER_LEFT);
+        StackPane.setMargin(loupe, new Insets(0, 0, 0, 8));
+        StackPane.setAlignment(effacer, Pos.CENTER_RIGHT);
+        StackPane.setMargin(effacer, new Insets(0, 3, 0, 0));
+        champ.setMaxWidth(Double.MAX_VALUE);
+        HBox.setHgrow(champ, Priority.ALWAYS);
+        recherche.textProperty().addListener((o, a, b) -> filtrer());
+        recherche.setOnKeyPressed(e -> {
+            if (e.getCode() == javafx.scene.input.KeyCode.ESCAPE && !recherche.getText().isEmpty()) { recherche.clear(); e.consume(); }
+        });
+        compteur.setStyle("-fx-opacity: 0.65;");
+        compteur.setMinWidth(Region.USE_PREF_SIZE);
+        HBox ligne = new HBox(10, champ, compteur);
+        ligne.setAlignment(Pos.CENTER_LEFT);
+        return ligne;
+    }
+
+    // ------------------------------------------------------------ recherche
+
+    /** Minuscules sans accents : « Noël » -> « noel ». */
+    static String normaliser(String s) {
+        if (s == null) return "";
+        return java.text.Normalizer.normalize(s, java.text.Normalizer.Form.NFD)
+                .replaceAll("\\p{M}+", "").toLowerCase(Locale.ROOT).trim();
+    }
+
+    /** Les mots de la recherche (espaces ou virgules), normalises. */
+    static List<String> mots(String requete) {
+        List<String> l = new ArrayList<>();
+        for (String m : normaliser(requete).split("[\\s,]+")) if (!m.isEmpty()) l.add(m);
+        return l;
+    }
+
+    /**
+     * La photo correspond-elle ? Chaque mot de la recherche doit se trouver
+     * DANS au moins un de ses tags (« hallo villa » : Halloween + Villa).
+     * Recherche vide : toutes les photos.
+     */
+    static boolean correspond(List<String> tags, String requete) {
+        List<String> ms = mots(requete);
+        if (ms.isEmpty()) return true;
+        List<String> ts = new ArrayList<>();
+        for (String t : tags) ts.add(normaliser(t));
+        for (String m : ms) if (ts.stream().noneMatch(t -> t.contains(m))) return false;
+        return true;
+    }
+
+    /** Tags existants qui contiennent le dernier mot tape (sans ceux deja tapes en entier). */
+    static List<String> suggestionsPour(Collection<String> connus, String requete) {
+        List<String> r = new ArrayList<>();
+        if (requete == null || requete.isEmpty() || Character.isWhitespace(requete.charAt(requete.length() - 1))) return r;
+        List<String> ms = mots(requete);
+        if (ms.isEmpty()) return r;
+        String dernier = ms.get(ms.size() - 1);
+        for (String t : connus) {
+            String n = normaliser(t);
+            if (n.contains(dernier) && !ms.contains(n)) r.add(t);
+        }
+        // ceux qui commencent par le mot d'abord
+        r.sort(Comparator.comparing((String t) -> !normaliser(t).startsWith(dernier)).thenComparing(String.CASE_INSENSITIVE_ORDER));
+        return r.size() > 8 ? new ArrayList<>(r.subList(0, 8)) : r;
+    }
+
+    /** Remplace le dernier mot de la recherche par le tag choisi. */
+    private void choisirSuggestion(String tag) {
+        String q = recherche.getText();
+        int i = q.length();
+        while (i > 0 && !Character.isWhitespace(q.charAt(i - 1)) && q.charAt(i - 1) != ',') i--;
+        recherche.setText(q.substring(0, i) + tag + " ");
+        recherche.requestFocus();
+        recherche.positionCaret(recherche.getText().length());
     }
 
     // ------------------------------------------------------------ ajout
@@ -201,6 +298,7 @@ public class OngletGalerie {
 
     // ------------------------------------------------------------ vignettes
 
+    /** Relit le dossier, refait les cartes, puis filtre. */
     private void rafraichir() {
         File[] l = dossier().listFiles(f -> f.isFile() && EXTENSIONS.contains(extension(f)));
         List<File> photos = l == null ? new ArrayList<>() : new ArrayList<>(Arrays.asList(l));
@@ -210,40 +308,84 @@ public class OngletGalerie {
                 .thenComparing(Comparator.comparingLong(File::lastModified).reversed()));
         toutes = photos;
         Properties tags = lireTags();
-        // les tags qui n'existent plus ne filtrent plus
-        Set<String> existants = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
-        for (File f : photos) existants.addAll(tagsDe(tags, f));
-        filtre.retainAll(existants);
-        construireBarreTags(existants);
-        List<File> visibles = new ArrayList<>();
-        for (File f : photos) {
-            Set<String> t = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
-            t.addAll(tagsDe(tags, f));
-            if (t.containsAll(filtre)) visibles.add(f);
+        // les images deja chargees sont gardees : seules les nouvelles se chargent
+        Map<File, Image> images = new HashMap<>();
+        for (Map.Entry<File, VBox> e : cartes.entrySet()) {
+            Object im = e.getValue().getProperties().get(IMAGE);
+            if (im instanceof Image) images.put(e.getKey(), (Image) im);
         }
+        cartes.clear();
+        tagsPhotos.clear();
+        for (File f : photos) {
+            List<String> t = tagsDe(tags, f);
+            tagsPhotos.put(f, t);
+            cartes.put(f, vignette(f, t, images.get(f)));
+        }
+        filtrer();
+    }
+
+    /** Garde les cartes dont un tag contient chaque mot de la recherche. */
+    private void filtrer() {
+        String q = recherche.getText();
+        visibles.clear();
+        for (Map.Entry<File, VBox> e : cartes.entrySet())
+            if (correspond(tagsPhotos.getOrDefault(e.getKey(), List.of()), q)) visibles.add(e.getValue());
+        int n = cartes.size();
+        compteur.setText(mots(q).isEmpty() || n == 0
+                ? n + (n > 1 ? " photos" : " photo")
+                : visibles.size() + " / " + n + (n > 1 ? " photos" : " photo"));
+        compteur.setVisible(n > 0);
+        // suggestions : les tags existants qui contiennent le mot en cours
+        Set<String> connus = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
+        for (List<String> t : tagsPhotos.values()) connus.addAll(t);
+        suggestions.getChildren().clear();
+        for (String t : suggestionsPour(connus, q)) {
+            Button b = new Button(t);
+            b.setFocusTraversable(false);
+            b.setStyle(PASTILLE + "-fx-background-color: #E4EEF3; -fx-text-fill: #2F6F92; -fx-cursor: hand;");
+            b.setOnAction(e -> choisirSuggestion(t));
+            suggestions.getChildren().add(b);
+        }
+        boolean s = !suggestions.getChildren().isEmpty();
+        suggestions.setVisible(s);
+        suggestions.setManaged(s);
+        colonnes = 0;
+        disposer();
+    }
+
+    /**
+     * Range les cartes visibles en rangees de meme hauteur : autant de
+     * colonnes que la largeur en permet (cartes de CARTE_MIN px au moins),
+     * toutes de la meme largeur.
+     */
+    private void disposer() {
+        double w = grille.getWidth();
+        if (w <= 0) w = 520;
+        int cols = Math.max(2, (int) Math.floor((w + ECART) / (CARTE_MIN + ECART)));
+        double lc = Math.floor((w - ECART * (cols - 1)) / cols);
+        if (cols == colonnes && Math.abs(lc - largeurCarte) < 0.5 && !grille.getChildren().isEmpty()) return;
+        colonnes = cols;
+        largeurCarte = lc;
+        for (VBox c : visibles) dimensionner(c, lc);
+        for (Node n : grille.getChildren()) if (n instanceof HBox) ((HBox) n).getChildren().clear();
         grille.getChildren().clear();
-        for (File f : visibles) grille.getChildren().add(vignette(f, tagsDe(tags, f)));
-        if (photos.isEmpty()) grille.getChildren().add(Ui.discret("Aucune photo pour l'instant."));
-        else if (visibles.isEmpty()) grille.getChildren().add(Ui.discret("Aucune photo n'a tous ces tags."));
+        if (visibles.isEmpty()) {
+            Label vide = Ui.discret(cartes.isEmpty() ? "Aucune photo. Ajoute-en ou colle une image."
+                    : "Aucune photo avec ce tag.");
+            vide.setPadding(new Insets(16, 4, 16, 4));
+            grille.getChildren().add(vide);
+            return;
+        }
+        for (int i = 0; i < visibles.size(); i += cols) {
+            HBox rangee = new HBox(ECART);
+            rangee.setFillHeight(true);
+            for (int j = i; j < Math.min(i + cols, visibles.size()); j++) rangee.getChildren().add(visibles.get(j));
+            grille.getChildren().add(rangee);
+        }
     }
 
     /** Toutes les photos dans l'ordre (filtre ou non : l'ordre reste complet). */
     private List<File> toutes = new ArrayList<>();
-
-    private void construireBarreTags(Set<String> existants) {
-        barreTags.getChildren().clear();
-        if (existants.isEmpty()) return;
-        ToggleButton tous = new ToggleButton("Toutes");
-        tous.setSelected(filtre.isEmpty());
-        tous.setOnAction(e -> { filtre.clear(); rafraichir(); });
-        barreTags.getChildren().add(tous);
-        for (String t : existants) {
-            ToggleButton b = new ToggleButton(t);
-            b.setSelected(filtre.contains(t));
-            b.setOnAction(e -> { if (b.isSelected()) filtre.add(t); else filtre.remove(t); rafraichir(); });
-            barreTags.getChildren().add(b);
-        }
-    }
 
     private static Properties lireTags() {
         Properties p = new Properties();
@@ -339,42 +481,71 @@ public class OngletGalerie {
         rafraichir();
     }
 
-    private VBox vignette(File f, List<String> sesTags) {
-        // chargee en 3x : nette sur un ecran Retina (avant : floue)
-        ImageView iv = new ImageView(new Image(f.toURI().toString(), VIGNETTE * 3, VIGNETTE * 3, true, true, true));
-        iv.setFitWidth(VIGNETTE);
-        iv.setFitHeight(VIGNETTE);
+    private static final String IMAGE = "galerie.image", VUE = "galerie.vue", CADRE = "galerie.cadre";
+    /** Pastille de tag : petite, arrondie. */
+    private static final String PASTILLE = "-fx-font-size: 11px; -fx-background-radius: 9; -fx-background-insets: 0; "
+            + "-fx-pref-height: -1; -fx-min-height: 0; -fx-padding: 1 7 1 7;";
+    private static final String CARTE = "-fx-padding: 6; -fx-effect: dropshadow(gaussian, rgba(60,55,45,0.16), 6, 0, 0, 1);";
+    private static final String CARTE_SURVOL = "-fx-padding: 6; -fx-effect: dropshadow(gaussian, rgba(60,55,45,0.30), 9, 0, 0, 2);";
+    private static final String FOND_VIGNETTE = "-fx-background-color: #F1EFE7; -fx-background-radius: 3;";
+    private static final String FOND_DEPOT = "-fx-background-color: #3E86AC; -fx-background-radius: 3; -fx-opacity: 0.85;";
+
+    /** Taille de la vignette selon la largeur de la carte (cadre 4:3, photo entiere dedans). */
+    private static void dimensionner(VBox carte, double largeur) {
+        double l = Math.max(60, largeur - 12);        // moins la marge interieure de la carte
+        double h = Math.round(l * 0.75);
+        carte.setPrefWidth(largeur);
+        carte.setMinWidth(largeur);
+        carte.setMaxWidth(largeur);
+        ImageView iv = (ImageView) carte.getProperties().get(VUE);
+        StackPane cadre = (StackPane) carte.getProperties().get(CADRE);
+        iv.setFitWidth(l - 6);
+        iv.setFitHeight(h - 6);
+        cadre.setMinSize(l, h);
+        cadre.setPrefSize(l, h);
+        cadre.setMaxSize(l, h);
+    }
+
+    private VBox vignette(File f, List<String> sesTags, Image deja) {
+        // chargee assez grande pour rester nette sur un ecran Retina
+        Image img = deja != null ? deja : new Image(f.toURI().toString(), 600, 600, true, true, true);
+        ImageView iv = new ImageView(img);
         iv.setPreserveRatio(true);
+        iv.setSmooth(true);
         StackPane cadre = new StackPane(iv);
-        cadre.setPrefSize(VIGNETTE + 8, VIGNETTE + 8);
-        cadre.setStyle("-fx-background-color: rgba(0,0,0,0.25); -fx-background-radius: 4;");
-        Label nom = new Label(f.getName().replaceFirst("\\.[^.]+$", ""));
-        nom.setMaxWidth(VIGNETTE + 8);
-        nom.setStyle("-fx-font-size: 11px;");
-        // nom long : sur deux lignes au plus, et en entier dans la bulle
-        nom.setWrapText(true);
-        nom.setMaxHeight(30);
-        Tooltip bulleNom = new Tooltip(nom.getText());
-        bulleNom.setShowDelay(javafx.util.Duration.millis(150));
-        nom.setTooltip(bulleNom);
-        // Renommer / supprimer, directement sur la carte
-        Button btRenommer = petitBouton(Icones.CRAYON, "Renommer la photo");
-        btRenommer.setOnAction(e -> renommer(f));
-        Button btSuppr = petitBouton(Icones.CORBEILLE, "Supprimer de la galerie");
+        cadre.setStyle(FOND_VIGNETTE);
+        // supprimer : en haut a droite de la photo, au survol (ou quand la carte a le focus)
+        Button btSuppr = Ui.boutonIcone(Icones.CORBEILLE, "Supprimer de la galerie");
+        btSuppr.setFocusTraversable(false);
         btSuppr.setOnAction(e -> supprimer(f));
-        Region vide = new Region();
-        HBox.setHgrow(vide, Priority.ALWAYS);
-        HBox ligneNom = new HBox(2, nom, vide, btRenommer, btSuppr);
-        ligneNom.setAlignment(Pos.CENTER_LEFT);
-        ligneNom.setMaxWidth(VIGNETTE + 8);
-        HBox.setHgrow(nom, Priority.ALWAYS);
-        nom.setMinWidth(0);
-        VBox b = new VBox(4, cadre, ligneNom, pastilles(f, sesTags));
+        StackPane.setAlignment(btSuppr, Pos.TOP_RIGHT);
+        StackPane.setMargin(btSuppr, new Insets(4));
+        cadre.getChildren().add(btSuppr);
+
+        VBox b = new VBox(6, cadre, pastilles(f, sesTags));
+        b.getStyleClass().add("boite");
+        b.setStyle(CARTE);
         b.setAlignment(Pos.TOP_CENTER);
         b.setCursor(Cursor.HAND);
+        b.setFocusTraversable(true);
+        b.setAccessibleText("Photo" + (sesTags.isEmpty() ? "" : " : " + String.join(", ", sesTags)));
+        b.getProperties().put(IMAGE, img);
+        b.getProperties().put(VUE, iv);
+        b.getProperties().put(CADRE, cadre);
+        btSuppr.visibleProperty().bind(b.hoverProperty().or(b.focusedProperty()));
+        b.hoverProperty().addListener((o, x, y) -> b.setStyle(y ? CARTE_SURVOL : CARTE));
+        b.focusedProperty().addListener((o, x, y) -> b.setStyle(y || b.isHover() ? CARTE_SURVOL : CARTE));
         b.setOnMouseClicked(e -> {
             if (e.getButton() == javafx.scene.input.MouseButton.PRIMARY && e.isStillSincePress()
                     && !surUnBouton(e.getPickResult().getIntersectedNode(), b)) Visionneuse.ouvrir(css, f);
+        });
+        // clavier : Entree ouvre, Suppr supprime (le menu du clic droit reste au clavier aussi)
+        b.setOnKeyPressed(e -> {
+            switch (e.getCode()) {
+                case ENTER: case SPACE: Visionneuse.ouvrir(css, f); e.consume(); break;
+                case DELETE: case BACK_SPACE: supprimer(f); e.consume(); break;
+                default:
+            }
         });
         // reorganiser : glisser une photo sur une autre
         b.setOnDragDetected(e -> {
@@ -390,8 +561,11 @@ public class OngletGalerie {
             if (t != null && t.startsWith("galerie:") && !t.equals("galerie:" + f.getName())) e.acceptTransferModes(TransferMode.MOVE);
             e.consume();
         });
-        b.setOnDragEntered(e -> { if (e.getDragboard().hasString()) cadre.setStyle("-fx-background-color: rgba(255,225,74,0.45); -fx-background-radius: 4;"); });
-        b.setOnDragExited(e -> cadre.setStyle("-fx-background-color: rgba(0,0,0,0.25); -fx-background-radius: 4;"));
+        b.setOnDragEntered(e -> {
+            String t = e.getDragboard().getString();
+            if (t != null && t.startsWith("galerie:") && !t.equals("galerie:" + f.getName())) cadre.setStyle(FOND_DEPOT);
+        });
+        b.setOnDragExited(e -> cadre.setStyle(FOND_VIGNETTE));
         b.setOnDragDropped(e -> {
             String t = e.getDragboard().getString();
             boolean ok = t != null && t.startsWith("galerie:");
@@ -405,62 +579,53 @@ public class OngletGalerie {
 
         MenuItem ouvrir = new MenuItem("Ouvrir");
         ouvrir.setOnAction(e -> Visionneuse.ouvrir(css, f));
-        MenuItem tagsItem = new MenuItem("Tags…");
+        MenuItem tagsItem = new MenuItem("Modifier les tags…");
         tagsItem.setOnAction(e -> editerTags(f));
-        MenuItem renommer = new MenuItem("Renommer…");
-        renommer.setOnAction(e -> renommer(f));
         MenuItem suppr = new MenuItem("Supprimer de la galerie");
         suppr.setOnAction(e -> supprimer(f));
-        ContextMenu cm = new ContextMenu(ouvrir, tagsItem, renommer, suppr);
-        b.setOnContextMenuRequested(e -> cm.show(b, e.getScreenX(), e.getScreenY()));
+        ContextMenu cm = new ContextMenu(ouvrir, tagsItem, new SeparatorMenuItem(), suppr);
+        b.setOnContextMenuRequested(e -> {
+            if (e.isKeyboardTrigger()) cm.show(b, javafx.geometry.Side.BOTTOM, 0, 0);
+            else cm.show(b, e.getScreenX(), e.getScreenY());
+            e.consume();
+        });
         return b;
     }
 
-    /** Le clic est-il tombe sur un bouton de la carte (renommer, supprimer, tags) ? */
+    /** Le clic est-il tombe sur un bouton de la carte (supprimer, tags) ? */
     private static boolean surUnBouton(javafx.scene.Node n, javafx.scene.Node carte) {
         for (; n != null && n != carte; n = n.getParent()) if (n instanceof ButtonBase) return true;
         return false;
     }
 
-    /** Petit bouton icone de la carte, avec bulle. */
-    private static Button petitBouton(String icone, String aide) {
-        javafx.scene.shape.SVGPath ic = Icones.trace(icone, "icone");
-        ic.setStyle("-fx-stroke: #5A564C;");
-        ic.setScaleX(0.7); ic.setScaleY(0.7);
-        Button bt = new Button();
-        bt.setGraphic(ic);
-        bt.setFocusTraversable(false);
-        bt.setStyle("-fx-background-color: transparent; -fx-padding: 0 1 0 1; -fx-cursor: hand;");
-        Tooltip tt = new Tooltip(aide);
-        tt.setShowDelay(javafx.util.Duration.millis(150));
-        bt.setTooltip(tt);
-        return bt;
-    }
-
-    /** Les tags de la photo en pastilles (× pour retirer), et « + » pour en ajouter. */
+    /** Les tags de la photo en pastilles (× pour retirer), et « + Tag » pour en ajouter. */
     private FlowPane pastilles(File f, List<String> sesTags) {
-        FlowPane fp = new FlowPane(3, 3);
-        fp.setMaxWidth(VIGNETTE + 8);
-        fp.setPrefWrapLength(VIGNETTE + 8);
-        String style = "-fx-font-size: 10px; -fx-background-radius: 8; -fx-padding: 0 4 0 6;";
+        FlowPane fp = new FlowPane(4, 4);
+        fp.setMinWidth(0);
+        fp.setPrefWrapLength(100);
         for (String t : sesTags) {
             Label l = new Label(t);
-            l.setStyle("-fx-font-size: 10px; -fx-text-fill: #3E86AC;");
+            l.setStyle("-fx-font-size: 11px; -fx-text-fill: #2F6F92;");
             Button x = new Button("×");
             x.setFocusTraversable(false);
-            x.setStyle("-fx-background-color: transparent; -fx-padding: 0 0 0 2; -fx-font-size: 10px; -fx-text-fill: #7C776C; -fx-cursor: hand;");
-            x.setTooltip(new Tooltip("Retirer le tag « " + t + " »"));
+            x.setStyle("-fx-background-color: transparent; -fx-pref-height: -1; -fx-min-height: 0; -fx-padding: 0 0 0 4; "
+                    + "-fx-font-size: 11px; -fx-text-fill: #7C776C; -fx-cursor: hand;");
+            x.setTooltip(Ui.bulle("Retirer le tag « " + t + " »"));
             x.setOnAction(e -> retirerTag(f, t));
             HBox chip = new HBox(0, l, x);
             chip.setAlignment(Pos.CENTER_LEFT);
-            chip.setStyle(style + "-fx-background-color: #E4EEF3;");
+            chip.setStyle(PASTILLE + "-fx-padding: 1 4 1 7; -fx-background-color: #E4EEF3;");
             fp.getChildren().add(chip);
         }
         Button plus = new Button("+ Tag");
         plus.setFocusTraversable(false);
-        plus.setStyle(style + "-fx-background-color: #ECEAE0; -fx-text-fill: #5A564C; -fx-cursor: hand;");
+        plus.setStyle(PASTILLE + "-fx-background-color: transparent; -fx-border-color: #B9B3A5; -fx-border-width: 1; -fx-border-radius: 9; "
+                + "-fx-border-style: segments(3, 2); -fx-text-fill: #5A564C; -fx-cursor: hand;");
+        plus.setTooltip(Ui.bulle("Ajouter un tag à cette photo"));
         plus.setOnAction(e -> menuAjoutTag(f, sesTags).show(plus, javafx.geometry.Side.BOTTOM, 0, 0));
         fp.getChildren().add(plus);
+        // la largeur suit la carte : les pastilles passent a la ligne
+        fp.widthProperty().addListener((o, a, w) -> fp.setPrefWrapLength(Math.max(40, w.doubleValue())));
         return fp;
     }
 
@@ -516,42 +681,16 @@ public class OngletGalerie {
 
     /** Supprime la copie de la galerie (l'image d'origine n'est pas touchee), apres confirmation. */
     private void supprimer(File f) {
-        String nomPhoto = f.getName().replaceFirst("\\.[^.]+$", "");
-        Alert a = new Alert(Alert.AlertType.CONFIRMATION, "Supprimer « " + nomPhoto + " » de la galerie ? "
+        Alert a = new Alert(Alert.AlertType.CONFIRMATION, "Supprimer cette photo de la galerie ? "
                 + "L'image d'origine n'est pas touchée.", ButtonType.OK, ButtonType.CANCEL);
         a.setHeaderText(null);
         if (grille.getScene() != null) a.initOwner(grille.getScene().getWindow());
         if (a.showAndWait().orElse(ButtonType.CANCEL) != ButtonType.OK) return;
-        if (!f.delete()) { erreur("Impossible de supprimer « " + nomPhoto + " »."); return; }
+        if (!f.delete()) { erreur("Impossible de supprimer la photo."); return; }
         Properties p = lireTags();
         if (p.remove(f.getName()) != null) ecrireTags(p);
-        succes("Photo « " + nomPhoto + " » supprimée de la galerie.");
+        succes("Photo supprimée de la galerie.");
         rafraichir();
-    }
-
-    private void renommer(File f) {
-        String ext = f.getName().contains(".") ? f.getName().substring(f.getName().lastIndexOf('.')) : "";
-        TextInputDialog d = new TextInputDialog(f.getName().replaceFirst("\\.[^.]+$", ""));
-        d.setTitle("Renommer");
-        d.setHeaderText(null);
-        d.setContentText("Nouveau nom :");
-        d.showAndWait().ifPresent(n -> {
-            n = n.replaceAll("[\\\\/:*?\"<>|\\p{Cntrl}]", "").trim();
-            if (n.isEmpty()) return;
-            File dest = new File(f.getParentFile(), Ui.majuscule(n) + ext);
-            if (dest.exists()) { erreur("Renommage impossible : une photo porte déjà ce nom."); return; }
-            if (!f.renameTo(dest)) erreur("Impossible de renommer.");
-            else {
-                // les tags et la place dans l'ordre suivent la photo
-                Properties p = lireTags();
-                String t = (String) p.remove(f.getName());
-                if (t != null) { p.setProperty(dest.getName(), t); ecrireTags(p); }
-                List<String> o = lireOrdre();
-                int i = o.indexOf(f.getName());
-                if (i >= 0) { o.set(i, dest.getName()); ecrireOrdreNoms(o); }
-            }
-            rafraichir();
-        });
     }
 
     // ============================================================ visionneuse

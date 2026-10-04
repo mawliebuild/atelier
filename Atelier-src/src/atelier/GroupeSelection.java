@@ -137,10 +137,19 @@ final class GroupeSelection {
         if (!Salle.installeeDepuis(3000)) return;
         extension.GPresets gp = Salle.gp();
         if (gp == null) return;
+        // Un rappel (liste inchangee) ne redit pas « choisis cet animal » (jetons p…) : sinon
+        // le jeu reprendrait la plante de l'Atelier juste apres un clic sur un autre animal.
+        String envoi = liste;
+        if (!change && liste.contains("p")) {
+            StringBuilder sb = new StringBuilder();
+            for (String j : liste.split(","))
+                if (!j.isEmpty() && j.charAt(0) != 'p') { if (sb.length() > 0) sb.append(','); sb.append(j); }
+            envoi = sb.toString();
+        }
         // Chuchotement « atelier:surligner=... » : le client modifie ne l'affiche
         // pas, il eteint toutes les lueurs puis allume celles de la liste.
         gp.sendToClient(new gearth.protocol.HPacket("Whisper", gearth.protocol.HMessage.Direction.TOCLIENT,
-                -1, "atelier:surligner=" + liste, 0, 0, 0, -1));
+                -1, "atelier:surligner=" + envoi, 0, 0, 0, -1));
         lueurEnvoyee = liste; lueurSalle = salle; lueurA = t;
         if (change)
             Journal.debug("Mise en valeur envoyée au jeu : "

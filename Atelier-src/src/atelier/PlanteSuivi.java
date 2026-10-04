@@ -244,6 +244,11 @@ public final class PlanteSuivi {
         ecoute(gp, "PetRespectFailed", p -> { dernierRefusSoin = System.currentTimeMillis(); dernierSoinEnvoye = 0; prevenir(); });
         try {
             gp.intercept(HMessage.Direction.TOSERVER, "RespectPet", m -> dernierSoinEnvoye = System.currentTimeMillis());
+            // TON clic sur un animal dans le jeu : sa fiche doit s'ouvrir, meme si l'Atelier
+            // avait demande la meme en silence juste avant (on ne bloque plus cette reponse).
+            gp.intercept(HMessage.Direction.TOSERVER, "GetPetInfo", m -> {
+                try { fichesSilencieuses.remove(m.getPacket().readInteger(6)); } catch (Throwable ignored) { }
+            });
             // Fiche demandee par l'Atelier : lue ici, mais pas montree dans le jeu.
             gp.intercept(HMessage.Direction.TOCLIENT, "PetInfo", m -> {
                 try {

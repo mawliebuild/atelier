@@ -13,6 +13,8 @@ for os in Mac Windows; do
   mkdir -p "$R/Atelier/java" "$R/Atelier/python" "$R/Atelier-swf/donnees"
   cp "$A/Atelier.jar" "$R/Atelier/"
   cp -R "$A/Dependencies" "$R/Atelier/"
+  # listes des messages du jeu deja connues (plus besoin de les telecharger)
+  [ -d "$A/messages" ] && cp -R "$A/messages" "$R/Atelier/"
   # Les modifs du jeu se construisent sur chaque ordinateur, a partir de SON client Habbo :
   # aucun fichier de Habbo dans le paquet, et chaque nouvelle version est prise en charge.
   cp "$S/construire.py" "$S/modifier-jeu.py" "$R/Atelier-swf/"
