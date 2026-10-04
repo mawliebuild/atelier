@@ -209,11 +209,14 @@ public class OngletParametres {
         String origine = ClientModifie.empreinte(ClientModifie.swfOrigine());
         String niveau, raison, options = null;
         if (installe == null) {
-            niveau = "absent"; raison = "Client du jeu introuvable (version " + ClientModifie.VERSION_PREVUE + ").";
+            niveau = "absent"; raison = "Client du jeu introuvable : ouvre Habbo une fois par le Launcher.";
         } else if (origine == null) {
             niveau = "absent"; raison = "Client d'origine introuvable, comparaison impossible.";
         } else if (installe.equals(origine)) {
             niveau = "attente"; raison = "D'origine (inventaire normal).";
+        } else if (!ClientModifie.clientPrevu() && !installe.equals(PREFS.get("inventaire.installe.sha", ""))) {
+            niveau = "absent"; raison = "Ton client Habbo n'est pas la version prévue : les modifs du jeu ne s'y "
+                    + "appliquent pas (l'Atelier marche quand même).";
         } else {
             niveau = "ok"; raison = "Modifié pour l'Atelier.";
             if (installe.equals(PREFS.get("inventaire.installe.sha", ""))) {

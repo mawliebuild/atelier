@@ -36,12 +36,24 @@ if not defined JAVA (
 )
 echo OK  Java pret
 
-rem 4. Habbo et les modifs du jeu
-set "SWFJEU="
-for /r "%HABBO%" %%F in (HabboAir.swf) do if exist "%%F" set "SWFJEU=%%F"
-if not defined SWFJEU (
-  echo !   Habbo ^(version 16^) introuvable : ouvre le Habbo Launcher, lance Habbo une fois, ferme-le, puis relance ce fichier.
-  echo     L'Atelier s'ouvre quand meme, sans les modifs du jeu.
+rem 3. Habbo et les modifs du jeu : seulement sur le client prevu (meme fichier que l'original fourni)
+set "ORIG=%DOCS%\Atelier-swf\Habbo.app.origine\Contents\Resources\HabboAir.swf"
+set "MOD=%DOCS%\Atelier-swf\travail\HabboAir-atelier.swf"
+set "TROUVE="
+set "DEJA="
+for /r "%APPDATA%\Habbo Launcher\downloads\air" %%F in (HabboAir.swf) do (
+  if exist "%%F" (
+    fc /b "%%F" "%MOD%" >nul 2>&1 && set "DEJA=%%F"
+    fc /b "%%F" "%ORIG%" >nul 2>&1 && set "TROUVE=%%F"
+  )
+)
+if defined DEJA (
+  echo OK  Modifs du jeu deja installees
+  goto lancer
+)
+if not defined TROUVE (
+  echo !   Ton client Habbo n'est pas la version prevue pour les modifs du jeu ^(grille, categories...^).
+  echo     Elles ne sont pas installees : ton jeu reste intact. L'Atelier marche quand meme.
   goto lancer
 )
 tasklist /FI "IMAGENAME eq Habbo.exe" /NH | find /I "Habbo.exe" >nul
@@ -49,8 +61,8 @@ if %errorlevel% equ 0 (
   echo !   Habbo est ouvert : ferme-le puis relance ce fichier pour avoir les modifs du jeu.
   goto lancer
 )
-if not exist "%DOCS%\Atelier-swf\HabboAir-origine-windows.swf" copy /Y "%SWFJEU%" "%DOCS%\Atelier-swf\HabboAir-origine-windows.swf" >nul
-copy /Y "%DOCS%\Atelier-swf\travail\HabboAir-atelier.swf" "%SWFJEU%" >nul && echo OK  Modifs du jeu installees || echo !   Les modifs du jeu n'ont pas pu s'installer.
+if not exist "%DOCS%\Atelier-swf\HabboAir-origine-windows.swf" copy /Y "%TROUVE%" "%DOCS%\Atelier-swf\HabboAir-origine-windows.swf" >nul
+copy /Y "%MOD%" "%TROUVE%" >nul && echo OK  Modifs du jeu installees || echo !   Les modifs du jeu n'ont pas pu s'installer.
 
 :lancer
 echo.

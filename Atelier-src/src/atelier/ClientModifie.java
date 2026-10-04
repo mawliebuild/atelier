@@ -72,7 +72,37 @@ public final class ClientModifie {
 
     public static File appJeu() {
         File v = new File(dossierLauncher(), "downloads/air/" + VERSION_PREVUE);
-        return WINDOWS ? v : new File(v, "Habbo.app");
+        if (!WINDOWS) return new File(v, "Habbo.app");
+        // Windows : les numeros de version ne suivent pas ceux du Mac (13, 15...). On prend
+        // le dossier dont le client est celui prevu (d'origine ou deja modifie), sinon le plus recent.
+        File[] l = new File(dossierLauncher(), "downloads/air").listFiles(File::isDirectory);
+        if (l == null || l.length == 0) return v;
+        String origine = empreinte(swfOrigine()), pret = empreinte(swfPret());
+        File recent = null;
+        for (File d : l) {
+            File swf = new File(d, "HabboAir.swf");
+            if (!swf.isFile()) swf = chercher(d, "HabboAir.swf", 4);
+            if (swf == null) continue;
+            String e = empreinte(swf);
+            if (e != null && (e.equals(origine) || e.equals(pret))) return d;
+            if (recent == null || numero(d) > numero(recent)) recent = d;
+        }
+        return recent != null ? recent : v;
+    }
+
+    private static int numero(File d) {
+        try { return Integer.parseInt(d.getName().replaceAll("\\D", "")); } catch (Exception e) { return -1; }
+    }
+
+    /** Le client modifie deja construit (livre dans le paquet) : toutes les modifs. */
+    public static File swfPret() { return new File(dossierSwf(), "travail/HabboAir-atelier.swf"); }
+
+    /** Le client installe est-il celui pour lequel les modifs sont faites (d'origine ou deja modifie par nous) ? */
+    public static boolean clientPrevu() {
+        String e = empreinte(swfInstalle());
+        if (e == null) return false;
+        return e.equals(empreinte(swfOrigine())) || e.equals(empreinte(swfPret()))
+                || e.equals(empreinte(swfConstruit()));
     }
 
     public static File swfInstalle() {
@@ -231,9 +261,8 @@ public final class ClientModifie {
         for (String s : WINDOWS ? new String[]{"construire.py"} : new String[]{"construire.py", "installer-mod.sh", "restaurer.sh"})
             if (!new File(d, s).isFile()) return "Script introuvable : " + new File(d, s) + ".";
         if (!swfOrigine().isFile()) return "Client d'origine introuvable : " + swfOrigine() + ".";
-        if (python() == null) return WINDOWS
-                ? "Python 3 introuvable. Installe-le depuis python.org (coche « Add python.exe to PATH »)."
-                : "Python 3 introuvable (/usr/bin/python3). Installe les outils "
+        // Windows : Python ne sert qu'a reconstruire avec des modifs decochees (voir construire)
+        if (!WINDOWS && python() == null) return "Python 3 introuvable (/usr/bin/python3). Installe les outils "
                 + "de ligne de commande Xcode : xcode-select --install.";
         if (WINDOWS && !swfInstalle().isFile()) return "Client Habbo introuvable : " + swfInstalle()
                 + ". Lance Habbo une fois par le Launcher.";
@@ -265,6 +294,7 @@ public final class ClientModifie {
      * annoncee). Un avertissement si ce n'est pas la 16, sinon null.
      */
     public static String avertissementVersion() {
+        if (WINDOWS) return null;           // Windows : autres numeros ; clientPrevu() compare le fichier lui-meme
         File f = new File(dossierLauncher(), "versions.json");
         if (!f.isFile()) return null;
         try {
@@ -332,6 +362,20 @@ public final class ClientModifie {
     }
 
     public static Resultat construire(List<String> sans, Consumer<String> ligne) {
+        // Toutes les modifs : le client deja construit suffit, pas besoin de Python.
+        if (sans.isEmpty() && swfPret().isFile()) {
+            try {
+                swfConstruit().getParentFile().mkdirs();
+                Files.copy(swfPret().toPath(), swfConstruit().toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                return dire(0, "Client modifié prêt (toutes les modifs).", ligne);
+            } catch (Exception e) {
+                return dire(1, "Copie du client modifié impossible : " + e, ligne);
+            }
+        }
+        if (python() == null) return dire(1, WINDOWS
+                ? "Python 3 introuvable : il faut l'installer (python.org, coche « Add python.exe to PATH ») "
+                  + "pour décocher des modifs. Avec toutes les modifs cochées, pas besoin de Python."
+                : "Python 3 introuvable : xcode-select --install.", ligne);
         List<String> c = new ArrayList<>();
         c.add(python());
         c.add(new File(dossierSwf(), "construire.py").getPath());
@@ -364,6 +408,8 @@ public final class ClientModifie {
             File dest = swfInstalle(), construit = swfConstruit();
             if (!construit.isFile()) return dire(1, "SWF construit introuvable : " + construit, ligne);
             if (!dest.isFile()) return dire(1, "Client Habbo introuvable : " + dest, ligne);
+            if (!clientPrevu()) return dire(1, "Ton client Habbo (" + appJeu().getName() + ") n'est pas celui pour "
+                    + "lequel les modifs sont faites : rien n'est installé (ton jeu reste intact).", ligne);
             File sauve = sauvegardeWindows();
             if (!sauve.isFile()) Files.copy(dest.toPath(), sauve.toPath());
             Files.copy(construit.toPath(), dest.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
