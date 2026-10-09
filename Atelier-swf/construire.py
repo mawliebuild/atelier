@@ -439,12 +439,19 @@ def mise_en_page():
         rep('<scrollable_itemgrid_vertical', debut_grille + '                    <scrollable_itemgrid_vertical')
     s = s[:debut] + seg + s[fin:]
     if CATEGORIES:
-        # la ligne « Catégorie : … » (categorie_inventaire) allonge la liste sous l'aperçu, qui
-        # grandit vers le haut : l'aperçu perd 15 px pour que le nom ne passe pas dessus
-        for avant in ('<region x="5" y="0" width="170" height="130" params="18577" style="3" name="furni_preview_region"',
-                      '<widget x="5" y="0" width="170" height="130" params="2192" style="3" name="furni_preview_widget"'):
-            assert s.count(avant) == 1, avant
-            s = s.replace(avant, avant.replace('height="130"', 'height="115"'), 1)
+        # « Catégorie : … » en petit en haut de l'aperçu (categorie_inventaire) : la liste sous
+        # l'aperçu (nom, description, boutons) ne grandit pas, le nom ne passe pas sur l'image
+        ancre = '<widget x="5" y="0" width="170" height="130" params="2192" style="3" name="furni_preview_widget"'
+        assert s.count(ancre) == 1, ancre
+        k = s.index('</widget>', s.index(ancre)) + len('</widget>')
+        s = s[:k] + ('\n                        <text x="8" y="2" width="160" height="14" params="16" style="3" '
+                     'name="atelier_categorie_mobi" caption="">\n'
+                     '                          <variables>\n'
+                     '                            <var key="auto_size" value="left" type="String"/>\n'
+                     '                            <var key="text_color" value="0x777777" type="hex"/>\n'
+                     '                            <var key="mouse_wheel_enabled" value="false" type="Boolean"/>\n'
+                     '                          </variables>\n'
+                     '                        </text>') + s[k:]
     if TROC:
         s = mise_en_page_troc(s, debut)
     if BOTS:
@@ -533,8 +540,9 @@ def nom_ligne(L, OUT, I, J, et):
 def categorie_inventaire():
     """
     FurniView.updateActionView : sous le nom du mobi choisi dans l'inventaire, en tete de
-    sa description, « Catégorie : <nom> » (collection de sa ligne, comme le menu Categorie).
-    Insere juste apres l'ecriture de la description. Registres ajoutes : 22 a 26.
+    dans l'etiquette « atelier_categorie_mobi » en haut de l'aperçu (mise_en_page), « Catégorie : <nom> »
+    (collection de sa ligne, comme le menu Categorie). Videe en tete de methode, remplie juste
+    apres l'ecriture de la description. Registres ajoutes : 22 a 26.
     """
     FVN = 'PrivateNamespace("com.sulake.habbo.inventory.furni:FurniView")'
     IW = 'Namespace("com.sulake.core.window:IWindow")'
@@ -556,14 +564,22 @@ def categorie_inventaire():
          'getlocal 23', 'iftrue atl_ci_l', 'pushstring ""', 'setlocal 23', 'atl_ci_l:',
          'getlocal 23', LOWER, 'coerce_s', 'setlocal 23']
     p += nom_ligne(23, 24, 25, 26, 'atl_ci')
-    p += ['getlex QName(%s,"_-y1")' % FVN, 'pushstring "furni_description"',
+    p += ['getlex QName(%s,"_-y1")' % FVN, 'pushstring "atelier_categorie_mobi"',
           'callproperty QName(%s,"findChildByName"), 1' % IW, 'coerce_a', 'setlocal 22',
           'getlocal 22', 'iffalse atl_ci_sortie',
-          'getlocal 22', 'pushstring "Catégorie : "', 'getlocal 24', 'add', 'pushstring "\\n"', 'add',
-          'getlocal 22', 'getproperty QName(%s,"caption")' % IW, 'add',
+          'getlocal 22', 'pushstring "Catégorie : "', 'getlocal 24', 'add',
           'setproperty QName(%s,"caption")' % IW,
           'atl_ci_sortie:']
     u = u[:k + 4] + p + u[k + 4:]
+    # en tete : l'etiquette videe (rien de choisi, ou un mobi sans categorie connue)
+    vide = ['getlex QName(%s,"_-y1")' % FVN, 'iffalse atl_cv_fin',
+            'getlex QName(%s,"_-y1")' % FVN, 'pushstring "atelier_categorie_mobi"',
+            'callproperty QName(%s,"findChildByName"), 1' % IW, 'coerce_a', 'setlocal 22',
+            'getlocal 22', 'iffalse atl_cv_fin',
+            'getlocal 22', 'pushstring ""', 'setproperty QName(%s,"caption")' % IW,
+            'atl_cv_fin:']
+    d = u.index("pushscope")
+    u = u[:d + 1] + vide + u[d + 1:]
     chemin = os.path.join(TRAVAIL, "uav.pcode")
     open(chemin, "w", encoding="utf-8").write("\n".join(u))
     return chemin
@@ -1595,7 +1611,8 @@ def double_clic_dalles(PUB):
     (collage, pose) comptent tout de suite, sans attendre « atelier:dalles=1 ».
     Puis grille.atl_dc (lu par clic_sol) dit si les dalles laissent passer ce
     double-clic : oui seulement si, sous la souris, autre chose qu'une dalle,
-    le sol ou un mur repond (mobi pose dessus, avatar...) ; une dalle
+    le sol, un mur, le curseur de case ou la fleche de selection repond
+    (mobi pose dessus, avatar...) ; une dalle
     double-cliquee seule garde son double-clic. Hors double-clic : atl_dc faux.
     Registres : 19 grille, 34 indice, 35 objet / sprite, 36 liste, 37 texte.
     """
@@ -1640,6 +1657,13 @@ def double_clic_dalles(PUB):
             'atl_dd_nt:',
             'getlocal 36', 'pushstring ","', 'getlocal 35', 'getproperty QName(%s,"identifier")' % PUB, 'add',
             'pushstring ","', 'add', INDEXOF, 'pushbyte 0', 'ifge atl_dd_sn',
+            # le curseur de case et la fleche de selection ne comptent pas comme un mobi pose
+            CONT, 'getlocal 35', 'getproperty QName(%s,"identifier")' % PUB,
+            'callproperty QName(%s,"getRoomObject"), 1' % IC, 'coerce_a', 'setlocal 37',
+            'getlocal 37', 'iffalse atl_dd_sn',
+            'getlocal 37', 'callproperty QName(%s,"getType"), 0' % RO, 'coerce_s', 'setlocal 37',
+            'getlocal 37', 'pushstring "tile_cursor"', 'ifeq atl_dd_sn',
+            'getlocal 37', 'pushstring "selection_arrow"', 'ifeq atl_dd_sn',
             'getlocal 19', 'pushtrue', DC, 'jump atl_dd_fin',
             'atl_dd_sn:', 'declocal_i 34', 'jump atl_dd_s',
             'atl_dd_fin:']
