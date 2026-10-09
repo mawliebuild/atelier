@@ -62,11 +62,13 @@ if exist "%DOCS%\Atelier\python\python.exe" (
 :lancer
 echo.
 echo Ouvre Habbo par le Launcher : l'Atelier se connecte tout seul.
-echo Garde cette fenetre ouverte tant que tu utilises l'Atelier.
+echo Cette fenetre se ferme : l'Atelier s'ouvre dans sa propre fenetre.
 echo.
 cd /d "%DOCS%\Atelier"
-"%JAVA%" -jar Atelier.jar
-if %errorlevel% neq 0 call :probleme "L'Atelier s'est arrete (code %errorlevel%)." "Envoie les dernieres lignes ci-dessus a celle qui t'a donne l'Atelier."
+rem javaw : l'Atelier tourne sans fenetre de terminal (java.exe si javaw manque)
+set "JAVAW=%JBIN%javaw.exe"
+if not exist "%JAVAW%" set "JAVAW=%JAVA%"
+start "" "%JAVAW%" -jar Atelier.jar
 exit /b
 
 :probleme

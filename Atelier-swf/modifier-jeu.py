@@ -25,6 +25,15 @@ Codes de sortie : 0 tout va bien, 2 Habbo est ouvert, 1 autre souci (dit en clai
 """
 import glob, hashlib, json, os, shutil, subprocess, sys
 
+# Windows : aucun programme lance (tasklist, powershell, java...) n'ouvre de fenetre de terminal.
+# Sans ca, lance par pythonw (l'Atelier), chaque verification toutes les 3 s faisait clignoter un terminal.
+if os.name == "nt":
+    class _SansFenetre(subprocess.Popen):
+        def __init__(self, *a, **k):
+            k.setdefault("creationflags", 0x08000000)       # CREATE_NO_WINDOW
+            super().__init__(*a, **k)
+    subprocess.Popen = _SansFenetre
+
 ICI = os.path.dirname(os.path.abspath(__file__))
 WIN = os.name == "nt"
 ETAT = os.path.join(ICI, "etat-jeu.json")

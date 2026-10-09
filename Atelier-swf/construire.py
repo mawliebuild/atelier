@@ -15,6 +15,14 @@ Usage : python3 construire.py [sortie.swf] [--sans icones,categories,pagination,
 import json
 import os, re, subprocess, sys, xml.dom.minidom
 
+# Windows : java (FFDec) lance sans fenetre de terminal (construire.py tourne aussi sous pythonw)
+if os.name == "nt":
+    class _SansFenetre(subprocess.Popen):
+        def __init__(self, *a, **k):
+            k.setdefault("creationflags", 0x08000000)       # CREATE_NO_WINDOW
+            super().__init__(*a, **k)
+    subprocess.Popen = _SansFenetre
+
 ICI = os.path.dirname(os.path.abspath(__file__))
 ORIGINE = os.path.join(ICI, "Habbo.app.origine/Contents/Resources/HabboAir.swf")
 FFDEC = os.path.join(ICI, "ffdec/ffdec-cli.jar")
