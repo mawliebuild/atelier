@@ -430,6 +430,13 @@ def mise_en_page():
     if debut_grille:
         rep('<scrollable_itemgrid_vertical', debut_grille + '                    <scrollable_itemgrid_vertical')
     s = s[:debut] + seg + s[fin:]
+    if CATEGORIES:
+        # la ligne « Catégorie : … » (categorie_inventaire) allonge la liste sous l'aperçu, qui
+        # grandit vers le haut : l'aperçu perd 15 px pour que le nom ne passe pas dessus
+        for avant in ('<region x="5" y="0" width="170" height="130" params="18577" style="3" name="furni_preview_region"',
+                      '<widget x="5" y="0" width="170" height="130" params="2192" style="3" name="furni_preview_widget"'):
+            assert s.count(avant) == 1, avant
+            s = s.replace(avant, avant.replace('height="130"', 'height="115"'), 1)
     if TROC:
         s = mise_en_page_troc(s, debut)
     if BOTS:
