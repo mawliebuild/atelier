@@ -119,6 +119,51 @@ final class CalqueFenetre {
 
     void surFermeture(Runnable r) { surFermeture = r == null ? () -> { } : r; }
 
+    private RaccourcisGlobaux.Fleches fleches;
+
+    /**
+     * Touches flèches de la fenêtre (Déplacer, Dupliquer, Coller...) : ↑ → ↓ ←
+     * (Maj : 5 cases), Entrée, Échap. Quand la fenêtre a le focus : filtre JavaFX
+     * (rien n'est pris pendant une saisie de texte) ; quand Habbo est devant :
+     * raccourcis globaux (RaccourcisGlobaux), seulement tant qu'elle est ouverte.
+     */
+    void fleches(RaccourcisGlobaux.Fleches h) {
+        if (h == null || fleches != null) return;
+        fleches = h;
+        Scene sc = stage.getScene();
+        sc.addEventFilter(javafx.scene.input.KeyEvent.KEY_PRESSED, e -> {
+            Node f = sc.getFocusOwner();
+            if (f instanceof javafx.scene.control.TextInputControl) return;
+            if (f instanceof javafx.scene.control.ComboBoxBase && ((javafx.scene.control.ComboBoxBase<?>) f).isEditable()) return;
+            if (f instanceof javafx.scene.control.Spinner && ((javafx.scene.control.Spinner<?>) f).isEditable()) return;
+            if (e.isShortcutDown() || e.isControlDown() || e.isAltDown() || e.isMetaDown()) return;
+            int dir = direction(e.getCode());
+            if (dir >= 0) {
+                e.consume();
+                h.fleche(dir, e.isShiftDown());
+            } else if (e.getCode() == javafx.scene.input.KeyCode.ENTER && !e.isShiftDown()) {
+                e.consume();
+                h.entree();
+            }
+            // Échap : setOnKeyPressed ferme déjà la fenêtre (comme Annuler)
+        });
+        stage.addEventHandler(javafx.stage.WindowEvent.WINDOW_SHOWN, e -> RaccourcisGlobaux.fleches(h));
+        stage.addEventHandler(javafx.stage.WindowEvent.WINDOW_HIDDEN, e -> RaccourcisGlobaux.retirerFleches(h));
+        if (stage.isShowing()) RaccourcisGlobaux.fleches(h);
+    }
+
+    /** Logique pure : touche JavaFX -> 0 = haut, 1 = droite, 2 = bas, 3 = gauche (pavé numérique compris), -1 sinon. */
+    static int direction(javafx.scene.input.KeyCode k) {
+        if (k == null) return -1;
+        switch (k) {
+            case UP: case KP_UP: return 0;
+            case RIGHT: case KP_RIGHT: return 1;
+            case DOWN: case KP_DOWN: return 2;
+            case LEFT: case KP_LEFT: return 3;
+            default: return -1;
+        }
+    }
+
     boolean ouverte() { return stage.isShowing(); }
 
     void montrer() {

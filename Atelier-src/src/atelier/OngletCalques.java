@@ -218,6 +218,8 @@ public class OngletCalques {
     private void reappliquerSiChange() {
         boolean unDecoche = false;
         for (Ligne l : lignes) if (!l.visible.isSelected()) { unDecoche = true; break; }
+        // pendant une pose (collage, dupliquer...) : rien n'est masque, tout est reapplique a la fin
+        if (PoseTapis.enCours() || PoseCopie.occupee()) return;
         String sig = Salle.sols().size() + "/" + Salle.murs().size();
         if (sig.equals(salleVue)) return;
         boolean premier = salleVue == null;

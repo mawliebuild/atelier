@@ -448,6 +448,7 @@ public class OutilHauteur {
                     int type = (int) forme[1], lx = (int) forme[2], ly = (int) forme[3], rot = (int) forme[4];
                     String taille = (String) forme[5];
                     int[] c = meilleur;
+                    Salle.espacer();
                     Set<Integer> avant = new HashSet<>();
                     for (HFloorItem it : Salle.sols()) avant.add(it.getId());
                     // BC seulement : les dalles de ton inventaire ne sont pas touchees
@@ -579,7 +580,7 @@ public class OutilHauteur {
             return;
         }
         if (dire) progres("Réglage de la hauteur…", 0);
-        // Premier tour en rafale, sans pause : toutes les dalles montent ensemble.
+        // Premier tour en rafale, au rythme commun (Salle.espacer) : toutes les dalles montent ensemble.
         // Le serveur en laisse tomber une partie (constate : toutes sauf la
         // premiere) : on relit la hauteur de chaque dalle et on renvoie a celles
         // qui ne l'ont pas prise, en espacant de plus en plus, tant que ca avance.
@@ -592,8 +593,9 @@ public class OutilHauteur {
             if (reglage.get() != demande) break;      // une autre hauteur a ete demandee
             int pause = pauses[Math.min(tour, pauses.length - 1)];
             for (int id : aFaire) {
+                Salle.espacer();
                 gp.sendToServer(new HPacket("SetCustomStackingHeight", HMessage.Direction.TOSERVER, id, valeur));
-                if (pause > 0) Salle.sommeil(pause);
+                if (pause > Salle.ecart()) Salle.sommeil(pause);   // tours suivants : plus lent que le rythme commun
             }
             Salle.sommeil(800);
             List<Integer> manquees = new ArrayList<>();
@@ -657,23 +659,15 @@ public class OutilHauteur {
         });
         if (ids.isEmpty()) return 0;
         progres("Ramassage des dalles déjà là…", 0);
-        int n = 0;
-        for (int passe = 1; passe <= 2 && !arret; passe++) {
-            List<Integer> encore = new ArrayList<>();
-            for (int id : ids) if (Salle.sol(id) != null) encore.add(id);
-            if (encore.isEmpty()) break;
-            for (int id : encore) {
-                if (arret || Salle.salleId() != salle) return n;
-                Salle.espacer();
-                Salle.ramasser(id, false);
-                if (passe == 1) n++;
-                progres("Ramassage des dalles déjà là…", n / (double) ids.size());
-            }
-            PoseDirecte.suivre(() -> { int r = 0; for (int id : encore) if (Salle.sol(id) != null) r++; return r; },
-                    800, 3000);
-        }
+        // rythme des dalles (PoseTapis.ramasserDalles : 80 ms, 2 passes, 150 ms si le jeu refuse)
+        int[] n = {0};
+        PoseTapis.ramasserDalles(ids, () -> arret || Salle.salleId() != salle, (f, total, passe) -> {
+            n[0] = f;
+            progres("Ramassage des dalles déjà là…", f / (double) total);
+        });
+        if (arret || Salle.salleId() != salle) return n[0];
         Salle.sommeil(300);             // l'inventaire se met a jour : les dalles ramassees resservent
-        return n;
+        return n[0];
     }
 
     private static void ramasserTout() {
@@ -698,24 +692,15 @@ public class OutilHauteur {
         Set<Integer> types = Generateur.Dalle.typesDalles();
         for (int type : types) Historique.ignorerType(type, 30 * 60_000L);
         try {
-            // En rafale : un envoi toutes les 150 ms (rythme commun), sans attendre
-            // la disparition de chaque dalle ; une 2e passe reprend celles restees.
-            int n = 0;
-            for (int passe = 1; passe <= 2 && !arret; passe++) {
-                List<Integer> encore = new ArrayList<>();
-                for (int id : ids) if (Salle.sol(id) != null) encore.add(id);
-                if (encore.isEmpty()) break;
-                for (int id : encore) {
-                    if (arret || Salle.salleId() != salle) break;
-                    Salle.espacer();
-                    Salle.ramasser(id, false);
-                    if (passe == 1) n++;
-                    progres(passe > 1 ? "Ramassage des dalles (2e passe)…" : "Ramassage des dalles…", n / (double) ids.size());
-                }
-                if (Salle.salleId() != salle) break;
-                PoseDirecte.suivre(() -> { int r = 0; for (int id : encore) if (Salle.sol(id) != null) r++; return r; },
-                        800, 3000);
-            }
+            // En rafale, au rythme des dalles (PoseTapis.ramasserDalles : 80 ms entre
+            // deux, sans attendre la disparition de chaque dalle) ; une 2e passe
+            // reprend celles restees, puis une 3e a 150 ms si le jeu en a refuse.
+            int[] fait = {0};
+            PoseTapis.ramasserDalles(ids, () -> arret || Salle.salleId() != salle, (f, total, passe) -> {
+                fait[0] = f;
+                progres(passe > 1 ? "Ramassage des dalles (" + passe + "e passe)…" : "Ramassage des dalles…", f / (double) total);
+            });
+            int n = fait[0];
             if (Salle.salleId() != salle) {
                 echec("Ramassage interrompu : tu as changé de salle (" + n + " / " + ids.size() + ").");
                 return;
@@ -804,6 +789,7 @@ public class OutilHauteur {
                         int[] c = meilleurCoin(sol, sn[0], sn[1], prises, refusees, exclus);
                         // une grande dalle ne sert que si elle couvre plus qu'une 1×1 : sinon les petites
                         if (c == null || (sn[0] * sn[1] > 1 && c[2] < Math.max(2, sn[0] * sn[1] / 2))) break;
+                        Salle.espacer();
                         Set<Integer> avant = new HashSet<>();
                         for (HFloorItem it : Salle.sols()) avant.add(it.getId());
                         String d = Generateur.Dalle.envoyer(gp, type, t, c[0], c[1], sn[2], invPris, true, false);

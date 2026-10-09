@@ -36,6 +36,10 @@ import java.util.function.BooleanSupplier;
  *   - muraux : TOUS ceux de la salle (comme l'exporteur), altitude reprise de
  *     la variable « -123 » lue par WiredGetVariablesForObject (inspection,
  *     350 ms entre deux, 700 ms d'attente, 3 passes de reprise a 1200 ms) ;
+ *     cette altitude n'est qu'indicative (compatibilite de format) : le jeu
+ *     place un mural par sa seule position « :w=x,y l=dx,dy r|l », enregistree
+ *     telle que l'etat de la salle la tient (ItemAdd, ItemUpdate, et les
+ *     deplacements par wired, WiredMovements genre 2) ; « -190 » vaut dx ;
  *   - reglages des wired : lus par WiredLecteur (LecteurReglages), sans
  *     ouvrir de fenetre ; les wired « instantane » rendent leurs liaisons
  *     (texte « id,etat,rot,x,y[,alt];... » de la reponse du serveur, sinon
@@ -525,7 +529,7 @@ final class EnregistrementCopie {
         }
     }
 
-    /** fetchVariablesSerial : une variable apres l'autre (1500 ms d'attente, 80 ms entre deux), une reprise. */
+    /** fetchVariablesSerial : une variable apres l'autre (1500 ms d'attente, rythme commun Salle.espacer entre deux), une reprise. */
     private void lirePorteurs(List<String> ids, BooleanSupplier stop) {
         porteurs.clear();
         for (int passe = 0; passe < 2; passe++) {
@@ -543,7 +547,6 @@ final class EnregistrementCopie {
                 } finally {
                     porteursAttendus = null;
                 }
-                Salle.sommeil(80);
             }
         }
     }

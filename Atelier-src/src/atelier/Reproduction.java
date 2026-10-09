@@ -192,6 +192,7 @@ public final class Reproduction {
                 int[] v = valeurs(m.get(i), a, b);
                 Object[] args = new Object[v.length];
                 for (int k = 0; k < v.length; k++) args[k] = v[k];
+                Salle.espacer();
                 PlanteSuivi.envoi.accept(new HPacket("BreedPets", HMessage.Direction.TOSERVER, args));
                 if (i < m.size() - 1) {
                     for (int k = 0; k < 30; k++) {

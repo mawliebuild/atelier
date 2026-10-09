@@ -13,7 +13,6 @@ import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
-import javafx.stage.Window;
 
 import java.io.File;
 import java.util.*;
@@ -29,6 +28,10 @@ import java.util.concurrent.ConcurrentHashMap;
  *   - tous les wired de l'appart.
  * « Mes configs wired » : chaque copie avec sa photo (clic : agrandir), son
  * nom et son resume ; Coller ici, Renommer, Supprimer, Reprendre l'apercu.
+ *
+ * Aucune fenetre a part : l'aperçu du collage (Confirmer / Annuler), la
+ * progression (barre, Arreter) et les confirmations (renommer, supprimer) sont
+ * dans l'onglet, comme OutilHauteur ; les bilans partent en message dans le jeu.
  */
 public class OngletCollageWired {
 
@@ -37,6 +40,12 @@ public class OngletCollageWired {
     private TextField nomCopie;
     private CheckBox avecCibles;
     private Button choisirCases;
+    /** Suivi dans l'onglet : la copie (sous les boutons de copie) et le collage (sous « Coller ici »). */
+    private final WiredCollage.Panneau suiviCopie = new WiredCollage.Panneau(), suiviCollage = new WiredCollage.Panneau();
+    /** Renommer / supprimer, en ligne sous la liste (pas de fenetre de confirmation). */
+    private VBox ligneRenommer, ligneSupprimer;
+    private TextField nouveauNom;
+    private Label questionSupprimer;
 
     /** Cases choisies (x << 32 | y), dans la salle salleCases. */
     private final Set<Long> cases = ConcurrentHashMap.newKeySet();
@@ -172,7 +181,7 @@ public class OngletCollageWired {
         coller.setOnAction(e -> {
             String nom = liste.getSelectionModel().getSelectedItem();
             if (nom == null) { InfoJeu.consigne("Choisis d'abord une config dans la liste."); return; }
-            WiredCollage.collerDans(nom, null, fenetre());
+            WiredCollage.collerDans(nom, null, suiviCollage);
         });
         for (Button b : new Button[]{coller, renommer, supprimer, apercu})
             b.disableProperty().bind(liste.getSelectionModel().selectedItemProperty().isNull());
@@ -183,6 +192,7 @@ public class OngletCollageWired {
         sousListe.setAlignment(Pos.CENTER_LEFT);
         HBox.setHgrow(cptListe, Priority.ALWAYS);
         cptListe.setMaxWidth(Double.MAX_VALUE);
+        construireLignes();
 
         VBox v = new VBox(14,
                 Ui.bloc("Copier des piles de wired",
@@ -195,16 +205,18 @@ public class OngletCollageWired {
                 Ui.bloc("Autres copies",
                         autres,
                         Ui.aide("Les wired sélectionnés dans les calques, ou tous ceux de l'appart.")),
+                suiviCopie.noeud(),
                 Ui.bloc("Réglages de la copie",
                         nomCopie, avecCibles,
                         Ui.aide("Sans nom, la copie prend celui de la salle et la date. Une copie existante "
                                 + "n'est jamais écrasée. Une photo est prise à chaque copie.")),
                 Ui.bloc("Mes configs wired",
-                        liste, sousListe,
+                        liste, sousListe, ligneRenommer, ligneSupprimer,
                         Ui.aide("Clique un aperçu pour l'agrandir. Les icônes sous la liste renomment, "
                                 + "reprennent la photo ou suppriment la config choisie.")),
                 Ui.bloc("Coller",
                         coller,
+                        suiviCollage.noeud(),
                         Ui.aide("Aperçu d'abord, puis Confirmer, puis clique dans le jeu la case du coin "
                                 + "haut-gauche de la destination.")));
         v.setFillWidth(true);
@@ -230,16 +242,11 @@ public class OngletCollageWired {
         return t;
     }
 
-    private Window fenetre() {
-        Node n = liste;
-        return n == null || n.getScene() == null ? null : n.getScene().getWindow();
-    }
-
     // ============================================================ copier
 
     private void copier(List<Integer> ids) {
         String nom = nomCopie.getText() == null ? "" : nomCopie.getText().trim();
-        WiredCollage.copier(ids, fenetre(), nom.isEmpty() ? null : nom, avecCibles.isSelected(), fait ->
+        WiredCollage.copier(ids, suiviCopie, nom.isEmpty() ? null : nom, avecCibles.isSelected(), fait ->
                 Platform.runLater(() -> {
                     nomCopie.clear();
                     charger(fait);
@@ -415,29 +422,79 @@ public class OngletCollageWired {
         cptListe.setText(n == 0 ? "" : Ui.accorder(n + " config(s) wired"));
     }
 
+    /** Les lignes « renommer » et « supprimer », cachees jusqu'au clic sur leur icone. */
+    private void construireLignes() {
+        nouveauNom = new TextField();
+        nouveauNom.setMaxWidth(Double.MAX_VALUE);
+        HBox.setHgrow(nouveauNom, Priority.ALWAYS);
+        Button ok = new Button("Renommer");
+        ok.getStyleClass().add("primaire");
+        ok.setMinWidth(Region.USE_PREF_SIZE);
+        Button annulerNom = new Button("Annuler");
+        annulerNom.setMinWidth(Region.USE_PREF_SIZE);
+        nouveauNom.setOnAction(e -> validerNom());
+        ok.setOnAction(e -> validerNom());
+        annulerNom.setOnAction(e -> montrer(ligneRenommer, false));
+        HBox h = new HBox(6, nouveauNom, annulerNom, ok);
+        h.setAlignment(Pos.CENTER_LEFT);
+        ligneRenommer = new VBox(4, Ui.etiquette("Nouveau nom"), h);
+        montrer(ligneRenommer, false);
+
+        questionSupprimer = new Label();
+        questionSupprimer.setWrapText(true);
+        questionSupprimer.setMinHeight(Region.USE_PREF_SIZE);
+        Button oui = new Button("Supprimer");
+        oui.getStyleClass().add("primaire");
+        Button non = new Button("Annuler");
+        non.setOnAction(e -> montrer(ligneSupprimer, false));
+        oui.setOnAction(e -> validerSuppression());
+        HBox b = new HBox(6, non, oui);
+        b.setAlignment(Pos.CENTER_RIGHT);
+        ligneSupprimer = new VBox(4, questionSupprimer, b);
+        montrer(ligneSupprimer, false);
+        // une autre config choisie : les questions en cours ne valent plus
+        liste.getSelectionModel().selectedItemProperty().addListener((o, x, y) -> {
+            montrer(ligneRenommer, false);
+            montrer(ligneSupprimer, false);
+        });
+    }
+
+    private static void montrer(Node n, boolean v) { n.setVisible(v); n.setManaged(v); }
+
     private void renommer() {
         String nom = liste.getSelectionModel().getSelectedItem();
         if (nom == null) return;
-        TextInputDialog d = new TextInputDialog(nom);
-        d.setTitle("Renommer la config");
-        d.setHeaderText(null);
-        d.setContentText("Nouveau nom :");
-        d.showAndWait().ifPresent(n -> {
-            String err = WiredCollage.renommer(nom, n);
-            if (err != null) { Journal.erreur(err); return; }
-            String nouveau = WiredCollage.nettoyer(n);
-            if (!nouveau.equals(nom)) Journal.succes("« " + nom + " » renommée en « " + nouveau + " ».");
-            charger(nouveau);
-        });
+        montrer(ligneSupprimer, false);
+        nouveauNom.setText(nom);
+        montrer(ligneRenommer, true);
+        nouveauNom.requestFocus();
+        nouveauNom.selectAll();
+    }
+
+    private void validerNom() {
+        String nom = liste.getSelectionModel().getSelectedItem();
+        montrer(ligneRenommer, false);
+        if (nom == null) return;
+        String n = nouveauNom.getText();
+        String err = WiredCollage.renommer(nom, n);
+        if (err != null) { Journal.erreur(err); return; }
+        String nouveau = WiredCollage.nettoyer(n);
+        if (!nouveau.equals(nom)) Journal.succes("« " + nom + " » renommée en « " + nouveau + " ».");
+        charger(nouveau);
     }
 
     private void supprimer() {
         String nom = liste.getSelectionModel().getSelectedItem();
         if (nom == null) return;
-        Alert a = new Alert(Alert.AlertType.CONFIRMATION, "Supprimer la config « " + nom + " » ? C'est définitif.",
-                ButtonType.OK, ButtonType.CANCEL);
-        a.setHeaderText(null);
-        if (a.showAndWait().orElse(ButtonType.CANCEL) != ButtonType.OK) return;
+        montrer(ligneRenommer, false);
+        questionSupprimer.setText("Supprimer « " + nom + " » ? C'est définitif.");
+        montrer(ligneSupprimer, true);
+    }
+
+    private void validerSuppression() {
+        String nom = liste.getSelectionModel().getSelectedItem();
+        montrer(ligneSupprimer, false);
+        if (nom == null) return;
         if (!WiredCollage.supprimer(nom)) { Journal.erreur("Impossible de supprimer « " + nom + " »."); return; }
         Journal.succes("Config « " + nom + " » supprimée.");
         liste.getSelectionModel().clearSelection();

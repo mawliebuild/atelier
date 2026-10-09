@@ -269,7 +269,9 @@ public final class Generateur {
         if (racine == null) {
             dire.accept("Dans le jeu : clique la case où mettre le coin haut-gauche (x min, y min). "
                     + "Ton avatar ne bougera pas.");
-            racine = Dalle.attendreClic(120_000);
+            Empreinte.Boite b = new Empreinte.Boite();
+            for (Mobi m : mobis) b.sol(m.classe, m.x, m.y, m.rot);
+            racine = Dalle.attendreClic(120_000, b.largeur(), b.profondeur());
             if (racine == null) { dire.accept("Pas de clic dans le jeu en 2 minutes : pose annulée."); return false; }
         }
 
@@ -307,9 +309,16 @@ public final class Generateur {
      */
     static PoseCopie.Resultat poserCopie(CopieAppart cfg, Source source, HPoint racine, Consumer<String> dire,
                                          HPoint caseDalle, java.util.function.BooleanSupplier stop, Runnable suivi) {
+        return poserCopie(cfg, source, racine, dire, caseDalle, stop, suivi, null);
+    }
+
+    /** Comme poserCopie, avec la table des ids completee avant les reglages (PoseCopie.poser). */
+    static PoseCopie.Resultat poserCopie(CopieAppart cfg, Source source, HPoint racine, Consumer<String> dire,
+                                         HPoint caseDalle, java.util.function.BooleanSupplier stop, Runnable suivi,
+                                         Consumer<Map<Integer, Integer>> completer) {
         CopieAppart aPoser = sansManquants(Salle.gp(), cfg, source, dire);
         if (aPoser == null) return null;
-        PoseCopie.Resultat r = PoseCopie.poser(aPoser, racine, source, caseDalle, dire, stop, suivi);
+        PoseCopie.Resultat r = PoseCopie.poser(aPoser, racine, source, caseDalle, dire, stop, suivi, completer);
         if (!r.lancee) dire.accept(r.texte());
         return r;
     }
@@ -345,7 +354,7 @@ public final class Generateur {
                     if (type == null) { garde.put(f); continue; }      // inconnu : dit plus tard par l'appelant
                     boolean bc = false;
                     if (prendBc && cat != null) try {
-                        bc = mur ? cat.getAnyWallProduct(type) != null : cat.getFloorProduct(type) != null;
+                        bc = (mur ? OffresBc.mur(cat, fd, cl, null) : OffresBc.sol(cat, fd, cl)) != null;
                     } catch (Throwable ignored) { }
                     String k = (mur ? "m:" : "s:") + type;
                     if (!stock.containsKey(k)) {
@@ -444,8 +453,8 @@ public final class Generateur {
      *
      * Paquets (envoyer, pour OutilHauteur) :
      *  - PlaceObject(String "-idInventaire x y rot") : pose depuis l'inventaire ;
-     *  - BuildersClubPlaceRoomItem(int -1, int offre, String "", int x, int y, int rot) :
-     *    pose depuis le BC (offre : CatalogueBc.getFloorProduct, a defaut bcOfferId).
+     *  - BuildersClubPlaceRoomItem(int page, int offre, String extra, int x, int y, int rot, false) :
+     *    pose depuis le BC comme le client (OffresBc : page et offre du catalogue BC).
      *
      * La pose elle-meme (dalle posee, deplacee sous chaque mobi, ramassee) est
      * faite par PoseDalle ; ici on choisit seulement sa case quand la salle n'a
@@ -708,7 +717,7 @@ public final class Generateur {
                         + "libre (" + taille + " sans mobi autour).";
                 dire.accept(q);
                 InfoJeu.dire(q);
-                HPoint ici = attendreClic(60_000);
+                HPoint ici = attendreClic(60_000, e[0], e[1]);
                 if (ici == null) { raison = "pas de clic en 1 minute"; break; }
                 c = coinAutour(ici.getX(), ici.getY(), e[0], e[1], trace, libre);
                 if (c == null) {
@@ -758,19 +767,10 @@ public final class Generateur {
                 }
             } catch (Throwable ignored) { }
             if (!bcPermis) return null;
-            int offre = -1;
-            try {
-                CatalogueBc cat = gp.getCatalog();
-                CatalogueBc.Produit p = cat == null ? null : cat.getFloorProduct(type);
-                if (p != null) offre = p.getOfferId();
-            } catch (Throwable ignored) { }
-            if (offre <= 0) {
-                Furnidata.Mobi d = Salle.details(t.classe());
-                if (d != null) offre = d.bcOfferId;
-            }
-            if (offre <= 0) return null;
-            gp.sendToServer(new HPacket("BuildersClubPlaceRoomItem", HMessage.Direction.TOSERVER,
-                    -1, offre, "", x, y, rot));
+            OffresBc.Offre o = null;
+            try { o = OffresBc.sol(gp.getCatalog(), gp.getFurniDataTools(), t.classe()); } catch (Throwable ignored) { }
+            if (o == null) return null;
+            gp.sendToServer(PoseOutils.poseSolBc(o, x, y, rot));
             return BC;
         }
 
@@ -785,6 +785,12 @@ public final class Generateur {
          * Attend un clic au sol dans le jeu et le BLOQUE (l'avatar ne marche pas
          * sur le trace). null si rien avant le delai.
          */
+        static HPoint attendreClic(long delaiMs, int l, int p) {
+            Empreinte.montrer(l, p);
+            try { return attendreClic(delaiMs); }
+            finally { Empreinte.effacer(); }
+        }
+
         static HPoint attendreClic(long delaiMs) {
             brancher();
             java.util.concurrent.CompletableFuture<HPoint> f = new java.util.concurrent.CompletableFuture<>();

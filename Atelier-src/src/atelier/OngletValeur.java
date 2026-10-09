@@ -41,6 +41,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * Ce n'est qu'une estimation : le prix moyen des ventes recentes, pas ce
  * qu'un acheteur paiera demain. Les mobis non vendables (BC, non
  * echangeables) ne comptent pas.
+ *
+ * Second volet : « Recherche de mobis » (RechercheMobis), ou trouver des
+ * mobis precis dans les apparts Troc, au catalogue et a la place du marche.
+ * Troisieme volet : « Estimation mobi » (EstimationMobi), la fiche de prix
+ * d'un mobi.
  */
 public class OngletValeur {
 
@@ -215,9 +220,39 @@ public class OngletValeur {
         suivi.play();
         majProgression();
 
-        Tab t = new Tab("Valeur de mes mobis", sp);
+        // Trois volets : la valeur, la recherche de mobis (RechercheMobis) et
+        // l'estimation d'un mobi (EstimationMobi). Navigation en fait trois
+        // sections repliables du menu Mobis.
+        Tab tValeur = new Tab("Valeur de mes mobis", sp);
+        tValeur.setClosable(false);
+        tRecherche = new RechercheMobis().construire();
+        tEstimation = new EstimationMobi().construire();
+        Tab t = new Tab("Patrimoine", Ui.sousMenu(tValeur, tRecherche, tEstimation));
         t.setClosable(false);
+        this.tValeurSeule = tValeur;
         return t;
+    }
+
+    private Tab tValeurSeule, tRecherche, tEstimation;
+
+    /**
+     * Les trois volets separes (valeur, recherche, estimation), pour que la
+     * Navigation leur donne des prerequis differents : la recherche et
+     * l'estimation n'ont pas besoin de l'inventaire.
+     * A appeler a la place de construire().
+     */
+    public Tab[] construireVolets() {
+        construire();
+        // detache les contenus du sous-menu : chacun devient une source de la Navigation
+        javafx.scene.Node valeur = tValeurSeule.getContent(), recherche = tRecherche.getContent(),
+                estimation = tEstimation.getContent();
+        tValeurSeule.setContent(null);
+        tRecherche.setContent(null);
+        tEstimation.setContent(null);
+        Tab a = new Tab("Valeur de mes mobis", valeur), b = new Tab("Recherche de mobis", recherche),
+                c = new Tab("Estimation mobi", estimation);
+        a.setClosable(false); b.setClosable(false); c.setClosable(false);
+        return new Tab[]{a, b, c};
     }
 
     private void construireTable() {
@@ -290,8 +325,6 @@ public class OngletValeur {
             int v = e.getNewValue() == null ? -1 : e.getNewValue().intValue();
             Salle.tache("prix-perso", () -> PrixPerso.fixer(l.mur, l.typeId, v));
         });
-        TableColumn<Ligne, Number> cTotal = nombres("Total", l -> l.total, 74);
-        cTotal.setMinWidth(64);
         TableColumn<Ligne, PrixCalcul.Source> cSource = new TableColumn<>("Source");
         cSource.setCellValueFactory(c -> c.getValue().source);
         cSource.setComparator(Comparator.comparing(s -> s == null ? 99 : s.ordinal()));
@@ -311,9 +344,10 @@ public class OngletValeur {
         // Fenetre etroite : la source passe dans la bulle du prix, le nom garde sa place.
         cSource.visibleProperty().bind(table.widthProperty().greaterThanOrEqualTo(430));
 
-        table.getColumns().addAll(List.of(cIcone, cNom, cQte, cPrix, cTotal, cSource));
-        cTotal.setSortType(TableColumn.SortType.DESCENDING);
-        table.getSortOrder().add(cTotal);
+        // pas de colonne Total (demande de l'utilisatrice) : tri par prix, du plus cher au moins cher
+        table.getColumns().addAll(List.of(cIcone, cNom, cQte, cPrix, cSource));
+        cPrix.setSortType(TableColumn.SortType.DESCENDING);
+        table.getSortOrder().add(cPrix);
 
         MenuItem auto = new MenuItem("Remettre le prix automatique");
         auto.setOnAction(e -> {

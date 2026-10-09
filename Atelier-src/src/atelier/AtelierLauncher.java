@@ -61,6 +61,7 @@ public class AtelierLauncher extends GEarth {
         super.start(stage);
         ResterVisible.demarrer();
         DallesTraversees.demarrer();
+        MurauxCommeAvant.demarrer();
         EchapDeplacement.demarrer();  // Echap dans le jeu : le mobi pris (Option + clic) reste a sa place  // clics a travers les dalles magiques (etat des mobis poses dessus)     // Option + clic dans le jeu ne masque plus l'Atelier
         Platform.runLater(() -> {
             try {
@@ -185,7 +186,6 @@ public class AtelierLauncher extends GEarth {
         //   Floor         l'editeur visuel du plan de sol
         //   Plantes       les monster plants de la salle
         Tab tCalques = new OngletCalques().construire();
-        Tab tInfos = new OngletInfos().construire();
         Tab tConstruction = new OngletConstruction().construire();
         Tab tHistorique = new OutilHistorique().construire();
         Tab tAnalyse = new OngletAnalyseWired().construire();
@@ -235,13 +235,18 @@ public class AtelierLauncher extends GEarth {
                 Navigation.source(tCollageWired, null, "Copier / coller la config").avec(SALLE, WIRED, NOMS));
         nav.ajouter("plantes", "Monster Plants", Icones.PLANTES,
                 Navigation.source(tPlantes, "Monster Plants")).pleineHauteur();   // seul le tableau defile
-        Tab tValeur = new OngletValeur().construire();
+        Tab[] tPatrimoine = new OngletValeur().construireVolets();
         // Le filtrage de l'inventaire se fait dans le jeu (client modifie) : plus de
         // menu Inventaire. L'onglet reste construit (cache de l'inventaire, liaison
         // avec le jeu). La valeur des mobis passe dans « Patrimoine », en haut, ou
         // viendra ce qui touche aux credits et aux investissements.
-        nav.ajouter("patrimoine", "Patrimoine", Icones.PATRIMOINE,
-                Navigation.source(tValeur).avec(NOMS, INV));
+        nav.ajouter("patrimoine", "Mobis", Icones.PATRIMOINE,
+                // la recherche et l'estimation n'ont pas besoin de l'inventaire : prerequis separes
+                Navigation.source(tPatrimoine[0], null, "Valeur de mes mobis").avec(NOMS, INV),
+                Navigation.source(tPatrimoine[1], null, "Recherche de mobis").avec(NOMS),
+                Navigation.source(tPatrimoine[2], null, "Estimation mobi").avec(NOMS),
+                // boutique wired de la salle : « Vendre au troc » dans l'inventaire du jeu (TrocVente)
+                Navigation.source(new ConfigTroc().construire(), null, "Config troc").avec(SALLE, NOMS));
         // Galerie : des photos d'apparts a garder a cote du jeu pendant qu'on construit.
         Tab tGalerie = new OngletGalerie(css).construire();
         nav.ajouter("galerie", "Galerie", Icones.GALERIE, Navigation.source(tGalerie)).pleineHauteur();
@@ -524,6 +529,7 @@ public class AtelierLauncher extends GEarth {
 
                 Platform.runLater(() -> onglet.setContent(new OngletApparts().construire()));
                 ChargementAuto.demarrer();
+                InventaireExport.demarrer();     // inventaire pour le generateur d'apparts
             } catch (Throwable t) {
                 Journal.erreur("Chargement du moteur de l'Atelier impossible", t);
                 majOnglet(onglet, "Échec du chargement", String.valueOf(t));
@@ -630,6 +636,7 @@ public class AtelierLauncher extends GEarth {
         Moteur.fusionnerCache();      // avant le proxy : il relit sa langue et ses hotels au demarrage
         GardeConnexion.sansCacheDns();
         GardeConnexion.assainir();
+        RetourJeuOrigine.installer();      // sans l'Atelier, Habbo redevient le jeu normal
         Application.launch(AtelierLauncher.class, args);
     }
 }

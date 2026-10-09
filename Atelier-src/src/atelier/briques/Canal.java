@@ -25,6 +25,12 @@ interface Canal {
     /** Ecoute un paquet par son nom (direction TOCLIENT ou TOSERVER). */
     void intercept(HMessage.Direction direction, String nomPaquet, Consumer<HMessage> ecouteur);
 
+    /** Ecoute tous les paquets d'une direction (diagnostic) ; par defaut : rien. */
+    default void interceptTout(HMessage.Direction direction, Consumer<HMessage> ecouteur) { }
+
+    /** Nom d'un paquet d'apres son numero, ou null. */
+    default String nomPaquet(HMessage.Direction direction, int numero) { return null; }
+
     boolean sendToServer(HPacket paquet);
 
     boolean sendToClient(HPacket paquet);
@@ -56,6 +62,24 @@ interface Canal {
                     Journal.debug("Briques : lecture de " + nomPaquet + " en erreur : " + t);
                 }
             });
+        }
+
+        @Override
+        public void interceptTout(HMessage.Direction direction, Consumer<HMessage> ecouteur) {
+            extension.intercept(direction, m -> {
+                try { ecouteur.accept(m); } catch (Throwable ignored) { }
+            });
+        }
+
+        @Override
+        public String nomPaquet(HMessage.Direction direction, int numero) {
+            try {
+                gearth.services.packet_info.PacketInfo i =
+                        extension.getPacketInfoManager().getPacketInfoFromHeaderId(direction, numero);
+                return i == null ? null : i.getName();
+            } catch (Throwable t) {
+                return null;
+            }
         }
 
         @Override public boolean sendToServer(HPacket paquet) { return extension.sendToServer(paquet); }

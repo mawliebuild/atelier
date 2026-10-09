@@ -86,11 +86,10 @@ final class LimitesSalle {
     private static void lireUsers(HPacket p) {
         try {
             verifierSalle();
-            for (HEntity e : HEntity.parse(p)) {
-                if (e == null) continue;
-                HEntityType t = e.getEntityType();
-                if (t == HEntityType.PET || t == HEntityType.BOT || t == HEntityType.OLD_BOT) entites.put(e.getIndex(), t);
-            }
+            // Format actuel du client (int badgesRank en plus) : HEntity.parse de gearth s'y perd.
+            PlanteSuivi.Entites lu = PlanteSuivi.lireEntites(p);
+            for (java.util.Map.Entry<Integer, Integer> e : lu.autres.entrySet())
+                entites.put(e.getKey(), e.getValue() == 2 ? HEntityType.PET : e.getValue() == 3 ? HEntityType.OLD_BOT : HEntityType.BOT);
         } catch (Throwable ignored) { }
     }
 

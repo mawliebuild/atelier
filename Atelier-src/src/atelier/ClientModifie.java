@@ -260,40 +260,61 @@ public final class ClientModifie {
     private static volatile boolean annuler = false;
     private static volatile boolean cases = false;
     private static volatile boolean style = false;
+    private static volatile boolean calque = false;
+    private static volatile boolean empreinte = false;
+    private static volatile boolean opacite = false;
+
+    /** Le client installe sait-il mettre des mobis en valeur par l'opacite (« atelier:opacite= ») ? */
+    public static boolean saitOpacite() {
+        if (!saitSurligner()) return false;
+        return opacite;
+    }
+
+    /** Le client installe sait-il montrer l'empreinte d'une zone sous la souris (« atelier:empreinte= ») ? */
+    public static boolean saitEmpreinte() {
+        if (!saitSurligner()) return false;
+        return empreinte;
+    }
+
+    /** Le client installe sait-il afficher une photo de reference (« atelier:calque= ») ? */
+    public static boolean saitCalque() {
+        if (!saitSurligner()) return false;
+        return calque;
+    }
 
     /** Le client installe sait-il changer le style de mise en valeur (« atelier:style= ») ? */
     public static boolean saitStyle() {
-        saitSurligner();
+        if (!saitSurligner()) return false;
         return style;
     }
 
     /** Le client installe sait-il le mode Cases (« atelier:cases= », clics dans le vide) ? */
     public static boolean saitCases() {
-        saitSurligner();
+        if (!saitSurligner()) return false;
         return cases;
     }
 
     /** Le client installe sait-il annuler un deplacement (« atelier:annuler », Echap) ? */
     public static boolean saitAnnuler() {
-        saitSurligner();
+        if (!saitSurligner()) return false;
         return annuler;
     }
 
     /** Le client installe sait-il laisser les clics traverser les dalles magiques (« atelier:dalles= ») ? */
     public static boolean saitDalles() {
-        saitSurligner();
+        if (!saitSurligner()) return false;
         return dalles;
     }
 
     /** Le client installe sait-il laisser les clics traverser les mobis (« atelier:zone= ») ? */
     public static boolean saitZone() {
-        saitSurligner();
+        if (!saitSurligner()) return false;
         return zone;
     }
 
     /** Le client installe sait-il dessiner la grille (« atelier:grille= ») ? */
     public static boolean saitGrille() {
-        saitSurligner();
+        if (!saitSurligner()) return false;
         return grille;
     }
 
@@ -303,7 +324,7 @@ public final class ClientModifie {
      * temps que saitSurligner.
      */
     public static boolean saitCapturer() {
-        saitSurligner();
+        if (!saitSurligner()) return false;
         return capture;
     }
 
@@ -316,14 +337,63 @@ public final class ClientModifie {
     public static boolean saitSurligner() {
         File f = swfInstalle();
         String cle = f.lastModified() + ":" + f.length();
-        if (cle.equals(cleLueur)) return lueur;
-        return lireClient(f, cle);
+        boolean r = cle.equals(cleLueur) ? lueur : lireClient(f, cle);
+        // le fichier peut etre modifie alors que Habbo tourne encore avec l'ancien (lance avant
+        // l'installation) : rien n'est envoye au jeu tant qu'il n'a pas ete relance
+        return r && !lanceAvant(f);
+    }
+
+    private static volatile long lancementVuA = 0, lancementJeu = -1;
+
+    /** Habbo tourne-t-il avec un client charge AVANT la derniere installation du SWF ? */
+    private static boolean lanceAvant(File swf) {
+        long t = System.currentTimeMillis();
+        if (t - lancementVuA > 10_000) { lancementJeu = debutHabbo(); lancementVuA = t; }
+        long d = lancementJeu;
+        boolean avant = d > 0 && d + 2000 < swf.lastModified();
+        if (avant && !avantDit) {
+            avantDit = true;
+            InfoJeu.dire("Le jeu modifié vient d'être installé : ferme Habbo et rouvre-le pour l'avoir.");
+        }
+        if (!avant) avantDit = false;
+        return avant;
+    }
+
+    private static volatile boolean avantDit = false;
+
+    /** Heure de lancement du processus Habbo (ms), ou -1. */
+    private static long debutHabbo() {
+        try {
+            if (WINDOWS) {
+                Process p = new ProcessBuilder("powershell", "-NoProfile", "-Command",
+                        "$p = Get-Process Habbo -ErrorAction SilentlyContinue | Select-Object -First 1; "
+                        + "if ($p) { [DateTimeOffset]::new($p.StartTime).ToUnixTimeMilliseconds() }")
+                        .redirectErrorStream(true).start();
+                String o = new String(p.getInputStream().readAllBytes()).trim();
+                p.waitFor(5, java.util.concurrent.TimeUnit.SECONDS);
+                return o.matches("\\d+") ? Long.parseLong(o) : -1;
+            }
+            // date en anglais quelle que soit la langue du Mac (sinon « mar. 6 oct. » : illisible ici)
+            ProcessBuilder pb = new ProcessBuilder("/bin/ps", "-axo", "lstart=,command=").redirectErrorStream(true);
+            pb.environment().put("LC_ALL", "C");
+            pb.environment().put("LANG", "C");
+            Process p = pb.start();
+            String o = new String(p.getInputStream().readAllBytes());
+            p.waitFor(5, java.util.concurrent.TimeUnit.SECONDS);
+            for (String l : o.split("\n")) {
+                if (!l.contains("Habbo.app/Contents/MacOS/Habbo")) continue;
+                String date = l.substring(0, Math.min(24, l.length())).trim().replaceAll("\\s+", " ");
+                java.text.SimpleDateFormat fmt = new java.text.SimpleDateFormat("EEE MMM d HH:mm:ss yyyy", java.util.Locale.ENGLISH);
+                return fmt.parse(date).getTime();
+            }
+        } catch (Throwable ignored) { }
+        return -1;
     }
 
     /** Une seule lecture du SWF a la fois (il pese des dizaines de Mo une fois decompresse). */
     private static synchronized boolean lireClient(File f, String cle) {
         if (cle.equals(cleLueur)) return lueur;          // lu entre-temps par un autre fil
-        boolean r = false, cap = false, gr = false, zo = false, da = false, an = false, ca = false, st = false;
+        boolean r = false, cap = false, gr = false, zo = false, da = false, an = false, ca = false, st = false, cq = false, em = false, op = false;
         try {
             byte[] tout = java.nio.file.Files.readAllBytes(f.toPath());
             byte[] corps = tout;
@@ -348,6 +418,9 @@ public final class ClientModifie {
             an = contient(corps, "atelier:annuler".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
             ca = contient(corps, "atelier:cases=".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
             st = contient(corps, "atelier:style=".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+            cq = contient(corps, "atelier:calque=".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+            em = contient(corps, "atelier:empreinte=".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+            op = contient(corps, "atelier:opacite=".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
         } catch (Throwable t) {
             Journal.debug("Lecture du client impossible (" + t + ") : sélection en clignotement.");
         }
@@ -359,6 +432,9 @@ public final class ClientModifie {
         annuler = an;
         cases = ca;
         style = st;
+        calque = cq;
+        empreinte = em;
+        opacite = op;
         cleLueur = cle;
         Journal.debug("Client du jeu : " + (r ? "mise en valeur de la sélection disponible."
                 : "pas de mise en valeur de la sélection (client d'origine ou ancienne version) : clignotement."));

@@ -211,10 +211,13 @@ public class OngletInventaire {
                     Thread.sleep(400);
                 } while (derniereDemande != attendu);
                 Moteur gp = AtelierLauncher.moteur();
-                if (gp != null) {
+                // Un inventaire arrive deja (celui du jeu ou le notre) : il remplit
+                // le cache, inutile d'en demander un second.
+                if (gp != null && !gp.inventaireEnChargement()) {
                     verifDemandeeLe = System.currentTimeMillis();
-                    ChargementAuto.inventaireDemande();
-                    gp.demanderInventaire();
+                    verifEnvoyeeLe = System.currentTimeMillis();
+                    if (gp.demanderInventaire()) ChargementAuto.inventaireDemande();
+                    else verifDemandeeLe = 0;          // refusee : aucune serie n'est la notre
                 }
             } catch (Throwable ignored) {
             } finally { demandeEnCours = false; }
@@ -225,6 +228,7 @@ public class OngletInventaire {
 
     /** Heure de notre derniere demande d'inventaire ; 0 quand sa reponse est arrivee. */
     private volatile long verifDemandeeLe = 0;
+    private volatile long verifEnvoyeeLe = 0;
     private volatile long completLe = 0;
 
     private volatile long derniereDemande = 0;
@@ -242,7 +246,7 @@ public class OngletInventaire {
                 long vu;
                 do { vu = derniereLigneNeuve; Thread.sleep(700); }
                 while (derniereLigneNeuve != vu);
-                Platform.runLater(() -> { majAnnees(); majApercu(); });
+                majAnnees(); majApercu();             // calcul a part, menu mis a jour d'un coup
             } catch (InterruptedException ignored) {
             } finally { majAnneesPrevue = false; }
         }, "atelier-annees");
@@ -262,7 +266,8 @@ public class OngletInventaire {
                     Moteur gp = AtelierLauncher.moteur();
                     int n = -1;
                     if (gp != null) {
-                        try { n = gp.getInventory().getInventoryItems().size(); }
+                        // le nombre seul (sans recopier 25 000 mobis), et rien pendant un chargement
+                        try { n = gp.getInventory().enChargement() ? vu : gp.getInventory().nombre(); }
                         catch (Throwable ignored) { }
                     }
                     if (n != vu) {
@@ -286,18 +291,41 @@ public class OngletInventaire {
      * et, a defaut, de la collection.
      */
     private void majAnnees() {
-        Set<String> trouvees = new TreeSet<>(Comparator.reverseOrder());
-        Moteur gp = AtelierLauncher.moteur();
-        if (gp != null) {
-            for (HInventoryItem it : inventaireConnu(gp)) {
-                Fiche f = Fiche.de(gp, it);
-                if (f == null) continue;
-                if (f.ligne != null) lignesVues.add(f.ligne);
-                if (!Categories.TOUTES.equals(familleChoisie) && !familleChoisie.equals(f.famille())) continue;
-                String a = f.annee();
-                if (a != null) trouvees.add(a);
+        // Le parcours des 25 000 mobis sur le fil de calcul ; le menu, d'un coup,
+        // sur le fil de l'interface. Seul le dernier calcul demande est applique.
+        int numero = ++numeroAnnees;
+        String familleVue = familleChoisie;
+        calcul.execute(() -> {
+            if (numero != numeroAnnees) return;
+            Set<String> trouvees = new TreeSet<>(Comparator.reverseOrder());
+            Moteur gp = AtelierLauncher.moteur();
+            if (gp != null) {
+                for (HInventoryItem it : inventaireConnu(gp)) {
+                    Fiche f = Fiche.de(gp, it);
+                    if (f == null) continue;
+                    if (f.ligne != null) lignesVues.add(f.ligne);
+                    if (!Categories.TOUTES.equals(familleVue) && !familleVue.equals(f.famille())) continue;
+                    String a = f.annee();
+                    if (a != null) trouvees.add(a);
+                }
             }
-        }
+            Platform.runLater(() -> { if (numero == numeroAnnees) appliquerAnnees(trouvees); });
+        });
+    }
+
+    private volatile int numeroAnnees = 0, numeroApercu = 0;
+
+    /** Recalculs de l'onglet (annees, apercu), hors du fil de l'interface. */
+    private final java.util.concurrent.ExecutorService calcul =
+            java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+                Thread t = new Thread(r, "atelier-inventaire-calcul");
+                t.setDaemon(true);
+                t.setPriority(Thread.MIN_PRIORITY);
+                return t;
+            });
+
+    /** Fil de l'interface : la liste des annees trouvees. */
+    private void appliquerAnnees(Set<String> trouvees) {
         List<String> l = new ArrayList<>();
         l.add(Categories.TOUTES_ANNEES);
         l.addAll(trouvees);
@@ -325,7 +353,13 @@ public class OngletInventaire {
         Journal.debug("inventaire du jeu : " + ordre);
         Platform.runLater(() -> {
             try {
-                if (ordre.startsWith("categorie=")) {
+                if (ordre.startsWith("troc=")) {
+                    // « Vendre au troc » : id d'inventaire du mobi (premier entier de FurniList)
+                    int id = Integer.parseInt(ordre.substring(5).trim());
+                    Moteur gp = AtelierLauncher.moteur();
+                    List<HInventoryItem> inv = gp == null ? List.of() : new ArrayList<>(inventaireConnu(gp));
+                    TrocVente.ouvrir(id, inv);
+                } else if (ordre.startsWith("categorie=")) {
                     List<String> f = Categories.familles();
                     int i = Integer.parseInt(ordre.substring(10).trim());
                     if (i < 0 || i >= f.size()) return;
@@ -369,8 +403,18 @@ public class OngletInventaire {
     private void majApercu() { majApercu(-1); }
 
     private void majApercu(int connus) {
+        int numero = ++numeroApercu;
+        calcul.execute(() -> {
+            if (numero != numeroApercu) return;
+            String texte = texteApercu();
+            Platform.runLater(() -> { if (numero == numeroApercu && apercu != null) apercu.setText(texte); });
+        });
+    }
+
+    /** Le texte de l'apercu (fil de calcul : parcourt tout l'inventaire). */
+    private String texteApercu() {
         Moteur gp = AtelierLauncher.moteur();
-        if (gp == null) { apercu.setText("L'Atelier n'est pas encore prêt"); return; }
+        if (gp == null) return "L'Atelier n'est pas encore prêt";
 
         boolean fd = false;
         try { fd = gp.getFurniDataTools() != null && gp.getFurniDataTools().isReady(); }
@@ -387,23 +431,23 @@ public class OngletInventaire {
                     if (fi != null && fi.anneeEstimee()) estimees++;
                 }
             }
-        } catch (Throwable t) { apercu.setText("Inventaire indisponible"); return; }
+        } catch (Throwable t) { return "Inventaire indisponible"; }
 
         if (total == 0) {
-            apercu.setText(lignesVues.isEmpty()
+            return lignesVues.isEmpty()
                     ? "Inventaire vide ou pas encore chargé — entre dans une salle"
-                    : "Inventaire en cours de chargement…");
-            return;
+                    : "Inventaire en cours de chargement…";
         }
         if (!fd) {
-            apercu.setText(total + " mobis, mais la furnidata n'est pas chargée : "
+            return Ui.accorder(total + " mobi(s), mais la furnidata n'est pas chargée : "
                     + "les catégories ne peuvent pas encore être déterminées");
-            return;
         }
         boolean anneeChoisieActive = !Categories.TOUTES_ANNEES.equals(anneeChoisie);
-        apercu.setText(garde + " mobis sur " + total + " correspondent"
+        return (garde > 1 ? garde + " mobis sur " : garde + " mobi sur ") + total
+                + (garde > 1 ? " correspondent" : " correspond")
                 + (anneeChoisieActive && estimees > 0
-                    ? "   (dont " + estimees + " dont l'année est estimée)" : ""));
+                    ? (estimees > 1 ? "   (dont " + estimees + " dont l'année est estimée)"
+                                    : "   (dont 1 dont l'année est estimée)") : "");
     }
 
     // -------------------------------------------------------------- filtrage
@@ -454,19 +498,14 @@ public class OngletInventaire {
             try {
                 // Lecture sur place (ou copie d'un petit paquet), puis le travail
                 // (recopie d'un cache de 25 000 mobis) sur le fil de lecture.
-                gp.intercept(HMessage.Direction.TOCLIENT, "FurniListRemove", m -> {
-                    try {
-                        HPacket p = m.getPacket();
-                        if (p.getBytesLength() < 10) return;
-                        int placement = p.readInteger(6);
-                        lecture.execute(() -> { try { mobiRetire(placement); } catch (Throwable ignored) { } });
-                    } catch (Throwable ignored) { }
-                });
-                gp.intercept(HMessage.Direction.TOCLIENT, "FurniListAddOrUpdate", m -> {
-                    try {
-                        HPacket copie = new HPacket(m.getPacket());
-                        lecture.execute(() -> { try { mobisAjoutes(gp, copie); } catch (Throwable ignored) { } });
-                    } catch (Throwable ignored) { }
+                gp.intercept(HMessage.Direction.TOCLIENT, "FurniListRemove", this::surRetrait);
+                gp.intercept(HMessage.Direction.TOCLIENT, "FurniListAddOrUpdate", m -> surAjout(gp, m));
+                // Le jeu demande l'inventaire lui-meme : sa reponse ne doit jamais
+                // etre prise pour notre verification (elle lui serait cachee).
+                gp.intercept(HMessage.Direction.TOSERVER, "RequestFurniInventory", m -> {
+                    long now = System.currentTimeMillis();
+                    if (now - verifEnvoyeeLe < 150) return;     // la notre, par prudence
+                    jeuDemandeLe = now;
                 });
                 gp.intercept(HMessage.Direction.TOCLIENT, "FurniListInvalidate", m -> {
                     try { inventairePerime(); } catch (Throwable ignored) { }
@@ -503,6 +542,12 @@ public class OngletInventaire {
         // Appele pour CHAQUE paquet recu : rejet bon marche, sans copie.
         // Une fois l'en-tete de l'inventaire connu, un seul test suffit.
         int connu = entete;
+        if (connu < 0) {
+            // L'en-tete par le moteur (vu passer, ou par son nom) : la lecture de
+            // verification ci-dessous n'a alors jamais lieu sur le fil des paquets.
+            int e = gp.enteteInventaire();
+            if (e >= 0) { entete = e; connu = e; }
+        }
         if (connu >= 0 && brut.headerId() != connu) return;
         if (brut.getBytesLength() < 14) return;
         int total, numero;
@@ -511,9 +556,11 @@ public class OngletInventaire {
         if (total <= 0 || total > 500 || numero < 0 || numero >= total) return;
 
         if (connu >= 0) {
-            // En-tete connu : ici seulement la decision de bloquer. La lecture des
-            // mobis du fragment (600 par fragment) se fait sur le fil de lecture,
-            // dans l'ordre d'arrivee : le jeu n'attend plus pendant ce temps.
+            // En-tete connu : ici seulement la decision de bloquer et la copie des
+            // octets. Tout le reste (lecture des 600 mobis de chaque fragment,
+            // cache, renvoi) se fait sur le fil de lecture, une fois la serie
+            // entiere arrivee : le proxy tient un verrou commun aux deux sens
+            // pendant cet ecouteur, le chat attendait derriere.
             boolean filtreActif = filtre().actif();
             boolean notre = notreSerie(numero, total);
             if (filtreActif || notre) m.setBlocked(true);   // rien ne passe avant la fin
@@ -525,9 +572,9 @@ public class OngletInventaire {
             return;
         }
 
-        // En-tete encore inconnu (premiere serie seulement) : la lecture des mobis
-        // sert de verification — un paquet etranger ne se lit pas comme un
-        // inventaire —, elle reste donc ici.
+        // En-tete inconnu meme du moteur (secours, premiere serie seulement) : la
+        // lecture des mobis sert de verification — un paquet etranger ne se lit
+        // pas comme un inventaire —, elle reste donc ici.
         long tLecture = System.nanoTime();
         List<InventaireCache.Mobi> morceaux = InventaireCache.decouper(brut);
         HInventoryItem[] items = lireItems(brut, morceaux);
@@ -540,7 +587,12 @@ public class OngletInventaire {
         boolean filtreActif = filtre().actif();
         boolean notre = notreSerie(numero, total);
         if (filtreActif || notre) m.setBlocked(true);
-        recevoirFragment(gp, brut, total, numero, morceaux, items, filtreActif, notre);
+        HPacket copie = new HPacket(brut);
+        List<InventaireCache.Mobi> mo = morceaux;
+        lecture.execute(() -> {
+            try { recevoirFragment(gp, copie, total, numero, mo, items, filtreActif, notre); }
+            catch (Throwable t) { System.err.println("[Atelier] inventaire : " + t); }
+        });
     }
 
     /** Les mobis d'un fragment : ceux du decoupage s'il a reussi, sinon lus par la connexion ; null si illisible. */
@@ -560,71 +612,93 @@ public class OngletInventaire {
     /** Serie en cours demandee par l'Atelier ? Fixe au premier fragment (fil des paquets). */
     private volatile boolean serieNotreVue = false;
 
+    /** Le jeu a demande l'inventaire lui-meme (heure ; 0 : non) : la prochaine serie lui revient. */
+    private volatile long jeuDemandeLe = 0;
+
     private boolean notreSerie(int numero, int total) {
-        if (numero == 0)
-            serieNotreVue = verifDemandeeLe > 0 && System.currentTimeMillis() - verifDemandeeLe < 15_000;
+        if (numero == 0) {
+            long now = System.currentTimeMillis();
+            if (jeuDemandeLe > 0 && now - jeuDemandeLe < Moteur.ATTENTE_INVENTAIRE_MS) {
+                // Le jeu attend sa liste (echange, inventaire rouvert) : jamais cachee
+                // ni retenue comme « notre verification ». Notre demande, si elle
+                // existe, reste en attente pour la serie suivante (comme le moteur).
+                serieNotreVue = false;
+            } else {
+                serieNotreVue = verifDemandeeLe > 0 && now - verifDemandeeLe < Moteur.ATTENTE_INVENTAIRE_MS;
+            }
+            jeuDemandeLe = 0;
+        }
         boolean n = serieNotreVue;
         if (n && numero == total - 1) verifDemandeeLe = 0;
         return n;
     }
 
     /**
-     * Un fragment, deja bloque si besoin : accumule, et a la fin de la serie,
-     * mise en cache puis renvoi au jeu (fil d'envoi). Fil de lecture, sauf pour
-     * la toute premiere serie (en-tete inconnu).
+     * Un fragment, deja bloque si besoin, copie : garde tel quel pendant le
+     * flux. A la fin de la serie, lecture des mobis, mise en cache, puis renvoi
+     * au jeu (fil d'envoi). Toujours sur le fil de lecture.
      */
     private void recevoirFragment(Moteur gp, HPacket brut, int total, int numero,
                                   List<InventaireCache.Mobi> morceaux, HInventoryItem[] items,
                                   boolean filtreActif, boolean notre) {
-        if (items == null) {
-            long tLecture = System.nanoTime();
-            morceaux = InventaireCache.decouper(brut);
-            items = lireItems(brut, morceaux);
-            lectureNs += System.nanoTime() - tLecture;
-            if (items == null) {
-                // Deja bloque peut-etre : on le garde tel quel (fragments bruts),
-                // pour que la serie se termine et que le jeu recoive quelque chose.
-                items = new HInventoryItem[0];
-                morceaux = null;
-                Journal.debug("inventaire : fragment " + numero + " illisible, gardé tel quel.");
-            }
+        // Premier fragment d'une nouvelle serie : on repart de zero.
+        if (numero == 0) {
+            synchronized (verrou) { enCours.clear(); changementsPendantFlux.clear(); }
+            totalSerie = total;
+            lectureNs = 0;
+            debutSerie = System.currentTimeMillis();
+            serieNotre = notre;
         }
-        Serie serie, avant;
+        List<Fragment> recus;
         synchronized (verrou) {
-            // Premier fragment d'une nouvelle serie : on repart de zero.
-            if (numero == 0) {
-                accumules.clear();
-                accumulesBruts.clear();
-                accumulesMobis = new ArrayList<>();
-                fragmentsVus = 0;
-                totalSerie = total;
-                lectureNs = 0;
-                debutSerie = System.currentTimeMillis();
-                serieNotre = notre;
-            }
-            accumules.addAll(Arrays.asList(items));
-            // Copie : la connexion peut reutiliser le paquet d'origine.
-            accumulesBruts.add(brut.toBytes().clone());
-            if (accumulesMobis != null) {
-                if (morceaux != null && morceaux.size() == items.length) accumulesMobis.addAll(morceaux);
-                else {
-                    accumulesMobis = null;       // un fragment non decoupable : ancienne methode
-                    Journal.debug("inventaire : fragment " + numero
-                            + " non découpable en octets bruts, reconstruction classique pour cette série.");
+            enCours.add(new Fragment(brut, morceaux, items));
+            if (numero < total - 1) return;                 // on attend les suivants
+            // Fin du flux : lecture de tous les fragments, d'un coup.
+            recus = new ArrayList<>(enCours);
+            enCours.clear();
+        }
+        int fragmentsVus = recus.size();
+        List<HInventoryItem> accumules = new ArrayList<>();
+        List<byte[]> accumulesBruts = new ArrayList<>(fragmentsVus);
+        List<InventaireCache.Mobi> accumulesMobis = new ArrayList<>();
+        long tLecture = System.nanoTime();
+        for (Fragment f : recus) {
+            List<InventaireCache.Mobi> mo = f.morceaux;
+            HInventoryItem[] it = f.items;
+            if (it == null) {
+                mo = InventaireCache.decouper(f.brut);
+                it = lireItems(f.brut, mo);
+                if (it == null) {
+                    // Deja bloque peut-etre : on le garde tel quel (fragments bruts),
+                    // pour que la serie se termine et que le jeu recoive quelque chose.
+                    it = new HInventoryItem[0];
+                    mo = null;
+                    Journal.debug("inventaire : fragment illisible, gardé tel quel.");
                 }
             }
-            fragmentsVus++;
-            if (numero < total - 1) return;                 // on attend les suivants
+            accumules.addAll(Arrays.asList(it));
+            accumulesBruts.add(f.brut.toBytes());           // deja une copie
+            if (accumulesMobis != null) {
+                if (mo != null && mo.size() == it.length) accumulesMobis.addAll(mo);
+                else {
+                    accumulesMobis = null;       // un fragment non decoupable : ancienne methode
+                    Journal.debug("inventaire : fragment non découpable en octets bruts, reconstruction classique pour cette série.");
+                }
+            }
+        }
+        lectureNs += System.nanoTime() - tLecture;
 
+        Serie serie, avant;
+        synchronized (verrou) {
             // Serie incomplete (un fragment perdu, ou deux series melangees) :
             // pas de mise en cache. Le jeu recoit l'ancien cache filtre s'il
             // existe, sinon ce qu'on a recu, filtre — jamais rien.
             if (fragmentsVus != total || totalSerie != total) {
-                Journal.debug("inventaire : serie incomplete ("
-                        + fragmentsVus + "/" + total + "), cache conserve.");
+                changementsPendantFlux.clear();
+                Journal.debug("inventaire : série incomplète ("
+                        + fragmentsVus + "/" + total + "), cache conservé.");
                 Serie secours = (this.serie != null) ? this.serie
-                        : new Serie(brut.headerId(), null, accumulesMobis, new ArrayList<>(accumules));
-                accumules.clear(); accumulesBruts.clear(); accumulesMobis = null;
+                        : new Serie(brut.headerId(), null, accumulesMobis, accumules);
                 // Hors verrou, sur le fil d'envoi : construire et renvoyer un gros
                 // inventaire prend du temps.
                 final boolean bloque = filtreActif || notre;
@@ -636,19 +710,15 @@ public class OngletInventaire {
                 });
                 return;
             }
-            if (entete < 0 && accumules.isEmpty()) {
-                // Pas d'inventaire reconnu (aucun mobi) : ni cache, ni en-tete.
-                accumules.clear(); accumulesBruts.clear(); accumulesMobis = null;
-                return;
-            }
-            serie = new Serie(brut.headerId(), new ArrayList<>(accumulesBruts), accumulesMobis,
-                    new ArrayList<>(accumules));
-            accumules.clear(); accumulesBruts.clear(); accumulesMobis = null;
-            Journal.debug("inventaire reçu du serveur : " + serie.items.size() + " mobis en "
+            // Pas d'inventaire reconnu (aucun mobi) : ni cache, ni en-tete.
+            if (entete < 0 && accumules.isEmpty()) return;
+            serie = new Serie(brut.headerId(), accumulesBruts, accumulesMobis, accumules);
+            if (!changementsPendantFlux.isEmpty()) serie = rejouer(serie);
+            Journal.debug(Ui.accorder("inventaire reçu du serveur : " + serie.items.size() + " mobi(s) en "
                     + total + " morceau(x), " + (System.currentTimeMillis() - debutSerie) + " ms"
                     + (serieNotre ? " (vérification de l'Atelier)" : " (demandé par le jeu)")
-                    + ", lecture " + (lectureNs / 1_000_000) + " ms"
-                    + (serie.mobis != null ? ", octets bruts gardés" : ", octets bruts NON gardés"));
+                    + ", lecture après le flux " + (lectureNs / 1_000_000) + " ms"
+                    + (serie.mobis != null ? ", octets bruts gardés" : ", octets bruts NON gardés")));
             avant = this.serie;
             this.serie = serie;
             completLe = System.currentTimeMillis();
@@ -665,6 +735,19 @@ public class OngletInventaire {
         });
     }
 
+    /** Un fragment recu (copie), et ses mobis s'ils ont deja ete lus. */
+    private static final class Fragment {
+        final HPacket brut;
+        final List<InventaireCache.Mobi> morceaux;
+        final HInventoryItem[] items;
+        Fragment(HPacket brut, List<InventaireCache.Mobi> morceaux, HInventoryItem[] items) {
+            this.brut = brut; this.morceaux = morceaux; this.items = items;
+        }
+    }
+
+    /** Fil de lecture seulement : les fragments de la serie en cours. */
+    private final List<Fragment> enCours = new ArrayList<>();
+
     /**
      * Fil de lecture : les fragments d'inventaire et les changements en jeu
      * (pose, ramassage), dans l'ordre d'arrivee, hors du fil des paquets.
@@ -673,26 +756,16 @@ public class OngletInventaire {
             java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
                 Thread t = new Thread(r, "atelier-inventaire-lecture");
                 t.setDaemon(true);
+                t.setPriority(Thread.MIN_PRIORITY);
                 return t;
             });
 
     /** Fiches, puis renvoi au jeu si besoin. Fil d'envoi (travail), jamais l'intercepteur. */
     private void apresSerie(Moteur gp, Serie serie, Serie avant, boolean notre, boolean bloque) {
-        // Fiche de chaque mobi, une fois pour toutes (le filtrage ne fait plus
-        // que la relire).
+        // D'abord ce que le jeu attend (liste retenue a renvoyer) : il ne patiente
+        // jamais pendant le calcul des fiches. envoyerFiltre calcule lui-meme les
+        // fiches dont il a besoin.
         long t0 = System.currentTimeMillis();
-        if (serie.mobis != null) {
-            for (InventaireCache.Mobi mo : serie.mobis) {
-                mo.fiche = Fiche.de(gp, mo.item);
-                if (mo.fiche != null && mo.fiche.ligne != null) lignesVues.add(mo.fiche.ligne);
-            }
-        } else {
-            for (HInventoryItem it : serie.items) {
-                String l = ligne(gp, it);
-                if (l != null) lignesVues.add(l);
-            }
-        }
-        Journal.debug("inventaire : fiches calculées en " + (System.currentTimeMillis() - t0) + " ms.");
         boolean actif = filtre().actif();       // le choix le plus recent
         if (!bloque) {
             // la serie du serveur est passee telle quelle
@@ -709,6 +782,21 @@ public class OngletInventaire {
             // mobis le figeait plusieurs secondes (au demarrage de l'Atelier).
             Journal.debug("inventaire : vérification de l'Atelier, rien à renvoyer au jeu (pas de liste filtrée affichée).");
         }
+        if (bloque) Journal.debug("inventaire : série retenue traitée en " + (System.currentTimeMillis() - t0) + " ms.");
+        // Fiche de chaque mobi, une fois pour toutes (le filtrage ne fait plus
+        // que la relire).
+        long t1 = System.currentTimeMillis();
+        if (serie.mobis != null) {
+            for (InventaireCache.Mobi mo : serie.mobis) {
+                if (mo.fiche == null) mo.fiche = Fiche.de(gp, mo.item);
+                if (mo.fiche != null && mo.fiche.ligne != null) lignesVues.add(mo.fiche.ligne);
+            }
+        } else {
+            for (HInventoryItem it : serie.items) {
+                String l = ligne(gp, it);
+                if (l != null) lignesVues.add(l);
+            }
+        }
         demanderMajAnnees();
     }
 
@@ -717,6 +805,7 @@ public class OngletInventaire {
             java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
                 Thread t = new Thread(r, "atelier-inventaire-envoi");
                 t.setDaemon(true);
+                t.setPriority(Thread.MIN_PRIORITY);
                 return t;
             });
 
@@ -923,6 +1012,75 @@ public class OngletInventaire {
 
     // --------------------------------------------------- changements en jeu
 
+    /** Fil des paquets : FurniListRemove, lu a index fixe ; le travail sur le fil de lecture. */
+    private void surRetrait(HMessage m) {
+        try {
+            HPacket p = m.getPacket();
+            if (p.getBytesLength() < 10) return;
+            int placement = p.readInteger(6);
+            lecture.execute(() -> { try { mobiRetire(placement); } catch (Throwable ignored) { } });
+        } catch (Throwable ignored) { }
+    }
+
+    /** Fil des paquets : FurniListAddOrUpdate, copie ; le travail sur le fil de lecture. */
+    private void surAjout(Moteur gp, HMessage m) {
+        try {
+            HPacket copie = new HPacket(m.getPacket());
+            lecture.execute(() -> { try { mobisAjoutes(gp, copie); } catch (Throwable ignored) { } });
+        } catch (Throwable ignored) { }
+    }
+
+    /**
+     * Fil de lecture : les changements (ajouts : liste de mobis ; retraits :
+     * numero de placement) arrives pendant qu'une serie passe. La serie peut
+     * avoir ete prise par le serveur avant eux : ils sont rejoues sur elle une
+     * fois lue, sinon un mobi pose ou ramasse pendant le chargement disparaissait.
+     */
+    private final List<Object> changementsPendantFlux = new ArrayList<>();
+
+    /** Sous verrou : un retrait applique a une serie ; null si le mobi n'y est pas. */
+    private static Serie sansMobi(Serie s, int placement) {
+        List<HInventoryItem> items = new ArrayList<>(s.items.size());
+        List<InventaireCache.Mobi> mobis = (s.mobis == null) ? null : new ArrayList<>(s.mobis.size());
+        boolean trouve = false;
+        for (int i = 0; i < s.items.size(); i++) {
+            if (!trouve && s.items.get(i).getPlacementId() == placement) { trouve = true; continue; }
+            items.add(s.items.get(i));
+            if (mobis != null) mobis.add(s.mobis.get(i));
+        }
+        return trouve ? new Serie(s.entete, null, mobis, items) : null;
+    }
+
+    /** Sous verrou : des ajouts (ou mises a jour) appliques a une serie gardee en octets. */
+    private static Serie avecMobis(Serie s, List<InventaireCache.Mobi> nouveaux) {
+        List<InventaireCache.Mobi> mobis = new ArrayList<>(s.mobis);
+        Map<Integer, Integer> index = new HashMap<>(mobis.size() * 2);
+        for (int i = 0; i < mobis.size(); i++) index.put(mobis.get(i).item.getPlacementId(), i);
+        for (InventaireCache.Mobi mo : nouveaux) {
+            Integer i = index.get(mo.item.getPlacementId());
+            if (i != null) mobis.set(i, mo);
+            else { index.put(mo.item.getPlacementId(), mobis.size()); mobis.add(mo); }
+        }
+        List<HInventoryItem> items = new ArrayList<>(mobis.size());
+        for (InventaireCache.Mobi mo : mobis) items.add(mo.item);
+        return new Serie(s.entete, null, mobis, items);
+    }
+
+    /** Sous verrou, fil de lecture : rejoue sur la serie neuve les changements arrives pendant son flux. */
+    @SuppressWarnings("unchecked")
+    private Serie rejouer(Serie s) {
+        for (Object c : changementsPendantFlux) {
+            if (c instanceof Integer) {
+                Serie r = sansMobi(s, (Integer) c);
+                if (r != null) s = r;
+            } else if (s.mobis != null) {
+                s = avecMobis(s, (List<InventaireCache.Mobi>) c);
+            }
+        }
+        changementsPendantFlux.clear();
+        return s;
+    }
+
     /**
      * Un mobi a quitte l'inventaire (pose dans une salle, vendu, echange) :
      * paquet « FurniListRemove », numero de placement du mobi. Le jeu l'a deja
@@ -931,21 +1089,63 @@ public class OngletInventaire {
      */
     private void mobiRetire(int placement) {
         synchronized (verrou) {
+            if (!enCours.isEmpty()) changementsPendantFlux.add(placement);
             Serie s = serie;
             if (s == null) return;
-            List<HInventoryItem> items = new ArrayList<>(s.items.size());
-            List<InventaireCache.Mobi> mobis = (s.mobis == null) ? null : new ArrayList<>(s.mobis.size());
-            boolean trouve = false;
-            for (int i = 0; i < s.items.size(); i++) {
-                if (!trouve && s.items.get(i).getPlacementId() == placement) { trouve = true; continue; }
-                items.add(s.items.get(i));
-                if (mobis != null) mobis.add(s.mobis.get(i));
-            }
-            if (!trouve) return;
-            remplacer(new Serie(s.entete, null, mobis, items));
+            Serie r = sansMobi(s, placement);
+            if (r == null) return;
+            remplacer(r);
         }
-        Journal.debug("inventaire : mobi retiré (posé, vendu…), cache mis à jour sans le redemander.");
+        Resume.noter(1, 0);                          // un seul resume apres la rafale (collage...)
         demanderMajAnnees();
+    }
+
+    /**
+     * Resume des changements de l'inventaire : pendant un collage, chaque mobi
+     * pose ou ramasse en fait un ; un seul Journal.debug quand plus rien ne
+     * change depuis CALME_MS (« 228 mobis retirés, 41 ajoutés ou modifiés »).
+     */
+    static final class Resume {
+        static final long CALME_MS = 5000;
+        private static int retires, ajoutes;
+        private static long dernier;
+        private static boolean prevu;
+        private static final java.util.concurrent.ScheduledExecutorService FIL =
+                java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+                    Thread t = new Thread(r, "atelier-inventaire-resume");
+                    t.setDaemon(true);
+                    return t;
+                });
+
+        private Resume() { }
+
+        static synchronized void noter(int r, int a) {
+            retires += r;
+            ajoutes += a;
+            dernier = System.currentTimeMillis();
+            if (!prevu) { prevu = true; FIL.schedule(Resume::verifier, CALME_MS, java.util.concurrent.TimeUnit.MILLISECONDS); }
+        }
+
+        private static void verifier() {
+            String texte;
+            synchronized (Resume.class) {
+                long reste = CALME_MS - (System.currentTimeMillis() - dernier);
+                if (reste > 0) { FIL.schedule(Resume::verifier, reste, java.util.concurrent.TimeUnit.MILLISECONDS); return; }
+                prevu = false;
+                texte = texte(retires, ajoutes);
+                retires = ajoutes = 0;
+            }
+            if (texte != null) Journal.debug(texte);
+        }
+
+        /** Le resume (logique pure), null si rien. */
+        static String texte(int retires, int ajoutes) {
+            if (retires <= 0 && ajoutes <= 0) return null;
+            List<String> l = new ArrayList<>();
+            if (retires > 0) l.add(retires + (retires > 1 ? " mobis retirés (posés, vendus…)" : " mobi retiré (posé, vendu…)"));
+            if (ajoutes > 0) l.add(ajoutes + (ajoutes > 1 ? " mobis ajoutés ou modifiés" : " mobi ajouté ou modifié"));
+            return "inventaire : " + String.join(", ", l) + ", cache mis à jour sans le redemander.";
+        }
     }
 
     /**
@@ -956,7 +1156,9 @@ public class OngletInventaire {
      */
     private void mobisAjoutes(Moteur gp, HPacket paquet) {
         List<InventaireCache.Mobi> nouveaux = InventaireCache.lireAjouts(paquet);
+        if (nouveaux != null) for (InventaireCache.Mobi mo : nouveaux) mo.fiche = Fiche.de(gp, mo.item);
         synchronized (verrou) {
+            if (nouveaux != null && !enCours.isEmpty()) changementsPendantFlux.add(nouveaux);
             Serie s = serie;
             if (s == null) return;
             if (nouveaux == null || s.mobis == null) {
@@ -964,20 +1166,9 @@ public class OngletInventaire {
                 Journal.debug("inventaire : mobis ajoutés, cache à revérifier auprès du serveur.");
                 return;
             }
-            List<InventaireCache.Mobi> mobis = new ArrayList<>(s.mobis);
-            Map<Integer, Integer> index = new HashMap<>(mobis.size() * 2);
-            for (int i = 0; i < mobis.size(); i++) index.put(mobis.get(i).item.getPlacementId(), i);
-            for (InventaireCache.Mobi mo : nouveaux) {
-                mo.fiche = Fiche.de(gp, mo.item);
-                Integer i = index.get(mo.item.getPlacementId());
-                if (i != null) mobis.set(i, mo);
-                else { index.put(mo.item.getPlacementId(), mobis.size()); mobis.add(mo); }
-            }
-            List<HInventoryItem> items = new ArrayList<>(mobis.size());
-            for (InventaireCache.Mobi mo : mobis) items.add(mo.item);
-            remplacer(new Serie(s.entete, null, mobis, items));
+            remplacer(avecMobis(s, nouveaux));
         }
-        Journal.debug("inventaire : " + nouveaux.size() + " mobi(s) ajouté(s) ou modifié(s), cache mis à jour.");
+        Resume.noter(0, nouveaux.size());            // un seul resume apres la rafale
         demanderMajAnnees();
     }
 
@@ -1027,11 +1218,6 @@ public class OngletInventaire {
     }
 
     private final Object verrou = new Object(), envoi = new Object();
-    /** Les fragments de la serie en cours : mobis lus, fragments bruts, mobis en octets. */
-    private final List<HInventoryItem> accumules = new ArrayList<>();
-    private final List<byte[]> accumulesBruts = new ArrayList<>();
-    private List<InventaireCache.Mobi> accumulesMobis = null;
-    private int fragmentsVus = 0;
     /** Le dernier inventaire complet recu du serveur (et mis a jour en jeu). */
     private volatile Serie serie = null;
     /** Vrai quand le jeu affiche une liste filtree envoyee par l'Atelier. */

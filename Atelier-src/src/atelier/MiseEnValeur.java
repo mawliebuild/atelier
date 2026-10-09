@@ -33,7 +33,18 @@ final class MiseEnValeur {
      */
     static void fenetre(String cle) {
         if ("wired".equals(cle) && !"wired".equals(ouverte)) ChoixWired.rien();
+        if (cle != null && !cle.equals(ouverte)) {
+            List<Runnable> l = aLOuverture.get(cle);
+            if (l != null) for (Runnable r : l) try { r.run(); } catch (Throwable ignored) { }
+        }
         ouverte = cle;
+    }
+
+    private static final Map<String, List<Runnable>> aLOuverture = new ConcurrentHashMap<>();
+
+    /** A chaque ouverture du menu « cle » (pas quand il est deja ouvert). */
+    static void aLOuverture(String cle, Runnable r) {
+        aLOuverture.computeIfAbsent(cle, k -> new java.util.concurrent.CopyOnWriteArrayList<>()).add(r);
     }
 
     /** Ce que le menu « cle » met en valeur quand il est ouvert. */
@@ -131,4 +142,27 @@ final class MiseEnValeur {
         }
         return new ArrayList<>(r);
     }
+
+    // ------------------------------------------------------------ opacite (muraux)
+
+    /**
+     * Mise en valeur par l'opacite seule (ni contour ni couleur) : ces muraux a « pourcent » %
+     * d'opacite, tous les autres mobis a 100 %. Liste vide : tout a 100 %. Chaque appel
+     * remplace le precedent (le jeu remet tout a 100 % avant). Le choix d'une zone remet
+     * aussi tout a 100 % : renvoyer apres si besoin. Sans le client qui le sait, rien.
+     */
+    static void opaciteMuraux(Collection<Integer> idsMuraux, int pourcent) {
+        if (!ClientModifie.saitOpacite() || !Salle.dansUneSalle()) return;
+        Moteur gp = Salle.gp();
+        if (gp == null) return;
+        StringBuilder b = new StringBuilder();
+        if (idsMuraux != null)
+            for (int id : idsMuraux) { if (b.length() > 0) b.append(','); b.append('m').append(id); }
+        if (b.length() > 0) b.append(';').append(Math.max(5, Math.min(100, pourcent)));
+        gp.sendToClient(new gearth.protocol.HPacket("Whisper", gearth.protocol.HMessage.Direction.TOCLIENT,
+                -1, "atelier:opacite=" + b, 0, 0, 0, -1));
+    }
+
+    /** Tout a 100 % d'opacite. */
+    static void effacerOpacite() { opaciteMuraux(List.of(), 100); }
 }

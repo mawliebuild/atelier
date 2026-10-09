@@ -1,11 +1,13 @@
 package atelier;
 
+import gearth.extensions.parsers.HFloorItem;
 import gearth.extensions.parsers.HInventoryItem;
 import gearth.protocol.HMessage;
 import gearth.protocol.HPacket;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Consumer;
 
 /**
  * Remplir une zone avec un mobi (Actions des calques) : on choisit la zone
@@ -15,6 +17,10 @@ import java.util.List;
  * est alors couverte en grille ; si la taille ne tombe pas juste, la derniere
  * rangee / colonne est recalee contre le bord et chevauche la precedente
  * (comme les dalles magiques), donc la zone est remplie jusqu'au bout.
+ * Pipette : a cette etape, un clic sur un mobi DEJA dans la salle le choisit
+ * aussi (classe, etat, rotation pris sur lui). L'ecoute des clics sur les
+ * mobis n'est branchee qu'a cette etape : les clics du choix de zone ne
+ * comptent pas.
  * Pose mobi par mobi (PoseDirecte : inventaire puis BC, altitude au sol).
  */
 final class RemplirZone {
@@ -25,6 +31,11 @@ final class RemplirZone {
 
     private static volatile Etape etape = Etape.RIEN;
     private static volatile boolean deuxiemeDit = false, branche = false, stop = false;
+
+    /** Clic sur un mobi de la salle (pipette), ecoute seulement a l'etape MOBI. */
+    private static final Consumer<HFloorItem> PIPETTE = RemplirZone::surClicMobi;
+    /** Debut de l'etape MOBI : un clic qui suit de pres le second coin (sur un mobi) n'est pas une pipette. */
+    private static volatile long mobiDepuis = 0;
 
     static boolean enCours() { return etape != Etape.RIEN; }
 
@@ -43,6 +54,7 @@ final class RemplirZone {
     static void annuler() {
         if (etape == Etape.RIEN) return;
         etape = Etape.RIEN;
+        Salle.retirer(PIPETTE);
         InfoJeu.consigne("Remplissage annulé.");
     }
 
@@ -70,8 +82,37 @@ final class RemplirZone {
         }
         if (!Zone.definie()) { annuler(); return; }
         etape = Etape.MOBI;
+        mobiDepuis = System.currentTimeMillis();
+        Salle.surClicMobi(PIPETTE);
         InfoJeu.consigne("Zone de " + Zone.largeur() + " × " + Zone.longueur()
-                + " : pose maintenant le mobi depuis ton inventaire, il remplira la zone.");
+                + " : pose le mobi depuis ton inventaire, ou clique un mobi déjà dans la salle : il remplira la zone.");
+    }
+
+    /** Passe de MOBI a POSE une seule fois (pose retenue ou pipette, le premier gagne). */
+    private static synchronized boolean prendre() {
+        if (etape != Etape.MOBI) return false;
+        etape = Etape.POSE;
+        Salle.retirer(PIPETTE);
+        return true;
+    }
+
+    /** Pipette : le mobi clique dans la salle donne classe, etat et rotation. Hors fil JavaFX. */
+    private static void surClicMobi(HFloorItem it) {
+        if (etape != Etape.MOBI || it == null) return;
+        if (System.currentTimeMillis() - mobiDepuis < 800) return;     // suite du clic du second coin
+        String classe = Salle.classe(it.getTypeId(), false);
+        if (classe == null) { InfoJeu.consigne("Mobi pas encore reconnu : les noms des mobis se chargent, réessaie."); return; }
+        String etat = Generateur.etatDe(it);
+        int rot = Salle.rotation(it);
+        if (!prendre()) return;
+        lancerPose(classe, etat, rot);
+    }
+
+    private static void lancerPose(String classe, String etat, int rot) {
+        Salle.tache("remplir-zone", () -> {
+            try { remplir(classe, etat, rot); }
+            finally { etape = Etape.RIEN; }
+        });
     }
 
     /** PlaceObject « -id x y rot » (sol) : retenu, il donne le mobi et la rotation. */
@@ -86,25 +127,33 @@ final class RemplirZone {
             if (t.length != 4) return;
             long id = Math.abs(Long.parseLong(t[0]));
             int rot = Integer.parseInt(t[3]);
+            if (!prendre()) return;
             m.setBlocked(true);
-            etape = Etape.POSE;
             Salle.tache("remplir-zone", () -> {
-                try { remplir(id, rot); }
-                finally { etape = Etape.RIEN; }
+                try {
+                    String classe = classeInventaire(id);
+                    if (classe == null) { Journal.erreur("Mobi introuvable dans l'inventaire : remplissage impossible."); return; }
+                    remplir(classe, null, rot);
+                } finally { etape = Etape.RIEN; }
             });
         } catch (Throwable ignored) { }
     }
 
-    private static void remplir(long invId, int rot) {
+    /** Classe du mobi d'inventaire invId ; null s'il est introuvable. */
+    private static String classeInventaire(long invId) {
         Moteur gp = Salle.gp();
-        if (gp == null || !Zone.definie()) return;
-        HInventoryItem modele = null;
+        if (gp == null) return null;
         try {
             for (HInventoryItem it : gp.getInventory().getInventoryItems())
-                if (it != null && Math.abs((long) it.getId()) == invId) { modele = it; break; }
+                if (it != null && Math.abs((long) it.getId()) == invId) return Salle.classe(it.getTypeId(), false);
         } catch (Throwable ignored) { }
-        if (modele == null) { Journal.erreur("Mobi introuvable dans l'inventaire : remplissage impossible."); return; }
-        String classe = Salle.classe(modele.getTypeId(), false);
+        return null;
+    }
+
+    /** etat : celui du mobi pris a la pipette, null = laisse tel quel (pose depuis l'inventaire). */
+    private static void remplir(String classe, String etat, int rot) {
+        Moteur gp = Salle.gp();
+        if (gp == null || !Zone.definie()) return;
         Furnidata.Mobi d = classe == null ? null : Salle.details(classe);
         if (d == null) { Journal.erreur("Taille du mobi inconnue (furnidata) : remplissage impossible."); return; }
         boolean tourne = rot == 2 || rot == 6;
@@ -120,7 +169,7 @@ final class RemplirZone {
             for (int x : departs(zx, w, a)) {
                 int z = hauteur(x, y, a, b);
                 if (z < 0) { horsPlan++; continue; }
-                sols.add(new PoseDirecte.Sol(classe, x, y, z, rot));
+                sols.add(new PoseDirecte.Sol(classe, x, y, z, rot, etat));
             }
         }
         if (sols.isEmpty()) { Journal.erreur("Aucune place pour ce mobi dans la zone."); return; }

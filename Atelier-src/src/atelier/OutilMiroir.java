@@ -431,7 +431,6 @@ public class OutilMiroir {
             }
             if (!l.isEmpty()) {
                 candidats = l;
-                Journal.debug("@altitude : candidates de la liste du jeu " + l + ".");
             }
             listeRecue = true;
         }

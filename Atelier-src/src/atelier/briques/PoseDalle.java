@@ -18,8 +18,8 @@ import java.util.function.BiPredicate;
 import java.util.function.BooleanSupplier;
 
 /**
- * Pose d'une liste de mobis a des hauteurs exactes avec la dalle magique,
- * sans G-Presets (remplace la partie « dalle » de GPresetImporter).
+ * Pose d'une liste de mobis a des hauteurs exactes avec la dalle magique
+ * (remplace la partie « dalle » de l'ancien importeur).
  *
  * Deroulement de poser() :
  *   1. la dalle : une dalle magique de la salle qui convient a tous les mobis
@@ -165,8 +165,8 @@ final class PoseDalle {
             return null;
         }
         List<int[]> possibles = new ArrayList<>();
-        for (int x2 = x; x2 > Math.max(x - dimension, 0); --x2)
-            for (int y2 = y; y2 > Math.max(y - dimension, 0); --y2) possibles.add(new int[]{x2, y2});
+        for (int x2 = x; x2 > x - dimension && x2 >= 0; --x2)
+            for (int y2 = y; y2 > y - dimension && y2 >= 0; --y2) possibles.add(new int[]{x2, y2});
         possibles.sort(Comparator.comparingInt(p -> (x - p[0]) * (x - p[0]) + (y - p[1]) * (y - p[1])));
         suivant:
         for (int[] p : possibles) {
@@ -289,6 +289,8 @@ final class PoseDalle {
                 if (stop.getAsBoolean()) break;
                 String voulu = e.getValue().etat();
                 if (voulu == null || DalleMagique.estDalle(e.getValue().classe())) continue;
+                // boite wired : l'utiliser ouvre sa fenetre dans le jeu, son etat ne se regle pas
+                if (e.getValue().classe() != null && e.getValue().classe().startsWith("wf_")) continue;
                 // « 0 » (etat par defaut) sur un mobi sans etat utilisable : rien a regler
                 if ((voulu.isEmpty() || voulu.equals("0")) && PoseOutils.etat(salle.furniFromId(e.getKey())) == null) continue;
                 if (!PoseOutils.mettreEtat(canal, salle, droits, e.getKey(), voulu, stop)) b.etatsFaux.add(e.getValue().cle());
@@ -317,20 +319,79 @@ final class PoseDalle {
      */
     Dalle dalleDeLaSalle(int exigence) {
         Dalle meilleure = null;
-        for (EtatSalle.MobiSol s : salle.sols()) {
+        List<EtatSalle.MobiSol> sols = salle.sols();
+        for (EtatSalle.MobiSol s : sols) {
+            if (Salle.idFictif(s.id())) continue;          // marqueur ou fantome : pas une vraie dalle (les 0x7FFF.. du BC en sont)
             DalleMagique d = DalleMagique.depuisClasse(furnidata.classeSol(s.type()));
             if (d == null || !couvre(d.dimension(), exigence)) continue;
+            if (!utilisable(s, sols, furnidata)) continue;
             if (meilleure == null || rang(d) < rang(meilleure.modele))
                 meilleure = new Dalle(s.id(), d, false, s.x(), s.y(), s.rotation());
         }
         return meilleure;
     }
 
+    // ================================================================ dalles utilisables
+
+    /**
+     * Dalles qu'aucune pose ne doit prendre comme dalle de travail : celles
+     * d'un tapis de dalles en cours (PoseTapis), meme pas encore ramassees.
+     */
+    static final Set<Integer> EXCLUES = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /** Emprise {x, y, lx, ly} d'un mobi de sol (furnidata, rotation 2 / 6 echangent les cotes). */
+    static int[] emprise(EtatSalle.MobiSol s, Furnidata fd) {
+        Furnidata.Mobi d = fd == null ? null : fd.sol(fd.classeSol(s.type()));
+        int lx = d == null ? 1 : Math.max(1, d.xDim), ly = d == null ? 1 : Math.max(1, d.yDim);
+        if (s.rotation() == 2 || s.rotation() == 6) { int t = lx; lx = ly; ly = t; }
+        return new int[]{s.x(), s.y(), lx, ly};
+    }
+
+    /** Deux emprises {x, y, lx, ly} se chevauchent-elles ? Logique pure. */
+    static boolean chevauche(int[] a, int[] b) {
+        return a[0] < b[0] + b[2] && b[0] < a[0] + a[2] && a[1] < b[1] + b[3] && b[1] < a[1] + a[3];
+    }
+
+    /**
+     * Une dalle de la salle peut-elle servir de dalle de travail ? Non si elle
+     * est EXCLUES (tapis en cours) ou si un autre mobi est sur son emprise
+     * (la glisser sous un autre mobi laisserait la pile en l'air, et sa case
+     * n'est pas libre).
+     */
+    static boolean utilisable(EtatSalle.MobiSol dalle, List<EtatSalle.MobiSol> sols, Furnidata fd) {
+        if (EXCLUES.contains(dalle.id())) return false;
+        int[] e = emprise(dalle, fd);
+        for (EtatSalle.MobiSol o : sols)
+            if (o.id() != dalle.id() && !Salle.idFictif(o.id()) && chevauche(e, emprise(o, fd))) return false;
+        return true;
+    }
+
+    /**
+     * La salle a-t-elle une dalle de travail utilisable qui couvre toutes ces
+     * exigences (sinon une dalle neuve sera posee a part, puis ramassee) ?
+     */
+    static boolean dalleUtilisable(EtatSalle salle, Furnidata fd, Set<Integer> exigences) {
+        if (salle == null || fd == null) return false;
+        List<EtatSalle.MobiSol> sols = salle.sols();
+        for (EtatSalle.MobiSol s : sols) {
+            if (Salle.idFictif(s.id())) continue;
+            DalleMagique d = DalleMagique.depuisClasse(fd.classeSol(s.type()));
+            if (d != null && couvreTout(d.dimension(), exigences) && utilisable(s, sols, fd)) return true;
+        }
+        return false;
+    }
+
     /** Remet une dalle a sa place d'origine (ou la ramasse si nous l'avons posee). */
     void ranger(Dalle dalle, Bilan b) {
         if (dalle.poseeParNous) {
-            PoseOutils.envoyer(canal, PoseOutils.ramassageSol(dalle.id));
-            boolean partie = PoseOutils.attendre(() -> salle.sol(dalle.id) == null, 3000, null);
+            PoseOutils.Signaux.ramassageEnCours(List.of(dalle.id));
+            boolean partie;
+            try {
+                PoseOutils.envoyer(canal, PoseOutils.ramassageSol(dalle.id));
+                partie = PoseOutils.attendre(() -> salle.sol(dalle.id) == null || PoseOutils.Signaux.retireGroupe(dalle.id), 3000, null);
+            } finally {
+                PoseOutils.Signaux.ramassageFini(List.of(dalle.id));
+            }
             if (b != null) b.dalleRamassee = partie;
             if (!partie) Journal.debug("Pose dalle : la dalle " + dalle.id + " n'a pas été ramassée");
         } else if (dalle.x != dalle.origineX || dalle.y != dalle.origineY || dalle.rot != dalle.origineRot) {
@@ -355,6 +416,7 @@ final class PoseDalle {
         if (p[0] != dalle.x || p[1] != dalle.y || p[2] != dalle.rot) {
             PoseOutils.envoyer(canal, PoseOutils.deplacementSol(dalle.id, p[0], p[1], p[2]));
             dalle.x = p[0]; dalle.y = p[1]; dalle.rot = p[2];
+            dalle.hauteur = Double.NaN;             // deplacee : le serveur la remet au sol de la case, hauteur a redire
         }
         if (Double.isNaN(dalle.hauteur) || Math.round(dalle.hauteur * 100) != Math.round(z * 100)) {
             PoseOutils.envoyer(canal, PoseOutils.hauteurDalle(dalle.id, z));
@@ -381,16 +443,8 @@ final class PoseDalle {
     }
 
     private boolean poseBc(int type, Mobi m) {
-        int offre = offreBc(type, m.classe());
-        return offre > 0 && PoseOutils.envoyer(canal, PoseOutils.poseSolBc(offre, m.x(), m.y(), m.rotation()));
-    }
-
-    /** L'offre BC d'un mobi de sol : le catalogue BC, a defaut l'offre de la furnidata (bcOfferId). */
-    private int offreBc(int type, String classe) {
-        CatalogueBc.Produit p = catalogue == null ? null : catalogue.produitSol(type);
-        if (p != null && p.offerId() > 0) return p.offerId();
-        Furnidata.Mobi d = furnidata.sol(classe);
-        return d == null ? -1 : d.bcOfferId;
+        OffresBc.Offre o = OffresBc.sol(catalogue, furnidata, m.classe());     // page et offre du catalogue BC
+        return o != null && PoseOutils.envoyer(canal, PoseOutils.poseSolBc(o, m.x(), m.y(), m.rotation()));
     }
 
     /** Une pose envoyee, en attente de son mobi. */
@@ -439,15 +493,22 @@ final class PoseDalle {
         }
         if (exig.isEmpty()) exig.add(1);
 
-        // une dalle de la salle qui couvre tout : la plus petite
+        // une dalle de la salle qui couvre tout : la plus petite, LIBRE (ni dalle d'un tapis
+        // en cours, ni dalle sous d'autres mobis : la glisser emporterait ou bloquerait la pile)
         Dalle trouvee = null;
-        for (EtatSalle.MobiSol s : salle.sols()) {
+        List<EtatSalle.MobiSol> sols = salle.sols();
+        int ecartees = 0;
+        for (EtatSalle.MobiSol s : sols) {
+            if (Salle.idFictif(s.id())) continue;          // marqueur ou fantome : pas une vraie dalle (les 0x7FFF.. du BC en sont)
             DalleMagique d = DalleMagique.depuisClasse(furnidata.classeSol(s.type()));
             if (d == null || !couvreTout(d.dimension(), exig)) continue;
+            if (!utilisable(s, sols, furnidata)) { ecartees++; continue; }
             if (trouvee == null || rang(d) < rang(trouvee.modele)) trouvee = new Dalle(s.id(), d, false, s.x(), s.y(), s.rotation());
         }
+        if (ecartees > 0)
+            Journal.debug("Pose dalle : " + ecartees + " dalle(s) de la salle écartée(s) (tapis en cours ou mobis posés dessus).");
         if (trouvee != null) {
-            Journal.debug("Pose dalle : dalle " + trouvee.modele + " trouvée (" + trouvee.id + ") en " + trouvee.x + "," + trouvee.y);
+            Journal.debug("Pose dalle : dalle " + trouvee.modele + " libre trouvée (" + trouvee.id + ") en " + trouvee.x + "," + trouvee.y);
             return trouvee;
         }
 
@@ -458,39 +519,66 @@ final class PoseDalle {
         Furnidata.Mobi fd = furnidata.sol(modele.classe());
         if (fd != null) { lx = Math.max(1, fd.xDim); ly = Math.max(1, fd.yDim); }
 
+        Set<Long> trace = new HashSet<>();
+        for (Mobi m : ordre) trace.add(cle(m.x(), m.y()));
+        Set<Long> refusees = new HashSet<>();               // cases d'une dalle refusee : jamais redemandees
         int[] c;
         if (caseDalle != null) c = new int[]{caseDalle.getX(), caseDalle.getY()};
         else {
-            Set<Long> trace = new HashSet<>();
-            for (Mobi m : ordre) trace.add(cle(m.x(), m.y()));
-            Set<Long> occ = occupees();
-            Mobi premier = ordre.get(0);
-            c = caseLibre(premier.x(), premier.y(), lx, ly, trace,
-                    (x, y) -> salle.caseDuPlan(x, y) != 'x' && !occ.contains(cle(x, y)), salle::caseDuPlan, 64);
+            c = autreCase(ordre.get(0), lx, ly, trace, refusees);
             if (c == null) { b.erreur = "pas de place libre de " + lx + "×" + ly + " pour la dalle magique"; return null; }
         }
 
+        // Une dalle refusee sur sa case (avatar debout dessus, porte, case que le serveur
+        // voit occupee...) l'est encore a l'essai suivant : chaque essai prend une AUTRE case.
+        String envoi = null;
         for (int essai = 1; essai <= 3 && !stop.getAsBoolean(); essai++) {
             Set<Integer> avant = new HashSet<>();
             for (EtatSalle.MobiSol s : salle.sols()) avant.add(s.id());
             Mobi m = new Mobi(-1, modele.classe(), c[0], c[1], 0, 0, null);
+            Set<Integer> invAvant = new HashSet<>(invPris);
             if (!envoyerPose(type, m, source, invPris)) { b.erreur = "dalle magique ni dans l'inventaire ni au BC"; return null; }
+            envoi = invPris.size() > invAvant.size() ? "inventaire" : "BC " + OffresBc.sol(catalogue, furnidata, modele.classe());
             final int[] ici = c;
             final int[] trouveId = {-1};
             PoseOutils.attendre(() -> {
                 for (EtatSalle.MobiSol s : salle.sols())
                     if (!avant.contains(s.id()) && s.type() == type && s.x() == ici[0] && s.y() == ici[1]) { trouveId[0] = s.id(); return true; }
                 return false;
-            }, 7000, stop);
+            }, 4000, stop);
             if (trouveId[0] > 0) {
-                Journal.debug("Pose dalle : dalle " + modele + " posée (" + trouveId[0] + ") en " + c[0] + "," + c[1]);
+                Journal.debug("Pose dalle : dalle " + modele + " posée (" + trouveId[0] + ") en " + c[0] + "," + c[1] + " (" + envoi + ")");
                 return new Dalle(trouveId[0], modele, true, c[0], c[1], 0);
             }
-            Journal.debug("Pose dalle : la dalle n'est pas apparue (essai " + essai + ")");
+            invPris.retainAll(invAvant);                  // la dalle de l'inventaire n'est pas partie
+            for (int i = 0; i < lx; i++) for (int j = 0; j < ly; j++) refusees.add(cle(c[0] + i, c[1] + j));
+            List<PoseOutils.Signaux.Signal> sig = PoseOutils.Signaux.depuis(System.currentTimeMillis() - 4500);
+            Journal.debug("Pose dalle : la dalle n'est pas apparue en " + c[0] + "," + c[1] + " (essai " + essai + ", " + envoi
+                    + ", plan " + salle.caseDuPlan(c[0], c[1]) + ", porte " + (porteSous(c, lx, ly) ? "dessous" : "ailleurs")
+                    + ", serveur : " + (sig.isEmpty() ? "rien" : sig.get(sig.size() - 1).texte()) + ")");
+            int[] autre = autreCase(ordre.get(0), lx, ly, trace, refusees);
+            if (autre == null) break;
+            c = autre;
         }
-        b.erreur = stop.getAsBoolean() ? "arrêtée" : "la dalle magique n'est pas apparue";
+        b.erreur = stop.getAsBoolean() ? "arrêtée" : "la dalle magique n'est pas apparue" + (envoi == null ? "" : " (" + envoi + ")");
         b.arrete = stop.getAsBoolean();
         return null;
+    }
+
+    /** Une case libre pour la dalle pres du premier mobi, hors trace, hors porte et hors cases deja refusees ; null sinon. */
+    private int[] autreCase(Mobi premier, int lx, int ly, Set<Long> trace, Set<Long> refusees) {
+        Set<Long> occ = occupees();
+        occ.addAll(refusees);
+        HPoint porte = salle.porte();
+        if (porte != null) occ.add(cle(porte.getX(), porte.getY()));
+        return caseLibre(premier.x(), premier.y(), lx, ly, trace,
+                (x, y) -> salle.caseDuPlan(x, y) != 'x' && !occ.contains(cle(x, y)), salle::caseDuPlan, 64);
+    }
+
+    /** La porte de la salle est-elle sous la dalle posee en c ? */
+    private boolean porteSous(int[] c, int lx, int ly) {
+        HPoint p = salle.porte();
+        return p != null && p.getX() >= c[0] && p.getX() < c[0] + lx && p.getY() >= c[1] && p.getY() < c[1] + ly;
     }
 
     /** Cases occupees par des mobis de sol (emprise selon la furnidata et la rotation). */

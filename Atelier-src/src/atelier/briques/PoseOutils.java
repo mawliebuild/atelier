@@ -18,9 +18,9 @@ import java.util.function.IntSupplier;
  * Outils communs des briques de pose et d'enregistrement (PoseDalle,
  * ReglageWiredPose, PoseMuraux, EnregistrementCopie) :
  *   - les paquets, construits exactement comme l'importeur et l'exporteur de
- *     G-Presets les construisent (memes champs, meme ordre : compares octet par
+ *     l'ancien module les construisait (memes champs, meme ordre : compares octet par
  *     octet dans les essais) ;
- *   - les envois au rythme commun (Salle.espacer, 150 ms), plus l'ecart de
+ *   - les envois au rythme commun (Salle.espacer, reglable), plus l'ecart de
  *     350 ms que l'importeur garde entre deux WiredSetObjectVariableValue ;
  *   - les attentes interruptibles (BooleanSupplier stop) ;
  *   - la lecture des paquets de variables wired (WiredAllVariablesDiffs,
@@ -51,9 +51,19 @@ final class PoseOutils {
         return new HPacket("PlaceObject", S, String.format("-%d %d %d %d", idInventaire, x, y, rot));
     }
 
-    /** Pose depuis le BC d'un mobi de sol (dropFurni, acquireStackTileFromBC). */
-    static HPacket poseSolBc(int offre, int x, int y, int rot) {
-        return new HPacket("BuildersClubPlaceRoomItem", S, -1, offre, "", x, y, rot);
+    /**
+     * Pose depuis le BC d'un mobi de sol, comme le client (HabboCatalog,
+     * BuildersClubPlaceRoomItemMessageComposer) : (page, offre, extra, x, y,
+     * direction, false). Le dernier booleen n'est vrai qu'en reponse a
+     * BuildersClubPlacementWarning (salle cachee acceptee) : jamais ici.
+     */
+    static HPacket poseSolBc(int page, int offre, String extra, int x, int y, int rot) {
+        return new HPacket("BuildersClubPlaceRoomItem", S, page, offre, extra == null ? "" : extra, x, y, rot, false);
+    }
+
+    /** Pose depuis le BC d'un mobi de sol avec l'offre choisie (OffresBc). */
+    static HPacket poseSolBc(OffresBc.Offre o, int x, int y, int rot) {
+        return poseSolBc(o.page(), o.offre(), o.extra(), x, y, rot);
     }
 
     /** MoveObject(id, x, y, rot) (moveFurni). */
@@ -66,9 +76,18 @@ final class PoseOutils {
         return new HPacket("SetCustomStackingHeight", S, dalle, (int) Math.round(z * 100.0));
     }
 
-    /** PickupObject(2, id) : ramasse un mobi de sol (2 = sol, 1 = mural). */
-    static HPacket ramassageSol(int id) {
-        return new HPacket("PickupObject", S, 2, id);
+    /**
+     * PickupObject(2, id, false) : ramasse un mobi de sol (2 = sol, 1 = mural).
+     * Le client (PickupObjectMessageComposer) envoie TOUJOURS trois champs :
+     * categorie, id, confirmation (false ; true seulement en reponse a
+     * ObjectRemoveConfirm). Meme paquet pour un mobi du Builders Club (ids
+     * 0x7FFF....) : le client n'a pas de paquet de ramassage propre au BC.
+     */
+    static HPacket ramassageSol(int id) { return ramassage(id, false, false); }
+
+    /** PickupObject(categorie, id, confirme), exactement comme le client. */
+    static HPacket ramassage(int id, boolean mural, boolean confirme) {
+        return new HPacket("PickupObject", S, mural ? 1 : 2, id, confirme);
     }
 
     /** Etat d'un mobi de sol par la variable -110 (attemptSetState) : 4 champs, sans le dernier entier. */
@@ -100,10 +119,35 @@ final class PoseOutils {
         return new HPacket("PlaceObject", S, idInventaire + " " + position);
     }
 
-    /** Pose d'un mural depuis le BC (placeWallItems) : (page, offre, etat, position, false). */
-    static HPacket poseMurBc(int page, int offre, String etat, String position) {
-        return new HPacket("BuildersClubPlaceWallItem", S, page, offre, etat == null ? "" : etat, position, false);
+    /**
+     * Pose d'un mural depuis le BC, comme le client : (page, offre, extra,
+     * position, false). extra est le parametre du PRODUIT du catalogue (le
+     * numero d'une affiche), jamais l'etat du mural (refus sans message).
+     */
+    static HPacket poseMurBc(int page, int offre, String extra, String position) {
+        return new HPacket("BuildersClubPlaceWallItem", S, page, offre, extra == null ? "" : extra, position, false);
     }
+
+    /**
+     * Pose d'un post-it (classe « post_it* », modele « furniture_is_stickie »
+     * dans le client) : PlacePostIt(int id du bloc dans l'inventaire, String
+     * position), jamais PlaceObject (refuse sans message). Le serveur repond
+     * PostItPlaced ; le bloc reste dans l'inventaire tant qu'il a des feuilles.
+     */
+    static HPacket posePostIt(int idInventaire, String position) {
+        return new HPacket("PlacePostIt", S, idInventaire, position);
+    }
+
+    /** Couleur et texte d'un post-it pose (SetItemData : id, couleur, texte), comme le client. */
+    static HPacket donneesPostIt(int id, String couleur, String texte) {
+        return new HPacket("SetItemData", S, id, couleur == null ? "" : couleur, texte == null ? "" : texte);
+    }
+
+    /** Un post-it (pose par PlacePostIt) ? Logique pure. */
+    static boolean postIt(String classe) { return classe != null && classe.startsWith("post_it"); }
+
+    /** Une couleur de post-it valable (« FFFF33 ») ? Logique pure. */
+    static boolean couleurPostIt(String etat) { return etat != null && etat.matches("[0-9A-Fa-f]{6}"); }
 
     static HPacket deplacementMur(int id, String position) {
         return new HPacket("MoveWallItem", S, id, position);
@@ -194,7 +238,7 @@ final class PoseOutils {
 
     // ================================================================ lecture de la salle
 
-    /** L'etat d'un mobi de sol au sens de G-Presets (StateExtractor) : null si non utilisable ou sans etat. */
+    /** L'etat d'un mobi de sol au sens de l'ancien module (StateExtractor) : null si non utilisable ou sans etat. */
     static String etat(HFloorItem f) {
         if (f == null || f.getUsagePolicy() < 1) return null;
         IStuffData d = f.getStuff();
@@ -351,6 +395,162 @@ final class PoseOutils {
             v.put(objet, p.readInteger());
         }
         return new Porteurs(id, nom, v);
+    }
+
+    // ================================================================ ce que dit le serveur
+
+    /**
+     * Ce que le serveur repond pendant nos poses et nos ramassages, ecoute une
+     * seule fois (lecture seule, sauf ObjectRemoveConfirm de NOS ramassages) :
+     *   - ObjectRemoveConfirm (int categorie 1 mur / 2 sol, int id, String
+     *     titre, String texte) : le serveur demande confirmation d'un
+     *     ramassage ; le client montre une fenetre puis renvoie
+     *     PickupObject(categorie, id, true). Pour un id que l'Atelier ramasse
+     *     (aConfirmer), on confirme nous-memes et la fenetre n'est pas montree ;
+     *   - ObjectRemoveMultiple (int n, n x int id, int ramasseur) : retrait
+     *     groupe, que EtatSalle ne lit pas (il ne lit que ObjectRemove) : un id
+     *     vu ici n'est plus dans la salle, meme si l'etat le garde ;
+     *   - BuildersClubPlacementWarning (int genre 0 sol / 1 mur, int page,
+     *     int offre, String extra, puis x, y, direction ou position murale) :
+     *     la pose BC attend une confirmation (« room.confirm.hide_room » : la
+     *     salle serait cachee) ; sans elle, le mobi n'apparait jamais. Le
+     *     Moteur la cache au jeu pendant PoseCopie ; ici on la note ;
+     *   - NotificationDialog (String genre, int n, n x (cle, valeur)) : les
+     *     erreurs de pose du jeu (« furni_placement_error »...) ;
+     *   - BuildersClubFurniCount (int n) : mobis BC dans les salles.
+     * Tout est note en Journal.debug et garde 2 minutes pour expliquer un refus.
+     */
+    static final class Signaux {
+        private Signaux() { }
+
+        /** Un signal du serveur : quand, genre, texte, case (-1 sans), offre (-1 sans). */
+        record Signal(long t, String genre, String texte, int x, int y, int offre) { }
+
+        private static volatile boolean installe;
+        private static final java.util.Set<Integer> aConfirmer = java.util.concurrent.ConcurrentHashMap.newKeySet();
+        private static final java.util.Map<Integer, Long> retires = new java.util.concurrent.ConcurrentHashMap<>();
+        private static final java.util.Set<Integer> confirmes = java.util.concurrent.ConcurrentHashMap.newKeySet();
+        private static final java.util.concurrent.ConcurrentLinkedDeque<Signal> recents = new java.util.concurrent.ConcurrentLinkedDeque<>();
+        private static volatile int compteBc = -1;
+        static final long GARDE_MS = 120_000;
+
+        /** Branche les ecoutes (une fois, des que le moteur est la). Sans danger si appele souvent. */
+        static synchronized void installer() {
+            if (installe) return;
+            Moteur gp = Salle.gp();
+            Canal c = gp == null ? null : gp.canal();
+            if (c == null) return;
+            HMessage.Direction C = HMessage.Direction.TOCLIENT;
+            c.intercept(C, "ObjectRemoveConfirm", Signaux::surConfirmation);
+            c.intercept(C, "ObjectRemoveMultiple", m -> {
+                HPacket p = m.getPacket();
+                int n = p.readInteger();
+                long t = System.currentTimeMillis();
+                for (int i = 0; i < n && i < 100_000; i++) retires.put(p.readInteger(), t);
+            });
+            // les ids du BC (0x7FFF....) sont REUTILISES : un id retire puis rendu a un nouveau
+            // mobi n'est plus « retire » (sinon ce mobi serait cru parti des sa pose)
+            c.intercept(C, "ObjectAdd", m -> { try { retires.remove(m.getPacket().readInteger()); } catch (Throwable ignored) { } });
+            c.intercept(C, "BuildersClubPlacementWarning", m -> {
+                HPacket p = m.getPacket();
+                int genre = p.readInteger(), page = p.readInteger(), offre = p.readInteger();
+                String extra = p.readString();
+                if (genre == 0) {
+                    int x = p.readInteger(), y = p.readInteger(), d = p.readInteger();
+                    noter(new Signal(System.currentTimeMillis(), "bc", "avertissement BC (sol) offre " + offre + " page " + page
+                            + (extra.isEmpty() ? "" : " « " + extra + " »") + " en (" + x + "," + y + ") r" + d, x, y, offre));
+                } else {
+                    String ou = p.readString();
+                    noter(new Signal(System.currentTimeMillis(), "bcmur", "avertissement BC (mural) offre " + offre + " page " + page
+                            + " " + ou, -1, -1, offre));
+                }
+            });
+            c.intercept(C, "NotificationDialog", m -> {
+                HPacket p = m.getPacket();
+                String genre = p.readString();
+                int n = p.readInteger();
+                StringBuilder b = new StringBuilder(genre);
+                for (int i = 0; i < n && i < 50; i++) b.append(i == 0 ? " : " : ", ").append(p.readString()).append("=").append(p.readString());
+                noter(new Signal(System.currentTimeMillis(), "notification", b.toString(), -1, -1, -1));
+            });
+            c.intercept(C, "BuildersClubFurniCount", m -> { try { compteBc = m.getPacket().readInteger(); } catch (Throwable ignored) { } });
+            installe = true;
+        }
+
+        private static void noter(Signal s) {
+            recents.addLast(s);
+            long trop = System.currentTimeMillis() - GARDE_MS;
+            while (!recents.isEmpty() && recents.peekFirst().t() < trop) recents.pollFirst();
+            while (recents.size() > 200) recents.pollFirst();
+            Journal.debug("serveur : " + s.texte() + ".");
+        }
+
+        private static void surConfirmation(HMessage m) {
+            HPacket p = m.getPacket();
+            int cat = p.readInteger(), id = p.readInteger();
+            String titre = p.readString(), texte = p.readString();
+            boolean nous = aConfirmer.contains(id);
+            noter(new Signal(System.currentTimeMillis(), "confirmation", "le jeu demande de confirmer le ramassage de " + id
+                    + " (" + titre + " / " + texte + ")" + (nous ? " : confirmé par l'Atelier" : ""), -1, -1, -1));
+            if (!nous) return;
+            m.setBlocked(true);                          // notre ramassage : pas de fenetre dans le jeu
+            confirmes.add(id);
+            Moteur gp = Salle.gp();
+            Canal c = gp == null ? null : gp.canal();
+            if (c != null) Salle.tache("confirmer-ramassage", () -> envoyer(c, ramassage(id, cat == 1, true)));
+        }
+
+        /** Ces ids sont ramasses par l'Atelier : une demande de confirmation est acceptee pour eux. */
+        static void ramassageEnCours(java.util.Collection<Integer> ids) { installer(); aConfirmer.addAll(ids); }
+
+        static void ramassageFini(java.util.Collection<Integer> ids) { aConfirmer.removeAll(ids); }
+
+        /** Le serveur a-t-il retire cet id par ObjectRemoveMultiple (que l'etat de la salle ne lit pas) ? */
+        static boolean retireGroupe(int id) { return retires.containsKey(id); }
+
+        /** Le jeu a demande (et l'Atelier a envoye) une confirmation pour cet id. */
+        static boolean confirme(int id) { return confirmes.contains(id); }
+
+        /** Mobis BC comptes par le serveur (BuildersClubFurniCount), -1 inconnu. */
+        static int compteBc() { return compteBc; }
+
+        /** Les signaux recus depuis t. */
+        static List<Signal> depuis(long t) {
+            List<Signal> l = new ArrayList<>();
+            for (Signal s : recents) if (s.t() >= t) l.add(s);
+            return l;
+        }
+
+        /**
+         * La raison d'un refus de pose en (x, y) donnee par le serveur depuis t
+         * (avertissement BC sur cette case, sinon la derniere notification
+         * d'erreur), ou null.
+         */
+        static String raisonPose(long t, int x, int y) {
+            String n = null;
+            for (Signal s : depuis(t)) {
+                if (s.genre().equals("bc") && s.x() == x && s.y() == y) return raisonLisible(s);
+                if (s.genre().equals("notification")) n = s.texte();
+            }
+            return n;
+        }
+
+        /** La raison d'un refus de mural depuis t (avertissement BC mural, sinon notification), ou null. */
+        static String raisonMur(long t) {
+            String n = null;
+            for (Signal s : depuis(t)) {
+                if (s.genre().equals("bcmur")) return raisonLisible(s);
+                if (s.genre().equals("notification")) n = s.texte();
+            }
+            return n;
+        }
+
+        /** En francais, pour le bilan. Logique pure. */
+        static String raisonLisible(Signal s) {
+            if (s.genre().startsWith("bc"))
+                return "le Builders Club demande une confirmation (la salle serait cachée aux visiteurs)";
+            return s.texte();
+        }
     }
 
     // ================================================================ textes

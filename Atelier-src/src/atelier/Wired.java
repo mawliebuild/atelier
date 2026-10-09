@@ -38,13 +38,19 @@ public final class Wired {
         SELECTEUR        (2, "Sélecteur"),
         SELECTEUR_FILTRE (3, "Sélecteur filtre"),
         CONDITION        (4, "Condition"),
-        EFFET            (5, "Effet"),
-        EFFET_SIGNAL     (6, "Effet envoyer un signal"),
-        EFFET_NEGATIF    (7, "Effet négatif"),
-        ADDON            (8, "Add-on"),
+        /**
+         * Add-on qui change la facon dont les conditions de la pile sont
+         * evaluees (wf_xtra_or_eval : « au moins une condition est remplie »).
+         * Il agit au moment des conditions : range juste apres elles.
+         */
+        CONDITION_ADDON  (5, "Add-on de condition"),
+        EFFET            (6, "Effet"),
+        EFFET_SIGNAL     (7, "Effet envoyer un signal"),
+        EFFET_NEGATIF    (8, "Effet négatif"),
+        ADDON            (9, "Add-on"),
         /** Mobi de la famille wired qui n'est pas une boite : dalle, porte, antenne, compteur... */
-        MOBI_WIRED       (9, "Mobi wired"),
-        AUTRE            (10, "Pas un wired");
+        MOBI_WIRED       (10, "Mobi wired"),
+        AUTRE            (11, "Pas un wired");
 
         public final int ordre;
         public final String libelle;
@@ -98,12 +104,25 @@ public final class Wired {
     }
 
     /**
+     * Add-ons qui portent sur les CONDITIONS de la pile. Dans la furnidata de
+     * habbo.fr, un seul : wf_xtra_or_eval (« Wired Add-on : au moins une
+     * condition est remplie »), qui fait un OU des conditions au lieu du ET
+     * habituel. Les noms « and_eval », « none_eval »… sont prevus si le jeu en
+     * ajoute (meme famille *_eval).
+     */
+    static boolean estAddonDeCondition(String c) {
+        return c != null && c.startsWith("wf_xtra_") && c.endsWith("_eval");
+    }
+
+    /**
      * Rang d'un wired d'apres son nom technique.
      *
      * Deux cas sont reconnus par leur nom exact, car leur prefixe seul ne suffit
      * pas : « Envoyer un signal » (wf_act_send_signal) et les effets negatifs
      * (wf_act_neg_*), qui sont des wf_act_ mais doivent monter au-dessus des
-     * effets ordinaires. Les variables (wf_var_) sont rangees avec les add-ons ;
+     * effets ordinaires. L'add-on « au moins une condition est remplie »
+     * (wf_xtra_or_eval) est en fait une regle des conditions : CONDITION_ADDON,
+     * juste au-dessus d'elles. Les variables (wf_var_) sont rangees avec les add-ons ;
      * les autres « wf_ » sont des mobis wired (MOBI_WIRED), pas des boites.
      */
     public static Rang rang(String classe) {
@@ -121,6 +140,7 @@ public final class Wired {
             if (c.equals("wf_act_send_signal"))     return Rang.EFFET_SIGNAL;
             return Rang.EFFET;
         }
+        if (estAddonDeCondition(c)) return Rang.CONDITION_ADDON;
         if (c.startsWith("wf_xtra_")) return Rang.ADDON;
         if (c.startsWith("wf_var_"))  return Rang.ADDON;
         if (c.startsWith("wf_"))      return Rang.MOBI_WIRED;

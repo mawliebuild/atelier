@@ -50,9 +50,10 @@ public final class OngletDocumentation {
         c(jeu, MAC ? "OPT+SHIFT+C" : "CMD+SHIFT+C", "Mode Construction, panneau des calques actif : copier le calque.");
         c(jeu, MAC ? "OPT+SHIFT+V" : "CMD+SHIFT+V", "Coller le calque copié (dans le même appart : à sa place puis Déplacer ; ailleurs : collage complet).");
         c(jeu, "Échap", "Pendant un déplacement lancé par " + touche("OPT") + "+clic : lâcher le mobi, il reste où il était.");
-        c(jeu, "OPT+Clic", "Prendre ou déplacer un mobi (commande du jeu) ; sert aussi à choisir un mobi mural pour Déplacer un mur.");
+        c(jeu, "OPT+Clic", "Prendre ou déplacer un mobi (commande du jeu) ; sert aussi à choisir les mobis muraux de Déplacer un mur (fenêtre ouverte, chaque clic en ajoute un ou le retire).");
         c(jeu, "Clic", "Sur une dalle magique : la sélectionner (comme dans le jeu normal).");
         c(jeu, "Double-clic", "Sur un mobi posé sur une dalle magique : changer son état (le double-clic traverse la dalle).");
+        c(jeu, "Clic", "Inventaire du jeu, « Vendre au troc » : quantité et prix (Entrée vend, Échap annule), puis un clic sur une case du jeu pose la vitrine.");
 
         Section chat = section("Commandes du chat", "À taper dans le chat du jeu : le message n'est pas envoyé.");
         c(chat, ":h 2,5", "Hauteur fixe des dalles magiques (de 0 à 40, virgule ou point).");
@@ -76,6 +77,14 @@ public final class OngletDocumentation {
         c(calques, "Glisser", "Changer l'ordre des calques.");
         c(calques, "Double-clic", "Sur la barre du panneau : le replier ou le déplier.");
         c(calques, "Entrée", "Dans le filtre par nom : transformer le texte en étiquette.");
+        c(calques, "Clic", "Remplir une zone, après le choix de la zone : un clic sur un mobi de la salle le prend comme modèle (au lieu de le poser depuis l'inventaire).");
+        c(calques, "Clic", "Remplacer dans une zone, bouton Pipette : un clic sur un mobi de la zone choisit le type à remplacer.");
+        c(calques, "Clic", "Escalier, bouton Pipette : un clic sur un petit bloc de la salle choisit sa couleur (re-clique le bouton pour annuler).");
+        c(calques, "↑ | → | ↓ | ←", "Fenêtre Déplacer, Dupliquer ou Coller ouverte : déplacer l'aperçu d'une case, comme un clic sur la flèche (↑ = ↗, → = ↘, ↓ = ↙, ← = ↖). Aussi dans le jeu (Habbo au premier plan, chat vide).");
+        c(calques, "SHIFT+Flèche", "Même chose, de 5 cases d'un coup.");
+        c(calques, "↑ | → | ↓ | ←", "Fenêtre Photo de référence ouverte : déplacer la photo d'un pixel (Maj : 10 pixels). Aussi avec les boutons flèches de la fenêtre (Maj-clic : 10 pixels), et dans le jeu (Habbo au premier plan, chat vide).");
+        c(calques, "Entrée", "Fenêtre Déplacer, Dupliquer ou Coller ouverte : Confirmer ou Poser (aussi dans le jeu, chat vide).");
+        c(calques, "Échap", "Fenêtre Déplacer, Dupliquer ou Coller ouverte : Annuler (aussi dans le jeu, chat vide, sauf en mode Floor).");
 
         Section floor = section("Floor dans l'appart", "Bouton Floor (barre du bas) : la grille montre le floor prévu, cases fantômes autour.");
         c(floor, "Clic", "Dans l'appart : appliquer l'outil choisi à la case (même dans le vide, sur une case fantôme).");
@@ -106,13 +115,27 @@ public final class OngletDocumentation {
         c(galerie, "Molette | Pincer", "Zoomer dans la photo.");
         c(galerie, "Glisser", "Se déplacer dans la photo.");
         c(galerie, "Double-clic", "Passer de « ajustée » à 100 %.");
-        c(galerie, "Clic droit", "Ouvrir, renommer ou supprimer une photo.");
+        c(galerie, "Clic droit", "Ouvrir, taguer, déplacer, supprimer une photo, ou l'utiliser comme photo de référence sur la salle.");
         c(galerie, "Glisser", "Une photo sur une autre : changer l'ordre ; des images depuis " + (MAC ? "le Finder" : "l'Explorateur") + " : les ajouter.");
         // Mac : Cmd+Ctrl+Maj+4 copie une zone ; Windows : Win+Maj+S (Outil Capture d'écran) aussi.
         c(galerie, MAC ? "CMD+CTRL+SHIFT+4" : "Win+SHIFT+S", "Capture d'écran copiée, puis « Coller une image » pour l'ajouter.");
         c(galerie, "Double-clic", "Sur la barre de la visionneuse : la replier.");
+        // Entree et Echap : memes touches sur Mac (Retour) et Windows ; actives seulement dans la visionneuse
+        c(galerie, "Glisser | Entrée | Échap", "Visionneuse, bouton Recadrer : tracer la zone à garder, la déplacer ou la redimensionner par ses coins et ses bords ; Entrée valide, Échap annule. « Annuler le recadrage » remet l'original tant que la visionneuse reste ouverte.");
+        c(galerie, "Clic | Entrée", "Sur un dossier : l'ouvrir. Le chemin en haut (Galerie › …) permet de remonter.");
+        c(galerie, "F2", "Sur un dossier : le renommer.");
+        c(galerie, "Suppr", "Sur un dossier vide : le supprimer (un dossier avec des photos n'est jamais supprimé).");
+        c(galerie, "Glisser", "Une photo sur un dossier, ou sur le chemin en haut : l'y ranger (ses tags la suivent).");
 
-        Section barres = section("Barres", "Barre du haut et barres en bas à droite du jeu.");
+        // Clic, clic droit, glisser, Entree : memes gestes sur Mac (Retour, clic droit = CTRL+clic) et Windows
+        Section copies = section("Mes copies", "Apparts, onglet « Dupliquer un appart », liste des copies.");
+        c(copies, "Clic | Double-clic | Entrée", "Sur un dossier : l'ouvrir. Le chemin en haut (Mes copies › …) permet de remonter.");
+        c(copies, "Clic droit", "Sur un dossier : l'ouvrir, le renommer, le supprimer s'il est vide (« Apparts » et « Zones » sont fixes).");
+        c(copies, "Clic droit", "Sur une copie : la renommer, la déplacer vers un dossier, la supprimer.");
+        c(copies, "Glisser", "Une copie sur un dossier, ou sur le chemin en haut : l'y ranger (son aperçu la suit). Une zone reste dans « Zones », un appart dans « Apparts ».");
+        c(copies, "Clic", "Sur un aperçu : l'agrandir.");
+
+        Section barres = section("Barres","Barre du haut et barres en bas à droite du jeu.");
         c(barres, "Glisser", "Déplacer la barre (un simple clic garde son effet habituel).");
         c(barres, "Clic droit", "Remettre la barre à sa place.");
         c(barres, "Clic", "Sur la petite flèche : réduire ou déplier la barre.");

@@ -352,19 +352,16 @@ public class OutilAligner {
         String raison = "";
         String arret = null;
         int salle = Salle.salleId();
-        long dernierEnvoi = 0;
         Journal.debug(nomOutil + " : " + cibles.size() + " copie(s) de « " + ref.nom
                 + " » (type " + ref.typeId + ", état " + ref.etat + ") depuis " + ref.position + ", source " + src);
         for (String cible : cibles) {
             if (arreter) { arret = "pose arrêtée"; break; }
             if (Salle.salleId() != salle) { arret = "pose interrompue, tu as changé de salle"; break; }
-            // au moins 150 ms entre deux envois, meme si la copie precedente est apparue tout de suite
-            long ecart = System.currentTimeMillis() - dernierEnvoi;
-            if (ecart < 150) Salle.sommeil(150 - ecart);
+            // rythme commun des rafales, meme si la copie precedente est apparue tout de suite
+            Salle.espacer();
             k++;
             java.util.Set<Integer> avant = new java.util.HashSet<>();
             for (gearth.extensions.parsers.HWallItem w : Salle.murs()) avant.add(w.getId());
-            dernierEnvoi = System.currentTimeMillis();
             PoseMur.Resultat r = PoseMur.poser(gp, ref.typeId, ref.etat, cible, src, utilises);
             String ligne;
             if (!r.ok) {

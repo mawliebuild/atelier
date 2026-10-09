@@ -78,8 +78,7 @@ public final class ChargementAuto {
             dernierEssaiInv = maintenant;
             try {
                 inventaireDemande();
-                gp.demanderInventaire();
-                Journal.debug("inventaire demandé automatiquement.");
+                if (gp.demanderInventaire()) Journal.debug("inventaire demandé automatiquement.");
             } catch (Throwable t) {
                 System.err.println("[Atelier] demande d'inventaire impossible : " + t);
             }
@@ -184,6 +183,7 @@ public final class ChargementAuto {
         pagesDuJeu.put(page, System.currentTimeMillis());
         if ("BUILDERS_CLUB".equals(type)) {
             Salle.tache("catalogue-page-bc", () -> {
+                Salle.espacer();             // au milieu de la rafale des pages BC du moteur
                 try { gp.sendToServer(copie); } catch (Throwable ignored) { }
             });
             return;
@@ -220,6 +220,7 @@ public final class ChargementAuto {
                     if (collecteBc(gp)) continue;
                     pageEnAttente = null;
                     Salle.sommeil(200);          // laisser le moteur finir la collecte
+                    Salle.espacer();
                     try { gp.sendToServer(p); } catch (Throwable ignored) { }
                     Journal.debug("catalogue : page demandée pendant la collecte BC renvoyée.");
                     return;

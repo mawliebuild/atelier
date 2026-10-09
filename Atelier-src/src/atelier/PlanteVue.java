@@ -142,15 +142,6 @@ final class PlanteVue {
 
     static final Comparator<Plante> PAR_RARETE = Comparator.comparingInt((Plante p) -> p.rarete).thenComparing(PAR_NOM);
 
-    static final Comparator<Plante> PAR_CROISSANCE = Comparator.comparingDouble(PlanteVue::partCroissanceTri)
-            .thenComparing(PAR_NOM);
-
-    private static double partCroissanceTri(Plante p) {
-        if (p.morte) return 2;
-        double c = partCroissance(p);
-        return c < 0 ? 1.5 : c;
-    }
-
     // ------------------------------------------------------------- textes
 
     /** Etoiles de rarete (0 a 10 -> 0 a 5 etoiles) et le niveau : « ★★★ 6 ». */
@@ -161,23 +152,6 @@ final class PlanteVue {
         for (int i = 0; i < e; i++) s.append('★');
         if (s.length() > 0) s.append(' ');
         return s.append(r).toString();
-    }
-
-    /** Part de croissance (0..1), -1 inconnue. Adulte : 1. */
-    static double partCroissance(Plante p) {
-        if (p.recoltable || p.adulte()) return 1;
-        if (p.niveau <= 0) return -1;
-        int max = p.niveauMax > 0 ? p.niveauMax : 7;
-        return Math.max(0, Math.min(1, p.niveau / (double) max));
-    }
-
-    static String texteCroissance(Plante p) {
-        if (p.recoltable || p.adulte()) return "Adulte";
-        if (p.niveau <= 0) return "?";
-        String s = p.niveau + "/" + (p.niveauMax > 0 ? p.niveauMax : 7);
-        long r = p.resteCroissance();
-        if (r > 0) s += " · " + PlanteSuivi.duree(r);
-        return s;
     }
 
     // ---------------------------------------------------- clic sur une ligne

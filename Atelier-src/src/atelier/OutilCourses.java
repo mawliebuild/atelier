@@ -216,11 +216,8 @@ public class OutilCourses {
         if (!Platform.isFxApplicationThread()) { Platform.runLater(this::chargerListe); return; }
         List<String> noms = new ArrayList<>();
         try {
-            File[] fs = OngletApparts.dossierApparts().listFiles((d, n) -> n.endsWith(".json") && !n.startsWith("_atelier"));
-            if (fs != null) {
-                Arrays.sort(fs, Comparator.comparing(File::getName));
-                for (File f : fs) noms.add(f.getName().substring(0, f.getName().length() - 5));
-            }
+            // toutes les copies, dossiers compris : « Apparts/Noel/Loft » (sans les fichiers internes « _atelier… »)
+            noms.addAll(CopiesDossiers.toutes());
         } catch (Throwable ignored) { }
         String garde = choixAppart.getValue();
         if (!noms.equals(choixAppart.getItems())) choixAppart.getItems().setAll(noms);
@@ -236,6 +233,13 @@ public class OutilCourses {
         final String source = rAppart.isSelected() ? S_APPART : rZone.isSelected() ? S_ZONE : S_SALLE;
         final String appart = choixAppart.getValue();
         final boolean salle = avecSalle.isSelected() && !rSalle.isSelected();
+        // recalcul automatique (inventaire ou salle changes) sans appart choisi : rien a calculer, pas une erreur
+        if (S_APPART.equals(source) && appart == null) {
+            majVoyants();
+            etat.setText("Choisis un appart enregistré dans la liste.");
+            lignes = new ArrayList<>(); afficher();
+            return;
+        }
         enCours = true;
         etat.setText("Calcul...");
         Salle.tache("courses", () -> {
@@ -406,9 +410,11 @@ public class OutilCourses {
         }
 
         String auBc(Moteur gp, Integer tid, String classe, boolean mural) {
-            if (charge && tid != null) {
+            if (charge && tid != null && classe != null) {
                 try {
-                    Object p = mural ? gp.getCatalog().getAnyWallProduct(tid) : gp.getCatalog().getFloorProduct(tid);
+                    // comme la pose : furnidata « bc » et produit du catalogue BC (OffresBc)
+                    Object p = mural ? OffresBc.mur(gp.getCatalog(), gp.getFurniDataTools(), classe, null)
+                            : OffresBc.sol(gp.getCatalog(), gp.getFurniDataTools(), classe);
                     return p != null ? "oui" : "non";
                 } catch (Throwable ignored) { }
             }

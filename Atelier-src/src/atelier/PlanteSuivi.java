@@ -1,8 +1,5 @@
 package atelier;
 
-import gearth.extensions.parsers.HEntity;
-import gearth.extensions.parsers.HEntityType;
-import gearth.extensions.parsers.HEntityUpdate;
 import gearth.protocol.HMessage;
 import gearth.protocol.HPacket;
 
@@ -16,14 +13,18 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * Le moteur de l'Atelier ne suit que les mobis, pas les avatars ni les animaux : on tient
  * donc ici notre propre liste, a partir des paquets du serveur.
  *
- *   Users        (TOCLIENT) liste des avatars / bots / animaux, parsee par
- *                la connexion (HEntity.parse). Une monster plant est un animal de
- *                type 16 : son « figure » commence par « 16 ».
+ *   Users        (TOCLIENT) liste des avatars / bots / animaux, lue ici
+ *                (lireEntites, format du client Flash actuel). Une monster
+ *                plant est un animal de type 16 : son « figure » commence par « 16 ».
+ *                HEntity.parse de gearth ne sert plus : il ne connait pas le
+ *                « badgesRank » ajoute apres chaque avatar (int), et tout ce qui
+ *                suit le premier avatar etait lu de travers (plantes perdues).
  *   UserRemove   (TOCLIENT) un avatar / animal quitte la salle (index en texte).
  *   UserUpdate   (TOCLIENT) positions ; une plante ne bouge pas, mais on suit.
+ *                Lu ici aussi (lirePositions) : un int de plus avant le statut.
  *   RoomReady    (TOCLIENT) changement de salle : on vide tout.
  *   PetInfo      (TOCLIENT) fiche d'une plante, recue quand TU la cliques
- *                dans le jeu ou dans le tableau, ou lue sans bruit par l'Atelier : croissance,
+ *                dans le jeu ou dans le tableau, ou lue sans bruit par l'Atelier :
  *                bien-etre, temps restant, rarete... Ordre des champs deduit
  *                du client Flash, decode prudemment, journal hexa en console.
  *   PetStatusUpdate / PetLevelUpdate / PetRespectNotification (TOCLIENT) :
@@ -74,7 +75,6 @@ public final class PlanteSuivi {
         public volatile int age = -1;
         public volatile int bienEtreMax = -1;
         public volatile long finVie = 0;     // epoque ms, 0 = inconnu
-        public volatile long finCroissance = 0;
         public volatile long infoRecue = 0;  // epoque ms du dernier PetInfo
 
         Plante(int id) { this.id = id; }
@@ -84,13 +84,6 @@ public final class PlanteSuivi {
             if (morte) return 0;
             long f = finVie;
             if (f <= 0) return -1;
-            return Math.max(0, (f - System.currentTimeMillis()) / 1000);
-        }
-
-        /** Secondes avant maturite ; -1 inconnu, 0 adulte. */
-        public long resteCroissance() {
-            long f = finCroissance;
-            if (f <= 0) return adulte() ? 0 : -1;
             return Math.max(0, (f - System.currentTimeMillis()) / 1000);
         }
 
@@ -115,13 +108,6 @@ public final class PlanteSuivi {
             return infos ? "Vivante" : "Vivante ?";
         }
 
-        public String croissance() {
-            if (adulte()) return "Adulte";
-            String s = niveau > 0 ? niveau + "/" + (niveauMax > 0 ? niveauMax : 7) : "?";
-            long r = resteCroissance();
-            if (r > 0) s += " · " + duree(r);
-            return s;
-        }
     }
 
     private static final Map<Integer, Plante> plantes = new ConcurrentHashMap<>();
@@ -177,7 +163,8 @@ public final class PlanteSuivi {
                     try {
                         brancher(gp);
                         branche = true;
-                        Journal.debug("suivi des monster plants actif.");
+                        Journal.debug("suivi des monster plants actif : " + ecoutesPosees + " écoute(s) posée(s)"
+                                + (ecoutesRatees > 0 ? ", " + ecoutesRatees + " ratée(s)" : "") + ".");
                         return;
                     } catch (Throwable e) {
                         Journal.debug("suivi des plantes : " + e);
@@ -219,10 +206,15 @@ public final class PlanteSuivi {
                     });
                 } catch (Throwable e) { System.err.println("[Atelier] " + nom + " : " + e); }
             });
+            ecoutesPosees++;
         } catch (Throwable e) {
-            Journal.debug("intercept " + nom + " indisponible : " + e);
+            ecoutesRatees++;
+            Journal.debug("plantes : écoute de " + nom + " impossible : " + e);
         }
     }
+
+    /** Ecoutes posees / ratees par brancher() (diagnostic). */
+    private static volatile int ecoutesPosees = 0, ecoutesRatees = 0;
 
     private static void brancher(Moteur gp) {
         ecoute(gp, "RoomReady", p -> {
@@ -286,58 +278,162 @@ public final class PlanteSuivi {
 
     // ------------------------------------------------------------- paquets
 
-    private static void surUsers(HPacket p) {
+    static void surUsers(HPacket p) {
         nbUsers++;
         listeRecue = true;
         verifierSalle();
-        HEntity[] ents;
-        try { ents = HEntity.parse(p); }
-        catch (Throwable e) {
-            System.err.println("[Atelier] Users illisible : " + e);
-            return;
-        }
+        Entites lu = lireEntites(p);
+        int plantesVues = 0;
+        StringBuilder diag = new StringBuilder();
         boolean change = false;
-        for (HEntity e : ents) {
-            if (e == null || e.getEntityType() != HEntityType.PET) continue;
-            Object[] st = e.getStuff();
-            if (!estPlante(e, st)) continue;
-            Plante pl = plantes.computeIfAbsent(e.getId(), Plante::new);
-            pl.index = e.getIndex();
-            pl.nom = e.getName() == null ? "?" : e.getName();
-            if (e.getTile() != null) { pl.x = e.getTile().getX(); pl.y = e.getTile().getY(); }
-            // Champs d'un animal (connexion de l'Atelier, ordre du client Flash) :
-            // 0 type, 1 ownerId, 2 ownerName, 3 rarity, 4 hasSaddle, 5 isRiding,
-            // 6 canBreed, 7 canHarvest, 8 canRevive, 9 hasBreedingPermission,
-            // 10 petLevel, 11 posture
-            try {
-                if (st != null && st.length >= 12) {
-                    pl.proprioId = entier(st[1], pl.proprioId);
-                    pl.proprioNom = st[2] == null ? "" : String.valueOf(st[2]);
-                    pl.rarete = entier(st[3], pl.rarete);
-                    pl.recoltable = Boolean.TRUE.equals(st[7]);
-                    pl.peutReproduire = Boolean.TRUE.equals(st[6]);
-                    pl.permissionReproduction = Boolean.TRUE.equals(st[9]);
-                    pl.posture = st[11] == null ? "" : String.valueOf(st[11]);
-                    pl.morte = Boolean.TRUE.equals(st[8]) || postureMorte(pl.posture);
-                    int niv = entier(st[10], -1);
-                    if (niv > 0) pl.niveau = niv;
-                }
-            } catch (Throwable ignored) { }
+        for (AnimalLu e : lu.animaux) {
+            if (!e.estPlante()) continue;
+            plantesVues++;
+            Plante pl = plantes.computeIfAbsent(e.id, Plante::new);
+            pl.index = e.index;
+            pl.nom = e.nom == null || e.nom.isEmpty() ? "?" : e.nom;
+            pl.x = e.x; pl.y = e.y;
+            pl.proprioId = e.proprioId > 0 ? e.proprioId : pl.proprioId;
+            pl.proprioNom = e.proprioNom == null ? "" : e.proprioNom;
+            if (e.rarete >= 0 && e.rarete < 100) pl.rarete = e.rarete;
+            pl.recoltable = e.recoltable;
+            pl.peutReproduire = e.peutReproduire;
+            pl.permissionReproduction = e.permission;
+            pl.posture = e.posture == null ? "" : e.posture;
+            pl.morte = e.ranimable || postureMorte(pl.posture);
+            if (e.niveau > 0 && e.niveau <= 50) pl.niveau = e.niveau;
             indexVersId.put(pl.index, pl.id);
             change = true;
+            if (diag.length() < 600)
+                diag.append(diag.length() == 0 ? " " : ", ").append(pl.nom).append('#').append(pl.id).append("@p").append(pl.index)
+                    .append(pl.recoltable ? " adulte" : "").append(pl.morte ? " morte" : "");
         }
+        if (!lu.complet)
+            Journal.debug("Users : " + lu.lues + "/" + lu.total + " entité(s) lue(s), format " + lu.format
+                + (lu.complet ? "" : " (INCOMPLET : " + lu.erreur + ")")
+                + ", " + lu.animaux.size() + " animal(aux), " + plantesVues + " plante(s)"
+                + (diag.length() > 0 ? " :" + diag : "") + " ; suivies : " + plantes.size() + ".");
         if (change) prevenir();
     }
 
-    private static boolean estPlante(HEntity e, Object[] st) {
-        String f = e.getFigureId();
-        if (f != null) {
-            String t = f.trim();
+    // ------------------------------------------------ lecture des paquets
+
+    /** Un animal lu dans Users (champs du client Flash, RoomUserData). */
+    static final class AnimalLu {
+        int id, index, x, y, type = -1, proprioId = -1, rarete = -1, niveau = -1;
+        String nom, figure, proprioNom, posture;
+        boolean recoltable, ranimable, peutReproduire, permission;
+
+        /** Monster plant : type d'animal 16 (debut de la figure, ou champ type). */
+        boolean estPlante() {
+            if (type == TYPE_PLANTE) return true;
+            if (figure == null) return false;
+            String t = figure.trim();
             int sp = t.indexOf(' ');
-            String premier = sp < 0 ? t : t.substring(0, sp);
-            if (premier.equals(String.valueOf(TYPE_PLANTE))) return true;
+            return (sp < 0 ? t : t.substring(0, sp)).equals(String.valueOf(TYPE_PLANTE));
         }
-        return st != null && st.length > 0 && entier(st[0], -1) == TYPE_PLANTE;
+    }
+
+    /** Ce qu'un paquet Users a donne. */
+    static final class Entites {
+        final List<AnimalLu> animaux = new ArrayList<>();
+        /** index -> type (2 animal, 3 ancien bot, 4 bot) des entites qui ne sont pas des avatars. */
+        final Map<Integer, Integer> autres = new LinkedHashMap<>();
+        int total, lues;
+        boolean complet;
+        String format = "?", erreur = "";
+    }
+
+    /**
+     * Lit un paquet Users (index de lecture au debut des donnees). Format du
+     * client (UsersMessageParser) : int n, puis pour chaque entite
+     *   int id, String nom, String devise, String figure, int index, int x,
+     *   int y, String z, int direction, int type ;
+     *   type 1 avatar : String sexe, int idGroupe, int statutGroupe,
+     *                   String nomGroupe, String figureNage, int score,
+     *                   bool moderateur, int badgesRank (nouveau) ;
+     *   type 2 animal : int typeAnimal, int proprioId, String proprioNom,
+     *                   int rarete, bool selle, bool monte, bool peutReproduire,
+     *                   bool peutRecolter, bool peutRanimer, bool permission,
+     *                   int niveau, String posture ;
+     *   type 3 ancien bot : rien ;
+     *   type 4 bot : String sexe, int proprioId, String proprioNom, int n, n short.
+     * Essaie d'abord avec le badgesRank, puis sans (ancien format) ; garde
+     * celle qui lit le paquet jusqu'au bout exactement, sinon celle qui a lu
+     * le plus d'entites. Logique pure.
+     */
+    static Entites lireEntites(HPacket p) {
+        int debut = p.getReadIndex();
+        Entites avec = lireEntites(p, debut, true);
+        if (avec.complet) return avec;
+        Entites sans = lireEntites(p, debut, false);
+        if (sans.complet) return sans;
+        return sans.lues > avec.lues ? sans : avec;
+    }
+
+    private static Entites lireEntites(HPacket p, int debut, boolean avecRang) {
+        Entites r = new Entites();
+        r.format = avecRang ? "actuel" : "ancien";
+        try {
+            p.setReadIndex(debut);
+            r.total = p.readInteger();
+            if (r.total < 0 || r.total > 10_000) throw new IllegalStateException("nombre " + r.total);
+            for (int i = 0; i < r.total; i++) {
+                int id = p.readInteger();
+                String nom = p.readString();
+                p.readString();                                  // devise
+                String figure = p.readString();
+                int index = p.readInteger();
+                int x = p.readInteger(), y = p.readInteger();
+                p.readString();                                  // z
+                p.readInteger();                                 // direction
+                int type = p.readInteger();
+                switch (type) {
+                    case 1:
+                        p.readString(); p.readInteger(); p.readInteger();
+                        p.readString(); p.readString(); p.readInteger(); p.readBoolean();
+                        if (avecRang) p.readInteger();
+                        break;
+                    case 2: {
+                        AnimalLu a = new AnimalLu();
+                        a.id = id; a.index = index; a.x = x; a.y = y;
+                        a.nom = NomSalle.utf8(nom); a.figure = figure;
+                        a.type = p.readInteger();
+                        a.proprioId = p.readInteger();
+                        a.proprioNom = NomSalle.utf8(p.readString());
+                        a.rarete = p.readInteger();
+                        p.readBoolean(); p.readBoolean();        // selle, monte
+                        a.peutReproduire = p.readBoolean();
+                        a.recoltable = p.readBoolean();
+                        a.ranimable = p.readBoolean();
+                        a.permission = p.readBoolean();
+                        a.niveau = p.readInteger();
+                        a.posture = p.readString();
+                        r.animaux.add(a);
+                        break;
+                    }
+                    case 3:
+                        break;
+                    case 4: {
+                        p.readString(); p.readInteger(); p.readString();
+                        int n = p.readInteger();
+                        if (n < 0 || n > 1000) throw new IllegalStateException("bot " + n);
+                        for (int k = 0; k < n; k++) p.readShort();
+                        break;
+                    }
+                    default:
+                        throw new IllegalStateException("type " + type);
+                }
+                if (type != 1) r.autres.put(index, type);
+                r.lues++;
+            }
+            r.complet = p.getReadIndex() == p.getBytesLength();
+            if (!r.complet) r.erreur = (p.getBytesLength() - p.getReadIndex()) + " octet(s) en trop";
+        } catch (Throwable e) {
+            r.complet = false;
+            r.erreur = e.getClass().getSimpleName() + (e.getMessage() == null ? "" : " " + e.getMessage());
+        }
+        return r;
     }
 
     private static boolean postureMorte(String p) {
@@ -362,22 +458,51 @@ public final class PlanteSuivi {
         if (id != null) { plantes.remove(id); prevenir(); }
     }
 
-    private static void surUserUpdate(HPacket p) {
+    static void surUserUpdate(HPacket p) {
         if (indexVersId.isEmpty()) return;
-        HEntityUpdate[] us;
-        try { us = HEntityUpdate.parse(p); } catch (Throwable e) { return; }
         boolean change = false;
-        for (HEntityUpdate u : us) {
-            if (u == null) continue;
-            Integer id = indexVersId.get(u.getIndex());
+        for (int[] u : lirePositions(p)) {
+            Integer id = indexVersId.get(u[0]);
             if (id == null) continue;
             Plante pl = plantes.get(id);
-            if (pl == null || u.getTile() == null) continue;
-            if (pl.x != u.getTile().getX() || pl.y != u.getTile().getY()) {
-                pl.x = u.getTile().getX(); pl.y = u.getTile().getY(); change = true;
-            }
+            if (pl == null) continue;
+            if (pl.x != u[1] || pl.y != u[2]) { pl.x = u[1]; pl.y = u[2]; change = true; }
         }
         if (change) prevenir();
+    }
+
+    /**
+     * Lit un paquet UserUpdate : {index, x, y} par entite. Format du client
+     * (UserUpdateMessageParser) : int n, puis int index, int x, int y,
+     * String z, int tete, int corps, int (nouveau), String statut. Essaie
+     * avec puis sans l'int nouveau ; garde la lecture exacte. Logique pure.
+     */
+    static List<int[]> lirePositions(HPacket p) {
+        int debut = p.getReadIndex();
+        List<int[]> l = lirePositions(p, debut, true);
+        if (l != null) return l;
+        l = lirePositions(p, debut, false);
+        return l == null ? List.of() : l;
+    }
+
+    private static List<int[]> lirePositions(HPacket p, int debut, boolean avecInt) {
+        try {
+            p.setReadIndex(debut);
+            int n = p.readInteger();
+            if (n < 0 || n > 10_000) return null;
+            List<int[]> l = new ArrayList<>(n);
+            for (int i = 0; i < n; i++) {
+                int index = p.readInteger(), x = p.readInteger(), y = p.readInteger();
+                p.readString();                                  // z
+                p.readInteger(); p.readInteger();                // tete, corps
+                if (avecInt) p.readInteger();
+                p.readString();                                  // statut (« /mv 3,4,0.0/ »...)
+                l.add(new int[]{index, x, y});
+            }
+            return p.getReadIndex() == p.getBytesLength() ? l : null;
+        } catch (Throwable e) {
+            return null;
+        }
     }
 
     /**
@@ -393,7 +518,7 @@ public final class PlanteSuivi {
      * Les derniers champs sont ceux des monster plants. Lecture defensive :
      * on garde ce qui a ete lu avant une erreur, et on journalise l'hexa.
      */
-    private static void surPetInfo(HPacket p) {
+    static void surPetInfo(HPacket p) {
         nbPetInfo++;
         long now = System.currentTimeMillis();
         journal("PetInfo", p);
@@ -404,7 +529,7 @@ public final class PlanteSuivi {
         // Valeurs lues dans l'ordre ; appliquees seulement si coherentes.
         String nom = null, proprioNom = null;
         int niveau = -1, niveauMax = -1, respect = -1, proprioId = -1, age = -1, rarete = -1;
-        int bienMax = -1, bienReste = -1, croisReste = -1;
+        int bienMax = -1, bienReste = -1;
         Boolean recoltable = null, ranimable = null, reproduire = null, permission = null;
         boolean complet = false;
         try {
@@ -430,9 +555,8 @@ public final class PlanteSuivi {
             rarete = p.readInteger();
             bienMax = p.readInteger();
             bienReste = p.readInteger();
-            croisReste = p.readInteger();         lu.append(" rarete=").append(rarete)
-                                                    .append(" bienEtre=").append(bienReste).append('/').append(bienMax)
-                                                    .append(" croissance=").append(croisReste);
+            p.readInteger();                      // croissance restante : pas utilisee
+            lu.append(" rarete=").append(rarete).append(" bienEtre=").append(bienReste).append('/').append(bienMax);
             try { permission = p.readBoolean(); } catch (Throwable ignored) { }
             complet = true;
         } catch (Throwable e) {
@@ -463,16 +587,17 @@ public final class PlanteSuivi {
             pl.finVie = now + bienReste * 1000L;
             if (bienReste == 0 && bienMax > 0) pl.morte = true;
         }
-        if (complet && croisReste >= 0 && croisReste < 365 * 86400)
-            pl.finCroissance = croisReste == 0 ? 0 : now + croisReste * 1000L;
         pl.douteux = !(complet && coherent);
         pl.infos = true;
         pl.infoRecue = now;
+        Journal.debug("Plante " + pl.nom + "#" + pl.id + " : " + pl.etat() + ", vie " + duree(pl.resteVie())
+                + (pl.bienEtreMax > 0 ? "/" + duree(pl.bienEtreMax) : "") + ", niveau " + pl.niveau + "/" + pl.niveauMax
+                + (pl.aBesoin() ? ", à soigner" : "") + (pl.douteux ? ", lecture douteuse" : "") + ".");
         prevenir();
     }
 
     /** PetStatusUpdate, suppose : int index, int idAnimal, bool reproduire, bool recolter, bool ranimer, bool permission. */
-    private static void surPetStatus(HPacket p) {
+    static void surPetStatus(HPacket p) {
         nbStatus++;
         try {
             p.readInteger();
@@ -481,6 +606,8 @@ public final class PlanteSuivi {
             pl.peutReproduire = p.readBoolean();
             pl.recoltable = p.readBoolean();
             pl.morte = p.readBoolean() || postureMorte(pl.posture);
+            Journal.debug("PetStatusUpdate : " + pl.nom + "#" + pl.id + " reproduire=" + pl.peutReproduire
+                    + " récolte=" + pl.recoltable + " morte=" + pl.morte);
             prevenir();
         } catch (Throwable ignored) { }
     }
@@ -529,8 +656,6 @@ public final class PlanteSuivi {
             int recus = p.readInteger(), aDonner = p.readInteger();
             int r = p.readInteger();
             if (r >= 0 && r < 1000) soinsRestants = r;
-            Journal.debug("UserObject : " + monNom + " #" + monId + ", respects reçus " + recus
-                    + ", respects à donner " + aDonner + ", soins animaux restants " + r);
         } catch (Throwable e) {
             Journal.debug("UserObject partiel : " + monNom + " #" + monId);
         }

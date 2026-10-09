@@ -33,7 +33,7 @@ import java.util.function.Supplier;
  *  - En haut, un resume (combien a soigner, a recolter, mortes, adultes) et
  *    les actions de masse : « Soigner les N », « Récolter les N »... Chacune
  *    montre d'abord un apercu chiffre, puis agit apres « Confirmer ».
- *  - Le tableau : nom, rarete, croissance, proprietaire. Tri par colonne,
+ *  - Le tableau : nom, rarete, proprietaire. Tri par colonne,
  *    recherche, filtres rapides. La selection et le defilement tiennent
  *    pendant les mises a jour. L'etat (a soigner, mortes...) sert aux
  *    comptages et aux filtres, sans colonne.
@@ -43,7 +43,7 @@ import java.util.function.Supplier;
  * La liste vient des paquets recus passivement (PlanteSuivi). Aucun envoi
  * vers une plante hors d'un geste de l'utilisatrice : un bouton (lancer())
  * ou un clic de souris sur une ligne (cliquerDansLeJeu()), les deux sous
- * PlanteSuivi.enActionExplicite. Les fiches (vie, croissance) se lisent en
+ * PlanteSuivi.enActionExplicite. Les fiches (vie) se lisent en
  * arriere-plan, une a la fois, sans rien ouvrir dans le jeu : la vie sert a
  * compter les plantes a soigner.
  *
@@ -244,8 +244,6 @@ public class OngletPlantes {
         TableColumn<Plante, Plante> rar = colonne("Rareté", 62, PlanteVue.PAR_RARETE,
                 (c, p) -> c.setText(PlanteVue.rarete(p.rarete)));
         table.getColumns().add(rar);
-        table.getColumns().add(colonne("Croissance", 92, PlanteVue.PAR_CROISSANCE,
-                (c, p) -> barre(c, PlanteVue.partCroissance(p), PlanteVue.texteCroissance(p), "info")));
         table.getColumns().add(colonne("Propriétaire", 90, PlanteVue.PAR_PROPRIO, (c, p) -> {
             String n = p.proprioNom == null || p.proprioNom.isEmpty() ? "?" : p.proprioNom;
             c.setText(aMoi(p) ? n + " (toi)" : n);
@@ -295,6 +293,8 @@ public class OngletPlantes {
 
         PlanteSuivi.ecouter(this::prevoirMaj);
         MiseEnValeur.fournir("plantes", this::plantesEnValeur);
+        // fenetre ouverte : rien de choisi, toutes les plantes sont mises en valeur
+        MiseEnValeur.aLOuverture("plantes", () -> javafx.application.Platform.runLater(() -> table.getSelectionModel().clearSelection()));
         PlanteSuivi.installer();
 
         demarrerFichesAuto();
@@ -331,21 +331,6 @@ public class OngletPlantes {
         return c;
     }
 
-    /** Petite barre de progression et son texte ; « ? » seul si inconnu. */
-    private static void barre(TableCell<Plante, Plante> c, double part, String texte, String style) {
-        if (part < 0) { c.setText(texte); return; }
-        ProgressBar b = new ProgressBar(part);
-        b.getStyleClass().add(style);
-        b.setPrefWidth(34);
-        b.setMinWidth(24);
-        b.setMaxHeight(8);
-        Label l = new Label(texte);
-        l.setMinWidth(0);
-        HBox h = new HBox(5, b, l);
-        h.setAlignment(Pos.CENTER_LEFT);
-        c.setGraphic(h);
-    }
-
     private ContextMenu menuClicDroit() {
         mSoigner = new MenuItem("Soigner");
         mSoigner.setOnAction(e -> agirSelection("soigner"));
@@ -377,12 +362,21 @@ public class OngletPlantes {
         majBoutonsSelection();
     }
 
-    /** Pour MiseEnValeur (fil de la mise en valeur) : ne lit aucun controle JavaFX. */
+    /**
+     * Pour MiseEnValeur (fil de la mise en valeur) : ne lit aucun controle JavaFX.
+     * Lignes choisies : ces plantes ; rien de choisi : toutes les plantes de la
+     * salle. Jetons « a » : contour comme les mobis, plusieurs a la fois.
+     */
     private Collection<String> plantesEnValeur() {
         List<String> r = new ArrayList<>();
-        for (int id : idsChoisis) {
+        List<Integer> ids = idsChoisis;
+        if (ids.isEmpty()) {
+            for (Plante p : PlanteSuivi.plantes()) if (p.index >= 0) r.add("a" + p.index);
+            return r;
+        }
+        for (int id : ids) {
             Plante p = PlanteSuivi.plante(id);
-            if (p != null && p.index >= 0) r.add("p" + p.index);
+            if (p != null && p.index >= 0) r.add("a" + p.index);
         }
         return r;
     }
@@ -400,15 +394,15 @@ public class OngletPlantes {
         if (!clic.accepter(p.id, true, row.isSelected(), System.currentTimeMillis())) return;
         int id = p.id;
         fileClics.execute(() -> {
+            Salle.espacer();                            // clics enchaines : rythme commun des envois
             try { PlanteSuivi.enActionExplicite(() -> PlanteSuivi.cliquer(id)); }
             catch (Throwable t) { Journal.debug("clic sur la plante " + id + " : " + t); }
-            Salle.sommeil(150);
         });
     }
 
     private static List<String> jetons(List<Plante> l) {
         List<String> r = new ArrayList<>();
-        for (Plante p : l) if (p.index >= 0) r.add("p" + p.index);
+        for (Plante p : l) if (p.index >= 0) r.add("a" + p.index);
         return r;
     }
 
@@ -734,6 +728,7 @@ public class OngletPlantes {
 
     /** Envoie GetPetInfo et attend la fiche (1,5 s au plus). */
     private boolean lireInfo(Plante p) {
+        Salle.espacer();                                // souvent juste apres un autre envoi (soin, reproduction, autre fiche)
         long t0 = System.currentTimeMillis();
         if (!PlanteSuivi.demanderInfo(p.id)) return false;
         return attendreFiche(p.id, t0);
@@ -870,7 +865,7 @@ public class OngletPlantes {
     // ----------------------------------------------------- liste auto
 
     /**
-     * Les fiches des plantes (vie, croissance) se lisent toutes seules, sans
+     * Les fiches des plantes (vie) se lisent toutes seules, sans
      * rien ouvrir dans le jeu (PlanteSuivi.demanderInfoSilencieuse) : celles
      * jamais lues ou lues il y a plus de 10 min. Une a la fois : on attend la
      * reponse avant la suivante, puis 150 ms. La vie sert a compter les
@@ -891,7 +886,7 @@ public class OngletPlantes {
                     List<Plante> tri = PlanteSuivi.plantes();
                     tri.sort(PlanteVue.URGENCE);
                     List<Plante> l = PlanteSuivi.aLire(tri, System.currentTimeMillis());
-                    int n = 0;
+                    int n = 0, recues = 0;
                     long maintenant = System.currentTimeMillis();
                     for (Plante p : l) {
                         if (occupe.get() || n >= 40) break;
@@ -899,12 +894,16 @@ public class OngletPlantes {
                         if (d != null && maintenant - d < 60_000) continue;     // deja demandee il y a peu
                         demandees.put(p.id, maintenant);
                         n++;
+                        Salle.espacer();
                         long t0 = System.currentTimeMillis();
                         PlanteSuivi.demanderInfoSilencieuse(p.id);
-                        attendreFiche(p.id, t0);
-                        Salle.sommeil(150);
+                        if (attendreFiche(p.id, t0)) recues++;
                     }
-                    if (n > 0) prevoirMaj();
+                    if (n > 0) {
+                        Journal.debug("Fiches auto : " + n + " demandée(s), " + recues + " reçue(s) ; "
+                                + PlanteSuivi.plantes().size() + " plante(s) suivie(s).");
+                        prevoirMaj();
+                    }
                 } catch (Throwable ignored) { }
             }
         }, "atelier-plantes-fiches");

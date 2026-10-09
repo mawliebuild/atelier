@@ -12,12 +12,17 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * Prix moyens de la place du marche de habbo.fr, demandes au jeu lui-meme.
  *
- * MarketplaceGetItemStats (int categorie : 1 sol / 2 mur, int typeId) ; le
- * serveur repond MarketplaceItemStats :
+ * GetMarketplaceItemStats (int categorie : 1 sol / 2 mur / 3 rare limite,
+ * int typeId de la furnidata [, String parametre d'une affiche]), comme le
+ * client (MarketPlaceLogic.requestOfferStats) ; le serveur repond
+ * MarketplaceItemStats (parseur du client) :
  *     int prixMoyen, int offresEnCours, int jours,
  *     int n, n x (int decalageJour, int prixMoyen, int vendus),
- *     int categorie, int typeId
- * C'est ce qu'affiche la fenetre du marche dans le jeu.
+ *     int categorie, int typeId, int prixLePlusBas, int prixConseille
+ * (les deux derniers entiers sont recents : l'ancien format, sans eux, est
+ * encore accepte). C'est ce qu'affiche la fenetre du marche dans le jeu.
+ * Sans aucune reponse apres MUET demandes, le marche n'est plus interroge
+ * pendant la session (muet).
  *
  * La reponse est reconnue A SON CONTENU (longueur coherente, et categorie +
  * typeId d'une demande en attente) : l'interception par nom echoue parfois en
@@ -49,6 +54,10 @@ public final class Marche {
     private static final Map<String, Prix> prix = new ConcurrentHashMap<>();
     private static final Map<String, Object> attente = new ConcurrentHashMap<>();
     private static volatile boolean installe = false, charge = false;
+    /** Demandes sans reponse tant qu'aucune n'a jamais repondu ; au-dela de MUET, plus de demande. */
+    static final int MUET = 20;
+    private static volatile int muettes = 0;
+    private static volatile boolean aRepondu = false, muetDit = false;
 
     private Marche() { }
 
@@ -70,6 +79,9 @@ public final class Marche {
         return t != null && System.currentTimeMillis() - t < REESSAI_MS;
     }
 
+    /** Le marche n'a jamais repondu a MUET demandes de suite : on ne l'interroge plus pendant la session. */
+    public static boolean muet() { return !aRepondu && muettes >= MUET; }
+
     /** Attend son tour : au moins ECART_MS depuis la demande precedente. */
     private static void attendreTour() throws InterruptedException {
         long attente;
@@ -87,6 +99,7 @@ public final class Marche {
      * @return le prix, ou null si le serveur n'a pas repondu.
      */
     public static Prix demander(Moteur gp, boolean mur, int typeId) throws InterruptedException {
+        if (muet()) return null;
         installer(gp);
         chargerUneFois();
         attendreTour();
@@ -96,7 +109,7 @@ public final class Marche {
         attente.put(k, signal);
         try {
             synchronized (signal) {
-                gp.sendToServer(new HPacket("MarketplaceGetItemStats", HMessage.Direction.TOSERVER,
+                gp.sendToServer(new HPacket("GetMarketplaceItemStats", HMessage.Direction.TOSERVER,
                         mur ? 2 : 1, typeId));
                 long fin = System.currentTimeMillis() + 4000;
                 while (attente.containsKey(k)) {
@@ -109,7 +122,15 @@ public final class Marche {
             attente.remove(k);
         }
         Prix p = prix.get(k);
-        if (p == null || p == avant) { sansReponse.put(k, System.currentTimeMillis()); return null; }
+        if (p == null || p == avant) {
+            sansReponse.put(k, System.currentTimeMillis());
+            if (!aRepondu && ++muettes >= MUET && !muetDit) {
+                muetDit = true;
+                Journal.debug("prix du marché du jeu : aucune réponse à " + MUET + " demandes, le marché n'est plus interrogé pendant cette session.");
+            }
+            return null;
+        }
+        aRepondu = true;
         sansReponse.remove(k);
         return p;
     }
@@ -124,26 +145,34 @@ public final class Marche {
     }
 
     private static void lire(HMessage m) {
-        HPacket brut = m.getPacket();
-        int taille = brut.getBytesLength();
-        // 6 entiers fixes + 3 par jour d'historique, apres l'en-tete de 6 octets.
-        if (taille < 6 + 24 || (taille - 6 - 24) % 12 != 0) return;
-        int n = brut.readInteger(6 + 12);
-        if (n < 0 || 6 + 24 + 12 * n != taille) return;
-        int fin = 6 + 16 + 12 * n;
-        int categorie = brut.readInteger(fin), typeId = brut.readInteger(fin + 4);
-        if (categorie != 1 && categorie != 2) return;
-        String k = cle(categorie == 2, typeId);
+        int[] d = decoder(m.getPacket());
+        if (d == null) return;
+        String k = cle(d[0] == 2, d[1]);
         Object signal = attente.get(k);
         if (signal == null) return;
-
-        int moyen = brut.readInteger(6), offres = brut.readInteger(10);
-        int vendus = 0;
-        for (int i = 0; i < n; i++) vendus += brut.readInteger(6 + 16 + 12 * i + 8);
-        prix.put(k, new Prix(moyen, offres, vendus, System.currentTimeMillis()));
+        prix.put(k, new Prix(d[2], d[3], d[4], System.currentTimeMillis()));
         m.setBlocked(true);                                // reponse a NOTRE demande
         attente.remove(k);
         synchronized (signal) { signal.notifyAll(); }
+    }
+
+    /**
+     * Reconnait un MarketplaceItemStats a son contenu (logique pure) :
+     * {categorie (1 / 2), typeId, prixMoyen, offres, vendus}, ou null.
+     * 8 entiers fixes (6 dans l'ancien format) + 3 par jour d'historique,
+     * apres l'en-tete de 6 octets.
+     */
+    static int[] decoder(HPacket brut) {
+        int taille = brut.getBytesLength();
+        if (taille < 6 + 24) return null;
+        int n = brut.readInteger(6 + 12);
+        if (n < 0 || n > 10_000 || (6 + 32 + 12 * n != taille && 6 + 24 + 12 * n != taille)) return null;
+        int fin = 6 + 16 + 12 * n;
+        int categorie = brut.readInteger(fin), typeId = brut.readInteger(fin + 4);
+        if (categorie != 1 && categorie != 2) return null;
+        int vendus = 0;
+        for (int i = 0; i < n; i++) vendus += brut.readInteger(6 + 16 + 12 * i + 8);
+        return new int[]{categorie, typeId, brut.readInteger(6), brut.readInteger(10), vendus};
     }
 
     // -------------------------------------------------------------- stockage

@@ -38,6 +38,42 @@ final class DallesTraversees {
         t.start();
     }
 
+    private static volatile boolean ecoute = false;
+
+    /**
+     * Diagnostic du double-clic : chaque UseFurniture envoye par le jeu est note
+     * (mobi, dalle dessous ou non) avec son etat avant / 1 s apres. Intercepteur :
+     * lecture a index fixe, le reste sur un autre fil.
+     */
+    private static void ecouter(Moteur gp) {
+        if (ecoute) return;
+        ecoute = true;
+        gp.intercept(gearth.protocol.HMessage.Direction.TOSERVER, "UseFurniture", m -> {
+            try {
+                int id = m.getPacket().readInteger(6);
+                Salle.tache("diag-double-clic", () -> diagnostic(id));
+            } catch (Throwable ignored) { }
+        });
+    }
+
+    private static void diagnostic(int id) {
+        gearth.extensions.parsers.HFloorItem it = Salle.sol(id);
+        if (it == null) { Journal.debug("double-clic : UseFurniture " + id + " (mobi inconnu de l'Atelier)."); return; }
+        String cl = Salle.classe(it.getTypeId(), false);
+        String avant = Generateur.etatDe(it);
+        boolean dalle = false;
+        for (int d : OutilHauteur.toutesDalles()) {
+            gearth.extensions.parsers.HFloorItem di = Salle.sol(d);
+            if (di != null && d != id && di.getTile().getX() <= it.getTile().getX() && di.getTile().getY() <= it.getTile().getY()
+                    && di.getTile().getX() + 8 > it.getTile().getX() && di.getTile().getY() + 8 > it.getTile().getY()) { dalle = true; break; }
+        }
+        Salle.sommeil(1000);
+        gearth.extensions.parsers.HFloorItem apres = Salle.sol(id);
+        String ap = apres == null ? "?" : Generateur.etatDe(apres);
+        Journal.debug("double-clic : " + cl + " " + id + (dalle ? " (dalle proche dessous)" : "")
+                + ", état " + avant + " -> " + ap + (avant.equals(ap) ? " : INCHANGÉ" : ""));
+    }
+
     private static void verifier() {
         if (!Salle.installeeDepuis(3000)) { envoye = null; return; }
         if (!ClientModifie.saitDalles()) return;
@@ -50,6 +86,7 @@ final class DallesTraversees {
         if (!actif && envoye == null && ids.isEmpty()) { envoye = cle; return; }
         Moteur gp = Salle.gp();
         if (gp == null) return;
+        ecouter(gp);
         gp.sendToClient(new gearth.protocol.HPacket("Whisper", gearth.protocol.HMessage.Direction.TOCLIENT,
                 -1, "atelier:dalles=" + (actif && !ids.isEmpty() ? "1" : "0"), 0, 0, 0, -1));
         envoye = cle; envoyeA = t;

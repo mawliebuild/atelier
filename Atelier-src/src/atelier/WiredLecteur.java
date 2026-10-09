@@ -1092,7 +1092,21 @@ public final class WiredLecteur {
     public static Map<Integer, Config> lireMaintenant(Collection<Integer> ids,
                                                       java.util.function.BooleanSupplier stop,
                                                       java.util.function.BiConsumer<Integer, Integer> progres) {
+        return lireMaintenant(ids, stop, progres, false);
+    }
+
+    /**
+     * Comme lireMaintenant ; avec forcer, le cache est ignore : chaque wired est
+     * redemande, et seul un reglage recu PENDANT cette lecture est rendu (les
+     * ids des wired BC sont reutilises : un ancien reglage en cache peut
+     * appartenir a un autre wired). Sert a la verification d'un collage.
+     */
+    public static Map<Integer, Config> lireMaintenant(Collection<Integer> ids,
+                                                      java.util.function.BooleanSupplier stop,
+                                                      java.util.function.BiConsumer<Integer, Integer> progres,
+                                                      boolean forcer) {
         Map<Integer, Config> r = new LinkedHashMap<>();
+        long debut = System.currentTimeMillis();
         if (ids == null || ids.isEmpty()) return r;
         installer();
         for (int i = 0; i < 100 && !branche; i++) Salle.sommeil(100);
@@ -1110,7 +1124,7 @@ public final class WiredLecteur {
                 HFloorItem it = Salle.sol(id);
                 if (it == null || !estBoiteType(it.getTypeId())) continue;
                 Long t = aRelire.get(id);
-                if (cache.containsKey(id) && t == null) continue;
+                if (!forcer && cache.containsKey(id) && t == null) continue;
                 if (t != null) attendreJusqua = Math.max(attendreJusqua, t);
                 aLire.add(id);
             }
@@ -1127,7 +1141,12 @@ public final class WiredLecteur {
             for (Integer id : ids) {
                 if (id == null) continue;
                 Config c = cache.get(id);
-                if (c != null) r.put(id, c);
+                if (c == null) continue;
+                if (forcer) {
+                    Long recu = recuA.get(id), inconnu = formatInconnu.get(id);
+                    if (recu == null || recu < debut || (inconnu != null && inconnu >= debut)) continue;   // pas relu
+                }
+                r.put(id, c);
             }
         }
         donneesChangees();

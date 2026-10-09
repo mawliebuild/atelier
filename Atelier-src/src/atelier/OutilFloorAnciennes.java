@@ -108,7 +108,8 @@ public final class OutilFloorAnciennes {
             System.out.println();
             System.out.println("######## Dossier : " + d);
             // « _atelier... » : fichiers internes de l'Atelier (calque...), jamais des copies
-            File[] fs = d.listFiles((x, n) -> n.endsWith(".json") && !n.startsWith("_atelier"));
+            // les copies sont rangees en dossiers (Apparts, Zones, et leurs sous-dossiers) : on descend dedans
+            File[] fs = copiesSous(d);
             if (fs == null) {
                 System.out.println("  Introuvable ou illisible" + (d.exists() ? " (lance avec sudo ?)" : "") + ".");
                 continue;
@@ -123,6 +124,24 @@ public final class OutilFloorAnciennes {
                 + ", " + total[1] + " copie(s) avaient déjà leur floor, " + total[2] + " ignorée(s), "
                 + total[3] + " erreur(s). ==");
         if (essai && total[0] > 0) System.out.println("Relance sans --essai pour écrire.");
+    }
+
+    /** Les copies de d et de ses sous-dossiers ; null si d est illisible. */
+    static File[] copiesSous(File d) {
+        if (d.listFiles() == null) return null;
+        List<File> r = new ArrayList<>();
+        ramasser(d, r, 0);
+        return r.toArray(new File[0]);
+    }
+
+    private static void ramasser(File d, List<File> r, int prof) {
+        File[] l = d.listFiles();
+        if (l == null) return;
+        for (File f : l) {
+            if (f.getName().startsWith(".")) continue;
+            if (f.isDirectory()) { if (prof < 20) ramasser(f, r, prof + 1); }
+            else if (f.getName().endsWith(".json") && !f.getName().startsWith("_atelier")) r.add(f);
+        }
     }
 
     static void aide() {

@@ -271,10 +271,10 @@ final class ReglageWired {
     /**
      * Le reglage pour la salle de destination (ex-applyWiredConfig, sans l'envoi) :
      * wiredId, items et items2 passent des ids de la copie aux ids reels (ceux qui
-     * manquent sont retires) ; les variables passent par la table des variables
-     * (« 0 » et les ids negatifs, variables internes, restent tels quels).
-     * Comme l'original, une variable qui a un seul id s'ajoute a la table
-     * (id -> lui-meme) et sert de valeur par defaut ; sinon le defaut est « 0 ».
+     * manquent sont retires) ; les variables passent par la table des variables.
+     * « 0 », vide, les ids « -... » et « ~... » (variables internes) restent tels
+     * quels. Une variable absente de la table ne devient JAMAIS « 0 » : son id
+     * est note dans manquantes, et ce reglage ne doit pas partir.
      *
      * @return la copie traduite, ou null si le wired lui-meme n'a pas d'id reel
      */
@@ -285,16 +285,25 @@ final class ReglageWired {
         r.wiredId = reel;
         r.items = traduireIds(items, ids);
         r.items2 = traduireIds(items2, ids);
-        String defaut = "0";
-        if (genre == Genre.VARIABLE && variables.size() == 1) {
-            defaut = variables.get(0);
-            tableVariables.put(defaut, defaut);
-        }
         List<String> v = new ArrayList<>(variables.size());
-        for (String id : variables)
-            v.add(id.equals("0") || id.startsWith("-") ? id : tableVariables.getOrDefault(id, defaut));
+        List<String> manque = new ArrayList<>();
+        for (String id : variables) {
+            if (variableGardee(id)) { v.add(id == null ? "" : id); continue; }
+            String t = tableVariables == null ? null : tableVariables.get(id);
+            if (t == null) { manque.add(id); v.add(id); }
+            else v.add(t);
+        }
         r.variables = v;
+        r.manquantes = manque;
         return r;
+    }
+
+    /** Apres traduire : ids de variables de la copie sans id reel (pas dans le JSON). */
+    List<String> manquantes = List.of();
+
+    /** Un id de variable qui ne se traduit pas : vide, « 0 », interne (« -... », « ~... »). */
+    static boolean variableGardee(String id) {
+        return id == null || id.isEmpty() || id.equals("0") || id.startsWith("-") || id.startsWith("~");
     }
 
     private static List<Integer> traduireIds(List<Integer> l, Map<Integer, Integer> ids) {

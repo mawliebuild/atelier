@@ -147,6 +147,7 @@ public final class Calques {
      * @return {masques ajoutes, mobis reaffiches}
      */
     public static int[] regler(String calque, Collection<HFloorItem> sols, Collection<HWallItem> murs) {
+        tracerDalles(calque, sols);
         if (!pret()) return new int[]{0, 0};
         verifierSalle();
         Set<String> voulus = new HashSet<>();
@@ -187,6 +188,31 @@ public final class Calques {
         }
         prevenir();
         return new int[]{ajoutes, revenus};
+    }
+
+    /**
+     * Diagnostic : une dalle magique masquee est notee avec la raison (calque)
+     * et l'appelant, une fois par raison et par minute. Les dalles ne doivent
+     * etre cachees que par un calque que l'utilisatrice a masque elle-meme.
+     */
+    private static final Map<String, Long> dallesTracees = new ConcurrentHashMap<>();
+
+    private static void tracerDalles(String calque, Collection<HFloorItem> sols) {
+        if (sols == null || sols.isEmpty()) return;
+        int n = 0;
+        for (HFloorItem it : sols) {
+            String c = Salle.classe(it.getTypeId(), false);
+            if (c != null && c.startsWith("tile_stackmagic")) n++;
+        }
+        if (n == 0) return;
+        long t = System.currentTimeMillis();
+        Long avant = dallesTracees.put(calque, t);
+        if (avant != null && t - avant < 60_000) return;
+        StringBuilder pile = new StringBuilder();
+        StackTraceElement[] e = Thread.currentThread().getStackTrace();
+        for (int i = 3; i < Math.min(e.length, 9); i++)
+            pile.append(" < ").append(e[i].getClassName().replace("atelier.", "")).append('.').append(e[i].getMethodName());
+        Journal.debug("calques : " + n + " dalle(s) magique(s) masquée(s) par « " + calque + " »" + pile);
     }
 
     /** Masque des mobis de plus sous ce calque, sans toucher a ceux qu'il masque deja. */

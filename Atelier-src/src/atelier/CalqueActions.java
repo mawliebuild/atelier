@@ -45,13 +45,10 @@ final class CalqueActions {
         this.choisir = choisir;
     }
 
-    /** Miroir sur place en cours (il ne passe pas par Groupes : pas de Tache a arreter). */
-    private volatile boolean miroirEnCours = false;
-
     /** Une action tourne (dans une fenetre ou ailleurs). */
     boolean occupe() {
         Groupes.Tache t = tache;
-        return miroirEnCours || Groupes.occupe() || (t != null && t.enCours());
+        return Groupes.occupe() || (t != null && t.enCours());
     }
 
     /** Ferme la fenetre ouverte (changement de salle, panneau cache). */
@@ -147,10 +144,12 @@ final class CalqueActions {
                 confirmer.setDisable(false);
             }
         };
-        Button xm = fleche("↖", "Vers le haut à gauche", () -> { d[0]--; maj.run(); });
-        Button xp = fleche("↘", "Vers le bas à droite", () -> { d[0]++; maj.run(); });
-        Button ym = fleche("↗", "Vers le haut à droite", () -> { d[1]--; maj.run(); });
-        Button yp = fleche("↙", "Vers le bas à gauche", () -> { d[1]++; maj.run(); });
+        // un clic sur une fleche et une touche flechee passent par ici
+        java.util.function.BiConsumer<Integer, Integer> bouger = (dx, dy) -> { d[0] += dx; d[1] += dy; maj.run(); };
+        Button xm = fleche("↖", "Vers le haut à gauche (touche ←)", () -> bouger.accept(-1, 0));
+        Button xp = fleche("↘", "Vers le bas à droite (touche →)", () -> bouger.accept(1, 0));
+        Button ym = fleche("↗", "Vers le haut à droite (touche ↑)", () -> bouger.accept(0, -1));
+        Button yp = fleche("↙", "Vers le bas à gauche (touche ↓)", () -> bouger.accept(0, 1));
         GridPane fleches = new GridPane();
         fleches.setHgap(5); fleches.setVgap(5);
         fleches.add(xm, 0, 0); fleches.add(ym, 1, 0);
@@ -162,7 +161,7 @@ final class CalqueActions {
         VBox pivots = new VBox(5, pivI, pivH);
         HBox commandes = new HBox(14, fleches, pivots);
         commandes.setAlignment(Pos.CENTER_LEFT);
-        f.contenu(Ui.bloc("Flèches et pivot", commandes, quoi));
+        f.contenu(Ui.bloc("Flèches et pivot", commandes, quoi, aideClavier("Confirmer")));
         Button fermer = CalqueFenetre.bouton("Annuler", false, f::fermer);
         Button arreter = CalqueFenetre.bouton("Arrêter", false, () -> { Groupes.Tache t = tache; if (t != null) t.arreter(); });
         arreter.setVisible(false);
@@ -177,6 +176,7 @@ final class CalqueActions {
             tache = Groupes.deplacer(i.id, dx, dy, q, progression(f, r -> f.fermer()));
         });
         f.boutons(fermer, arreter, confirmer);
+        f.fleches(clavier(f, bouger, xm, confirmer, fermer));
         f.surFermeture(() -> { Groupes.annulerApercu(); montrer.run(); });
         maj.run();
         f.montrer();
@@ -198,6 +198,57 @@ final class CalqueActions {
         return l.isEmpty() ? "Sur place" : Ui.majuscule(String.join(", ", l));
     }
 
+    /**
+     * Logique pure : touche flechee -> {dx, dy} en cases du jeu, comme les
+     * boutons a l'ecran tournes d'un huitieme de tour : ↑ = ↗ (y - 1),
+     * → = ↘ (x + 1), ↓ = ↙ (y + 1), ← = ↖ (x - 1). Maj : 5 cases d'un coup.
+     * direction : 0 = haut, 1 = droite, 2 = bas, 3 = gauche ; autre : {0, 0}.
+     */
+    static int[] pasFleche(int direction, boolean maj) {
+        int n = maj ? PAS_MAJ : 1;
+        switch (direction) {
+            case 0: return new int[]{0, -n};
+            case 1: return new int[]{n, 0};
+            case 2: return new int[]{0, n};
+            case 3: return new int[]{-n, 0};
+            default: return new int[]{0, 0};
+        }
+    }
+
+    /** Cases parcourues par Maj + fleche. */
+    static final int PAS_MAJ = 5;
+
+    /** Rappel des touches, sous les fleches. */
+    private static Label aideClavier(String valider) {
+        Label l = Ui.discret(WindowsClavier.texte("Clavier : ↑ ↗, → ↘, ↓ ↙, ← ↖ (Maj : " + PAS_MAJ
+                + " cases). Entrée : " + valider + ", Échap : Annuler. Marche aussi dans le jeu, chat vide."));
+        l.setWrapText(true);
+        l.setMaxWidth(280);
+        return l;
+    }
+
+    /**
+     * Les touches d'une fenetre a fleches : exactement le code des boutons
+     * (bouger, valider, annuler), et rien quand ils sont grises (envoi en cours).
+     */
+    private static RaccourcisGlobaux.Fleches clavier(CalqueFenetre f, java.util.function.BiConsumer<Integer, Integer> bouger,
+                                                    Node uneFleche, Button valider, Button annuler) {
+        return new RaccourcisGlobaux.Fleches() {
+            @Override public void fleche(int direction, boolean maj) {
+                if (!f.ouverte() || uneFleche.isDisabled()) return;
+                int[] p = pasFleche(direction, maj);
+                Journal.debug("calques : touche flèche " + direction + (maj ? " + Maj" : "") + " -> " + p[0] + ", " + p[1]);
+                bouger.accept(p[0], p[1]);
+            }
+            @Override public void entree() {
+                if (f.ouverte() && !valider.isDisabled()) valider.fire();
+            }
+            @Override public void echap() {
+                if (f.ouverte() && !annuler.isDisabled()) annuler.fire();
+            }
+        };
+    }
+
     private static Button fleche(String texte, String aide, Runnable r) {
         Button b = new Button(texte);
         b.getStyleClass().add("calques-fleche");
@@ -213,8 +264,7 @@ final class CalqueActions {
      * Dupliquer : RIEN n'est pose tout de suite. Une copie fantome (chez toi
      * seulement) apparait juste a cote du calque ; fleches, pivots et miroir
      * la placent sans rien envoyer au serveur ; « Poser » la pose vraiment a
-     * cette place (pose hybride : rafale, puis la dalle magique pour les seuls
-     * mobis refuses ; voir PoseHybride) et elle devient un nouveau
+     * cette place (tapis de dalles : voir PoseTapis) et elle devient un nouveau
      * calque. Annuler, Echap ou fermer : les fantomes partent, rien n'est pose.
      * Permis sur un calque verrouille (c'est une copie).
      */
@@ -281,10 +331,12 @@ final class CalqueActions {
                     + (bm && n[2] > 0 && !tr[0].glissement() ? " Les muraux ne pivotent pas : ils ne seront pas copiés." : ""));
         };
         java.util.function.Consumer<java.util.function.UnaryOperator<GroupeCalcul.Transfo>> changer = op -> { tr[0] = op.apply(tr[0]); maj.run(); };
-        Button xm = fleche("↖", "Vers le haut à gauche", () -> changer.accept(t -> t.deplace(-1, 0)));
-        Button xp = fleche("↘", "Vers le bas à droite", () -> changer.accept(t -> t.deplace(1, 0)));
-        Button ym = fleche("↗", "Vers le haut à droite", () -> changer.accept(t -> t.deplace(0, -1)));
-        Button yp = fleche("↙", "Vers le bas à gauche", () -> changer.accept(t -> t.deplace(0, 1)));
+        // un clic sur une fleche et une touche flechee passent par ici
+        java.util.function.BiConsumer<Integer, Integer> bouger = (dx, dy) -> changer.accept(t -> t.deplace(dx, dy));
+        Button xm = fleche("↖", "Vers le haut à gauche (touche ←)", () -> bouger.accept(-1, 0));
+        Button xp = fleche("↘", "Vers le bas à droite (touche →)", () -> bouger.accept(1, 0));
+        Button ym = fleche("↗", "Vers le haut à droite (touche ↑)", () -> bouger.accept(0, -1));
+        Button yp = fleche("↙", "Vers le bas à gauche (touche ↓)", () -> bouger.accept(0, 1));
         GridPane fleches = new GridPane();
         fleches.setHgap(5); fleches.setVgap(5);
         fleches.add(xm, 0, 0); fleches.add(ym, 1, 0);
@@ -336,8 +388,9 @@ final class CalqueActions {
         };
         Groupes.ecouter(garde);
         f.surFermeture(() -> { Groupes.retirerEcouteur(garde); Groupes.annulerApercu(); });
-        f.contenu(Ui.bloc("Place la copie", commandes, quoi), Ui.bloc("À copier", sols, murs, wired), blocSource);
+        f.contenu(Ui.bloc("Place la copie", commandes, quoi, aideClavier("Poser")), Ui.bloc("À copier", sols, murs, wired), blocSource);
         f.boutons(annuler, arreter, poser);
+        f.fleches(clavier(f, bouger, xm, poser, annuler));
         maj.run();
         f.montrer();
     }
@@ -427,6 +480,7 @@ final class CalqueActions {
             g.selectedToggleProperty().addListener((o, a, b) -> { if (b == null) a.setSelected(true); else maj.run(); });
         f.contenu(Ui.bloc("Axe", new HBox(5, axeX, axeY)), Ui.bloc("Résultat", new HBox(5, copie, place)));
         Button annuler = CalqueFenetre.bouton("Annuler", false, f::fermer);
+        Button arreter = arreter();
         Button ok = CalqueFenetre.bouton("Confirmer", true, () -> { });
         ok.setOnAction(e -> {
             boolean surX = gAxe.getSelectedToggle() != axeY, enCopie = gMode.getSelectedToggle() != place;
@@ -440,31 +494,18 @@ final class CalqueActions {
             if (v != null) { f.dire(v); return; }
             if (occupe()) { f.dire("Une action est déjà en cours."); return; }
             for (Node n : List.of(axeX, axeY, copie, place, ok, annuler)) n.setDisable(true);
-            // sur place : OutilMiroir ne sait pas s'arreter, pas de bouton Arreter trompeur
-            miroirSurPlace(f, i.id, surX);
+            arreter.setVisible(true);
+            f.dire("Miroir en cours…");
+            // sur place : tapis de dalles, par Groupes (une action a la fois, verrou, Arreter)
+            tache = Groupes.miroirSurPlace(i.id, surX, progression(f, r -> {
+                arreter.setVisible(false);
+                if (r.ok || r.arrete || r.reussis > 0) f.fermer();
+                else for (Node n : List.of(axeX, axeY, copie, place, ok, annuler)) n.setDisable(false);
+            }));
         });
-        f.boutons(annuler, ok);
+        f.boutons(annuler, arreter, ok);
         maj.run();
         f.montrer();
-    }
-
-    /** Miroir sur place : les mobis de sol bougent (OutilMiroir). */
-    private void miroirSurPlace(CalqueFenetre f, String id, boolean surX) {
-        List<HFloorItem> sols = new ArrayList<>();
-        for (int s : Groupes.mobis(id).get(0)) { HFloorItem it = Salle.sol(s); if (it != null) sols.add(it); }
-        miroirEnCours = true;                  // les autres actions de calque sont refusees pendant ce temps
-        Salle.tache("calques-miroir", () -> {
-            final String[] dernier = {""};
-            try {
-                OutilMiroir.surPlace(sols, surX, m -> { dernier[0] = m; Platform.runLater(() -> f.dire(m)); });
-            } catch (Throwable t) {
-                Platform.runLater(() -> Journal.erreur("Le miroir sur place a échoué", t));
-                dernier[0] = "";
-            } finally {
-                miroirEnCours = false;
-            }
-            Platform.runLater(() -> { resultat(dernier[0]); f.fermer(); });
-        });
     }
 
     private static ToggleButton bascule(String texte, ToggleGroup g, boolean choisi) {
@@ -568,6 +609,7 @@ final class CalqueActions {
     void etatsZone() {
         if (!ecouteEtats) { ecouteEtats = true; Zone.ecouter(() -> Platform.runLater(this::suivreZoneEtats)); }
         zoneEtats = true;
+        zoneRemplacer = false;                    // un seul choix de zone a la fois
         deuxiemeEtats = false;
         Zone.demarrerChoix();
         InfoJeu.consigne("Choisis le premier point de la zone.");
@@ -645,6 +687,39 @@ final class CalqueActions {
                         + "de la zone (les wired et les dalles magiques ne sont pas touchés).")));
         f.boutons(CalqueFenetre.bouton("Fermer", false, f::fermer), autre, changer);
         f.montrer();
+    }
+
+    // ===================================================== remplacer dans une zone
+
+    private boolean zoneRemplacer = false, deuxiemeRemplacer = false, ecouteRemplacer = false;
+
+    /**
+     * Remplacer dans une zone : deux cases dans le jeu (comme etatsZone), puis
+     * la fenetre « Remplacer dans la zone » (RemplacerZone) : un type de mobi
+     * de la zone est ramasse et remplace par un autre, au meme endroit.
+     */
+    void remplacerZone() {
+        if (RemplacerZone.enCours()) { refus("Un remplacement est déjà en cours."); return; }
+        if (!ecouteRemplacer) { ecouteRemplacer = true; Zone.ecouter(() -> Platform.runLater(this::suivreZoneRemplacer)); }
+        zoneRemplacer = true;
+        zoneEtats = false;
+        deuxiemeRemplacer = false;
+        Zone.demarrerChoix();
+        InfoJeu.consigne("Choisis le premier point de la zone.");
+    }
+
+    private void suivreZoneRemplacer() {
+        if (!zoneRemplacer) return;
+        if (Zone.choixEnCours()) {
+            if (Zone.premierCoinChoisi() && !deuxiemeRemplacer) {
+                deuxiemeRemplacer = true;
+                InfoJeu.consigne("Choisis le deuxième point de la zone.");
+            }
+            return;
+        }
+        zoneRemplacer = false;
+        if (!Zone.definie()) return;
+        RemplacerZone.fenetre(ouvrir("Remplacer dans la zone"), this::remplacerZone);
     }
 
     /** Copie tournee : la fenetre de copie, deja tournee et posee a cote (fantomes, puis Poser). */
@@ -738,7 +813,9 @@ final class CalqueActions {
     private static Groupes.Progression progression(CalqueFenetre f, Consumer<Groupes.Resultat> apres) {
         return new Groupes.Progression() {
             @Override public void progres(int fait, int total, String texte) {
-                f.dire(total > 0 ? texte + " (" + fait + "/" + total + ")" : texte);
+                // « Mobis : 120/483 » porte deja son compte : pas de second « (120/483) »
+                boolean compte = texte != null && texte.matches(".*\\d+\\s*/\\s*\\d+.*");
+                f.dire(total > 0 && !compte ? texte + " (" + fait + "/" + total + ")" : texte);
             }
             @Override public void fin(Groupes.Resultat r) {
                 resultat(r);

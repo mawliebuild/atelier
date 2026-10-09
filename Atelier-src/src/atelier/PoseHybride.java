@@ -9,7 +9,12 @@ import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 
 /**
- * Pose HYBRIDE, commune a Dupliquer, Deplacer, Pivoter et au collage d'appart :
+ * Depuis le TAPIS DE DALLES (PoseTapis), qui pose et deplace maintenant pour
+ * Dupliquer, Deplacer, Pivoter, Miroir et le collage d'appart, cette classe
+ * sert a sa reprise : reprendre (dalle par mobi) pour les mobis refuses, et
+ * pour les mobis en hauteur quand @altitude est introuvable ; altitudeDisponible.
+ *
+ * Pose HYBRIDE (ancienne methode) :
  *   1. tout part d'abord en rafale, vite (pose directe depuis l'inventaire ou
  *      le BC, ou MoveObject), puis la hauteur exacte par @altitude, au rythme
  *      commun (Salle.espacer) ;
@@ -215,15 +220,45 @@ final class PoseHybride {
         // 1. les anciens d'abord (sinon ils resteraient en double)
         List<Piece> aRamasser = new ArrayList<>();
         for (Piece p : pieces) if (p.ancien >= 0 && present(p)) aRamasser.add(p);
+        List<Integer> idsRamasses = new ArrayList<>();
+        for (Piece p : aRamasser) idsRamasses.add(p.ancien);
+        PoseOutils.Signaux.ramassageEnCours(idsRamasses);       // une demande de confirmation du jeu est acceptee
+        try {
         if (!aRamasser.isEmpty()) {
             dire.accept("Reprise à la dalle : je ramasse " + aRamasser.size() + " mobi(s) mal placé(s)…");
             for (Piece p : aRamasser) {
                 if (stop.getAsBoolean()) { b.arrete = true; break; }
                 Salle.espacer();
-                Salle.ramasser(p.ancien, p.mural);
+                Salle.envoyer(PoseOutils.ramassage(p.ancien, p.mural, false));   // comme le client
             }
             PoseDirecte.suivre(() -> { int n = 0; for (Piece p : aRamasser) if (present(p)) n++; return n; }, 800, 3000);
+            // ceux encore la : ramassage renvoye tout de suite, au plus REESSAIS fois
+            int avantReessai = 0;
+            for (Piece p : aRamasser) if (present(p)) avantReessai++;
+            for (int k = 0; k < Salle.REESSAIS && !b.arrete && Groupes.salleCourante() == salle; k++) {
+                List<Piece> encore = new ArrayList<>();
+                for (Piece p : aRamasser) if (present(p)) encore.add(p);
+                if (encore.isEmpty()) break;
+                Salle.pauseReessai();
+                for (Piece p : encore) {
+                    if (stop.getAsBoolean()) { b.arrete = true; break; }
+                    Salle.espacer();
+                    Salle.envoyer(PoseOutils.ramassage(p.ancien, p.mural, false));   // comme le client
+                }
+                PoseDirecte.suivre(() -> { int n = 0; for (Piece p : encore) if (present(p)) n++; return n; }, 800, 3000);
+            }
+            int restes = 0;
+            for (Piece p : aRamasser) if (present(p)) restes++;
+            if (avantReessai > restes) Journal.debug("reprise à la dalle : " + (avantReessai - restes) + " mobi(s) ramassé(s) après réessai.");
             for (Piece p : aRamasser) if (!present(p)) (p.mural ? b.ramassesMurs : b.ramassesSols).add(p.ancien);
+            if (!b.arrete && !stop.getAsBoolean() && Groupes.salleCourante() == salle) {
+                int pris = b.ramassesSols.size() + b.ramassesMurs.size();
+                Salle.signalerReussite(pris);
+                Salle.signalerRefus("mobi pas ramassé", aRamasser.size() - pris);
+            }
+        }
+        } finally {
+            PoseOutils.Signaux.ramassageFini(idsRamasses);
         }
         if (b.arrete || stop.getAsBoolean()) { b.arrete = true; return b; }
 
@@ -285,11 +320,15 @@ final class PoseHybride {
             }
         }
         progres.accept(b.obtenus(), total);
+        if (!b.arrete) {
+            Salle.signalerReussite(b.obtenus());
+            Salle.signalerRefus("mobi pas reposé à la dalle", total - b.obtenus());
+        }
         return b;
     }
 
     private static boolean present(Piece p) {
-        return p.mural ? Salle.mur(p.ancien) != null : Salle.sol(p.ancien) != null;
+        return p.mural ? Salle.mur(p.ancien) != null : PoseTapis.encoreLa(p.ancien);
     }
 
     /** Les nouveaux mobis de la salle (depuis avant), rapproches des pieces. */

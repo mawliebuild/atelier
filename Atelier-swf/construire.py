@@ -151,6 +151,7 @@ CHAMP_RECHERCHE = False  # ancien champ a gauche de Categorie (retire : une seul
 GRILLE = "grille" not in SANS  # « Voir grille » : traits autour des cases, par-dessus les mobis
 SURLIGNAGE = "surlignage" not in SANS  # lueur sur les mobis selectionnes dans les calques
 BOTS = "bots" not in SANS  # onglet Bots : menu Type (casual / service / enregistreur)
+TROC = "troc" not in SANS  # bouton « Vendre au troc » sous « Vendre au marché » (fenetre de l'Atelier)
 
 # ------------------------------------------------------------------ references P-code (forme d'origine)
 FV = 'PrivateNamespace("com.sulake.habbo.inventory.furni:FurniView")'
@@ -429,6 +430,8 @@ def mise_en_page():
     if debut_grille:
         rep('<scrollable_itemgrid_vertical', debut_grille + '                    <scrollable_itemgrid_vertical')
     s = s[:debut] + seg + s[fin:]
+    if TROC:
+        s = mise_en_page_troc(s, debut)
     if BOTS:
         s = mise_en_page_bots(s)
     s = curseur_main(s)
@@ -436,6 +439,24 @@ def mise_en_page():
     chemin = os.path.join(TRAVAIL, "inventory_xml.bin")
     open(chemin, "w", encoding="utf-8").write(s)
     return chemin
+
+
+def mise_en_page_troc(s, debut):
+    """
+    « Vendre au troc » juste apres « Vendre au marche » (sell_btn), meme style et
+    meme taille. Cache au depart : updateActionButtons le montre quand
+    « Vendre au marche » est montre (voir boutons_troc).
+    """
+    a = '<button x="0" y="169" width="167" height="22" params="131089" style="3" name="sell_btn" caption="%24%7Binventory.marketplace.sell%7D">'
+    i = s.index(a, debut)
+    assert s.count(a) == 1, a
+    j = s.index('</button>', i) + len('</button>')
+    troc = ('\n                            <button x="0" y="192" width="167" height="22" params="131089" style="3" name="atelier_troc_btn" caption="Vendre%20au%20troc" visible="false">\n'
+            '                              <variables>\n'
+            '                                <var key="text_style" value="button_shiny_regular" type="String"/>\n'
+            '                              </variables>\n'
+            '                            </button>')
+    return s[:j] + troc + s[j:]
 
 
 # ================================================================== P-code
@@ -492,6 +513,45 @@ def nom_ligne(L, OUT, I, J, et):
             'getlocal %d' % L, LENGTH, 'pushbyte 0', 'ifne %s_fin' % et,
             'pushstring "%s"' % SANS_COLLECTION, 'setlocal %d' % OUT,
             '%s_fin:' % et]
+
+
+def categorie_inventaire():
+    """
+    FurniView.updateActionView : sous le nom du mobi choisi dans l'inventaire, en tete de
+    sa description, « Catégorie : <nom> » (collection de sa ligne, comme le menu Categorie).
+    Insere juste apres l'ecriture de la description. Registres ajoutes : 22 a 26.
+    """
+    FVN = 'PrivateNamespace("com.sulake.habbo.inventory.furni:FurniView")'
+    IW = 'Namespace("com.sulake.core.window:IWindow")'
+    IFD = 'Namespace("com.sulake.habbo.session.furniture:IFurnitureData")'
+    u = list(pcode_origine("com.sulake.habbo.inventory.furni.FurniView", "updateActionView"))
+    im = next(i for i, x in enumerate(u) if x.startswith("maxstack "))
+    il = next(i for i, x in enumerate(u) if x.startswith("localcount "))
+    u[im] = "maxstack %d" % max(12, int(u[im].split()[1]))
+    u[il] = "localcount %d" % max(27, int(u[il].split()[1]))
+    # la description normale : getlocal 7 / description / setproperty caption, puis le label de sortie
+    k = next(i for i in range(len(u) - 2)
+             if u[i] == 'getlocal 7' and u[i + 1] == 'getproperty QName(PackageNamespace(""),"description")'
+             and 'caption' in u[i + 2])
+    assert u[k + 3].endswith(":"), "updateActionView : label attendu apres la description"
+    p = ['getlocal 7', 'iffalse atl_ci_sortie',
+         'getlocal 7', 'getproperty QName(PackageNamespace(""),"furniData")', 'coerce_a', 'setlocal 22',
+         'getlocal 22', 'iffalse atl_ci_sortie',
+         'getlocal 22', 'getproperty QName(%s,"furniLine")' % IFD, 'coerce_s', 'setlocal 23',
+         'getlocal 23', 'iftrue atl_ci_l', 'pushstring ""', 'setlocal 23', 'atl_ci_l:',
+         'getlocal 23', LOWER, 'coerce_s', 'setlocal 23']
+    p += nom_ligne(23, 24, 25, 26, 'atl_ci')
+    p += ['getlex QName(%s,"_-y1")' % FVN, 'pushstring "furni_description"',
+          'callproperty QName(%s,"findChildByName"), 1' % IW, 'coerce_a', 'setlocal 22',
+          'getlocal 22', 'iffalse atl_ci_sortie',
+          'getlocal 22', 'pushstring "Catégorie : "', 'getlocal 24', 'add', 'pushstring "\\n"', 'add',
+          'getlocal 22', 'getproperty QName(%s,"caption")' % IW, 'add',
+          'setproperty QName(%s,"caption")' % IW,
+          'atl_ci_sortie:']
+    u = u[:k + 4] + p + u[k + 4:]
+    chemin = os.path.join(TRAVAIL, "uav.pcode")
+    open(chemin, "w", encoding="utf-8").write("\n".join(u))
+    return chemin
 
 
 def liste_cats():
@@ -612,6 +672,18 @@ def window_event_proc():
     # ---- clics
     p += ['getlocal1', TYPE, 'pushstring "WME_CLICK"', 'ifne atl_clav',
           'getlocal2', NAME, 'coerce_s', 'setlocal 11']
+    if TROC:
+        # « Vendre au troc » : « atelier:troc=<id> » (id d'inventaire du premier
+        # exemplaire du groupe choisi), lu et bloque par l'Atelier qui ouvre sa fenetre
+        p += ['getlocal 11', 'pushstring "atelier_troc_btn"', 'ifne atl_tr_n',
+              W14, 'callproperty QName(PackageNamespace(""),"getSelectedItem"), 0', 'coerce_a', 'setlocal 12',
+              'getlocal 12', 'iffalse atl_tr_f',
+              'getlocal 12', 'pushbyte 0', 'callproperty QName(PackageNamespace(""),"getAt"), 1', 'coerce_a', 'setlocal 13',
+              'getlocal 13', 'iffalse atl_tr_f'] + connexion() + [
+              'pushstring "atelier:troc="', 'getlocal 13', 'getproperty QName(PackageNamespace(""),"id")', 'convert_i',
+              'add'] + ENVOI + [
+              'atl_tr_f:', 'returnvoid',
+              'atl_tr_n:']
     if ICONES:
         p += ['pushbyte -1', 'setlocal 12']
         for k in range(4):
@@ -716,6 +788,50 @@ def window_event_proc():
     w = w[:i + 1] + p + w[i + 1:]
     chemin = os.path.join(TRAVAIL, "wep.pcode")
     open(chemin, "w", encoding="utf-8").write("\n".join(w))
+    return chemin
+
+
+def boutons_troc():
+    """
+    FurniView.updateActionButtons (avant chaque sortie) : « Vendre au troc »
+    suit « Vendre au marche » : montre juste apres lui quand il est dans la
+    liste, cache sinon. Le bouton reste toujours dans la liste (sinon on ne
+    le retrouverait plus par son nom) ; cache, il ne prend pas de place.
+    """
+    u = list(pcode_origine("com.sulake.habbo.inventory.furni.FurniView", "updateActionButtons"))
+    im = [k for k, l in enumerate(u) if l.startswith("maxstack ")][0]
+    il = [k for k, l in enumerate(u) if l.startswith("localcount ")][0]
+    R = int(u[il].split()[1])
+    u[im] = "maxstack %d" % max(int(u[im].split()[1]), 10)
+    u[il] = "localcount %d" % (R + 2)
+    T, S = R, R + 1
+    L = 'getlex QName(%s,"_-85")' % FV
+    ILW = 'Namespace("com.sulake.core.window.components:IItemListWindow")'
+    def bloc(n):
+        e = 'atl_tb%d' % n
+        return [L, 'pushstring "atelier_troc_btn"', 'callproperty QName(%s,"getListItemByName"), 1' % ILW,
+                'coerce_a', 'setlocal %d' % T,
+                'getlocal %d' % T, 'iffalse %s_f' % e,
+                L, 'pushstring "sell_btn"', 'callproperty QName(%s,"getListItemByName"), 1' % ILW,
+                'coerce_a', 'setlocal %d' % S,
+                L, 'getlocal %d' % T, 'callpropvoid QName(%s,"removeListItem"), 1' % ILW,
+                'getlocal %d' % T, 'getlocal %d' % S, 'convert_b', 'setproperty QName(%s,"visible")' % IW,
+                'getlocal %d' % S, 'iffalse %s_c' % e,
+                L, 'getlocal %d' % T,
+                L, 'getlocal %d' % S, 'callproperty QName(%s,"getListItemIndex"), 1' % ILW,
+                'pushbyte 1', 'add', 'convert_u',
+                'callpropvoid QName(%s,"addListItemAt"), 2' % ILW, 'jump %s_f' % e,
+                '%s_c:' % e,
+                L, 'getlocal %d' % T,
+                L, 'getproperty QName(%s,"numListItems")' % ILW, 'convert_u',
+                'callpropvoid QName(%s,"addListItemAt"), 2' % ILW,
+                '%s_f:' % e]
+    sorties = [k for k, l in enumerate(u) if l == "returnvoid"]
+    assert sorties, "updateActionButtons sans returnvoid"
+    for n, k in enumerate(reversed(sorties)):
+        u = u[:k] + bloc(n) + u[k:]
+    chemin = os.path.join(TRAVAIL, "uab.pcode")
+    open(chemin, "w", encoding="utf-8").write("\n".join(u))
     return chemin
 
 
@@ -837,6 +953,89 @@ def trouver_canevas(CEH, n):
         'atl_%s_ok:' % n]
 
 
+def calque_salle(CEH):
+    """
+    « atelier:calque=<fichier>;<opacite 0-100>;<dx>;<dy>;<echelle %> » : une photo
+    de reference (fichier du dossier personnel, ecrit par l'Atelier) posee en
+    transparence par-dessus la salle, dans un MovieClip « atelier_calque » du
+    canevas. Sa place suit la vue dans le rendu (rendu_grille) : coin calé sur
+    la case (0,0), decale de dx/dy pixels (zoom 1), a l'echelle donnee.
+    « atelier:calque= » seul cache la photo. Registres : 11 conteneur,
+    12 calque, 13 champs, 14 chargeur.
+    """
+    PUB = 'PackageNamespace("")'
+    MC = 'QName(PackageNamespace("flash.display"),"MovieClip")'
+    LOADER = 'QName(PackageNamespace("flash.display"),"Loader")'
+    URLREQ = 'QName(PackageNamespace("flash.net"),"URLRequest")'
+    FILE = 'QName(PackageNamespace("flash.filesystem"),"File")'
+    def pose(nom, *val):
+        return ['getlocal 12'] + list(val) + ['setproperty QName(%s,"%s")' % (PUB, nom)]
+    def champ(i):
+        return ['getlocal 13', 'pushbyte %d' % i, MULTI_L]
+    c = (['getlocal 6', 'pushstring "atelier:calque="', INDEXOF, 'pushbyte 0', 'ifne atl_pas_calque']
+        + trouver_canevas(CEH, 'cq')
+        + ['getlocal 10', 'getproperty QName(%s,"displayObject")' % PUB, 'coerce_a', 'setlocal 11',
+           'getlocal 11', 'pushstring "atelier_calque"', 'callproperty QName(%s,"getChildByName"), 1' % PUB,
+           'coerce_a', 'setlocal 12',
+           'getlocal 12', 'iftrue atl_cq_a',
+           'findpropstrict ' + MC, 'constructprop %s, 0' % MC, 'coerce_a', 'setlocal 12']
+        + pose('name', 'pushstring "atelier_calque"') + pose('mouseEnabled', 'pushfalse')
+        + pose('mouseChildren', 'pushfalse') + pose('atl_url', 'pushstring ""')
+        + ['getlocal 11', 'getlocal 12', 'callpropvoid QName(%s,"addChild"), 1' % PUB,
+           'atl_cq_a:',
+           'getlocal 6', 'pushbyte 15', 'callproperty QName(%s,"substr"), 1' % AS3,
+           'pushstring ";"', 'callproperty QName(%s,"split"), 1' % AS3, 'coerce_a', 'setlocal 13',
+           'getlocal 13', LENGTH, 'pushbyte 5', 'ifge atl_cq_vis']
+        + pose('visible', 'pushfalse') + ['jump atl_cq_fin', 'atl_cq_vis:']
+        # autre fichier : nouveau chargement (le nom change a chaque photo choisie)
+        + ['getlocal 12', 'getproperty QName(%s,"atl_url")' % PUB] + champ(0) + ['ifeq atl_cq_meme',
+           'getlocal 12', 'callpropvoid QName(%s,"removeChildren"), 0' % PUB,
+           'findpropstrict ' + LOADER, 'constructprop %s, 0' % LOADER, 'coerce_a', 'setlocal 14',
+           'getlocal 14', 'findpropstrict ' + URLREQ,
+           'getlex ' + FILE, 'getproperty QName(%s,"userDirectory")' % PUB] + champ(0) + ['coerce_s',
+           'callproperty QName(%s,"resolvePath"), 1' % PUB, 'getproperty QName(%s,"url")' % PUB,
+           'constructprop %s, 1' % URLREQ, 'callpropvoid QName(%s,"load"), 1' % PUB,
+           'getlocal 12', 'getlocal 14', 'callpropvoid QName(%s,"addChild"), 1' % PUB]
+        + pose('atl_url', *champ(0))
+        + ['atl_cq_meme:'])
+    for i, nom in ((1, 'atl_a'), (2, 'atl_dx'), (3, 'atl_dy'), (4, 'atl_s')):
+        c += pose(nom, 'findpropstrict QName(PackageNamespace(""),"parseInt")', *champ(i),
+                  'callproperty QName(PackageNamespace(""),"parseInt"), 1', 'convert_d')
+    c += pose('alpha', 'getlocal 12', 'getproperty QName(%s,"atl_a")' % PUB, 'pushbyte 100', 'divide')
+    c += pose('visible', 'pushtrue')
+    c += ['atl_cq_fin:', 'returnvoid', 'atl_pas_calque:']
+    return c
+
+
+def rendu_calque(RSC, GEOM, DISP, V3):
+    """Rendu : la photo « atelier_calque » suit la vue (registres 28 calque, 29 echelle, 30 point)."""
+    PUB = 'PackageNamespace("")'
+    c = ['getlex QName(%s,"_-Tr")' % RSC, 'pushstring "atelier_calque"',
+         'callproperty QName(%s,"getChildByName"), 1' % PUB, 'coerce_a', 'setlocal 28',
+         'getlocal 28', 'iffalse atl_cqr_fin',
+         'getlocal 28', 'getproperty QName(%s,"visible")' % PUB, 'iffalse atl_cqr_fin',
+         # echelle : celle du calque des mobis, et le zoom du jeu (64 px = zoom 1)
+         DISP, 'getproperty QName(%s,"scaleX")' % PUB, GEOM, 'getproperty QName(%s,"scale")' % PUB, 'multiply',
+         'pushbyte 64', 'divide', 'convert_d', 'setlocal 29',
+         GEOM, 'findpropstrict ' + V3, 'pushbyte 0', 'pushbyte 0', 'pushbyte 0', 'constructprop %s, 3' % V3,
+         'callproperty QName(%s,"getScreenPoint"), 1' % PUB, 'coerce_a', 'setlocal 30',
+         'getlocal 30', 'iffalse atl_cqr_fin']
+    for k, ech, moitie, d in (("x", "scaleX", "_-Yd", "atl_dx"), ("y", "scaleY", "_-E1E", "atl_dy")):
+        c += ['getlocal 28',
+              DISP, 'getproperty QName(%s,"%s")' % (PUB, k),
+              DISP, 'getproperty QName(%s,"%s")' % (PUB, ech),
+              'getlex QName(%s,"%s")' % (RSC, moitie), 'pushbyte 2', 'divide', 'convert_i', 'multiply', 'add',
+              'getlocal 30', 'getproperty QName(%s,"%s")' % (PUB, k), DISP, 'getproperty QName(%s,"%s")' % (PUB, ech),
+              'multiply', 'add',
+              'getlocal 28', 'getproperty QName(%s,"%s")' % (PUB, d), 'getlocal 29', 'multiply', 'add',
+              'setproperty QName(%s,"%s")' % (PUB, k)]
+    for k in ("scaleX", "scaleY"):
+        c += ['getlocal 28', 'getlocal 29', 'getlocal 28', 'getproperty QName(%s,"atl_s")' % PUB, 'multiply',
+              'pushbyte 100', 'divide', 'setproperty QName(%s,"%s")' % (PUB, k)]
+    c += ['atl_cqr_fin:']
+    return c
+
+
 def grille_salle(CEH):
     """
     « atelier:grille=<plan> » : le plan du sol (lignes separees par « / »,
@@ -924,8 +1123,9 @@ def rendu_grille():
     DISP = 'getlex QName(%s,"_display")' % RSC
     u = list(pcode_origine("com.sulake.room.renderer.§_-b2M§", "render"))
     im, il = u.index("maxstack 7"), u.index("localcount 11")
-    u[im] = "maxstack 16"; u[il] = "localcount 28"
-    c = ['getlex QName(%s,"_-Tr")' % RSC, 'pushstring "atelier_grille"',
+    u[im] = "maxstack 16"; u[il] = "localcount 31"
+    c = rendu_calque(RSC, GEOM, DISP, V3)
+    c += ['getlex QName(%s,"_-Tr")' % RSC, 'pushstring "atelier_grille"',
          'callproperty QName(%s,"getChildByName"), 1' % PUB, 'coerce_a', 'setlocal 11',
          'getlocal 11', 'iffalse atl_g_fin']
     # Le jeu place chaque sprite a « point ecran + int(largeur/2) » (et la
@@ -1020,28 +1220,7 @@ def rendu_grille():
               'getlocal 18', 'getproperty QName(%s,"y")' % PUB, 'callpropvoid QName(%s,"%s"), 2' % (PUB, trait)]
     c += ['atl_gx_next:', 'getlocal 12', 'callpropvoid QName(%s,"endFill"), 0' % PUB, 'inclocal_i 16', 'jump atl_gx',
           'atl_gy_next:', 'inclocal_i 14', 'jump atl_gy',
-          # mode Cases : carre clair sous la souris, de la taille du pinceau
-          'atl_g_sv:',
-          'getlocal 11', 'getproperty QName(%s,"atl_c")' % PUB, 'iffalse atl_g_fin',
-          'getlocal 11', 'getproperty QName(%s,"atl_hv")' % PUB, 'iffalse atl_g_fin',
-          'getlocal 11', 'getproperty QName(%s,"atl_pz")' % PUB, 'convert_i', 'setlocal 27',
-          'getlocal 27', 'pushbyte 1', 'ifge atl_g_p1', 'pushbyte 1', 'setlocal 27', 'atl_g_p1:',
-          'getlocal 11', 'getproperty QName(%s,"atl_hx")' % PUB, 'convert_i',
-          'getlocal 27', 'decrement_i', 'pushbyte 1', 'rshift', 'subtract', 'convert_d', 'setlocal 24',
-          'getlocal 11', 'getproperty QName(%s,"atl_hy")' % PUB, 'convert_i',
-          'getlocal 27', 'decrement_i', 'pushbyte 1', 'rshift', 'subtract', 'convert_d', 'setlocal 25',
-          'getlocal 12', 'pushbyte 3', 'pushint 16777215', 'pushbyte 1', 'pushtrue', 'pushstring "none"',
-          'callpropvoid QName(%s,"lineStyle"), 5' % PUB]
-    for ox, oy, trait in ((0, 0, 'moveTo'), (1, 0, 'lineTo'), (1, 1, 'lineTo'), (0, 1, 'lineTo'), (0, 0, 'lineTo')):
-        c += [GEOM, 'findpropstrict ' + V3,
-              'getlocal 24', 'pushdouble -0.5', 'add'] + (['getlocal 27', 'convert_d', 'add'] if ox else []) + [
-              'getlocal 25', 'pushdouble -0.5', 'add'] + (['getlocal 27', 'convert_d', 'add'] if oy else []) + [
-              'getlocal 11', 'getproperty QName(%s,"atl_h")' % PUB, 'convert_d',
-              'constructprop %s, 3' % V3,
-              'callproperty QName(%s,"getScreenPoint"), 1' % PUB, 'coerce_a', 'setlocal 23',
-              'getlocal 23', 'iffalse atl_g_fin',
-              'getlocal 12', 'getlocal 23', 'getproperty QName(%s,"x")' % PUB,
-              'getlocal 23', 'getproperty QName(%s,"y")' % PUB, 'callpropvoid QName(%s,"%s"), 2' % (PUB, trait)]
+          'atl_g_sv:']
     c += ['atl_g_fin:']
     k = len(u) - 1 - u[::-1].index("returnvoid")
     u = u[:k] + c + u[k:]
@@ -1139,6 +1318,137 @@ def cases_salle(CEH):
            'atl_ca_fin:', 'returnvoid', 'atl_pas_cases:'])
 
 
+def empreinte_salle(CEH):
+    """
+    « atelier:empreinte=<l>;<p>;<RRGGBB>;<opacite %>[;<hauteur>] » : un rectangle
+    de l x p cases (coin = case survolee, x et y les plus petits) suit la souris ;
+    « atelier:empreinte=coin;<x>;<y>;<RRGGBB>;<opacite %>[;<hauteur>] » : du coin
+    (x, y) a la case survolee ; « atelier:empreinte=0 » l'efface. Reglages portes
+    par la grille (atl_e, atl_ek, atl_e1, atl_e2, atl_ec, atl_ea, atl_eh) ; le
+    dessin est fait par clic_cases (survol). Registres : 11 conteneur, 12 grille,
+    13 morceaux, 14 forme.
+    """
+    PUB = 'PackageNamespace("")'
+    MC = 'QName(PackageNamespace("flash.display"),"MovieClip")'
+    MATH = 'QName(PackageNamespace(""),"Math")'
+    def pose(nom, val):
+        return ['getlocal 12', val, 'setproperty QName(%s,"%s")' % (PUB, nom)]
+    def morceau(i):
+        return ['getlocal 13', 'pushbyte %d' % i, MULTI_L]
+    def entier(i, base):
+        return (['findpropstrict QName(%s,"parseInt")' % PUB] + morceau(i)
+                + ['pushbyte %d' % base, 'callproperty QName(%s,"parseInt"), 2' % PUB, 'convert_i'])
+    def reel(i):
+        return (['findpropstrict QName(%s,"parseFloat")' % PUB] + morceau(i)
+                + ['callproperty QName(%s,"parseFloat"), 1' % PUB, 'convert_d'])
+    return (['getlocal 6', 'pushstring "atelier:empreinte="', INDEXOF, 'pushbyte 0', 'ifne atl_pas_emp']
+        + trouver_canevas(CEH, 'em')
+        + ['getlocal 10', 'getproperty QName(%s,"displayObject")' % PUB, 'coerce_a', 'setlocal 11',
+           'getlocal 11', 'pushstring "atelier_grille"', 'callproperty QName(%s,"getChildByName"), 1' % PUB,
+           'coerce_a', 'setlocal 12',
+           'getlocal 12', 'iftrue atl_em_a',
+           'findpropstrict ' + MC, 'constructprop %s, 0' % MC, 'coerce_a', 'setlocal 12']
+        + pose('name', 'pushstring "atelier_grille"') + pose('mouseEnabled', 'pushfalse')
+        + pose('mouseChildren', 'pushfalse') + pose('alpha', 'pushdouble 0.55')
+        + pose('atl_d', 'pushstring ""') + pose('atl_u', 'pushbyte -1')
+        + ['getlocal 11', 'getlocal 12', 'callpropvoid QName(%s,"addChild"), 1' % PUB,
+           'atl_em_a:',
+           # l'ancienne empreinte s'efface ; redessinee au prochain mouvement de souris
+           'getlocal 12', 'pushstring "atelier_empreinte"', 'callproperty QName(%s,"getChildByName"), 1' % PUB,
+           'coerce_a', 'setlocal 14',
+           'getlocal 14', 'iffalse atl_em_nf',
+           'getlocal 14', 'getproperty QName(%s,"graphics")' % PUB, 'callpropvoid QName(%s,"clear"), 0' % PUB,
+           'atl_em_nf:']
+        + pose('atl_ehv', 'pushfalse') + pose('atl_e', 'pushfalse') + pose('atl_ek', 'pushfalse')
+        + ['getlocal 6', 'pushstring "atelier:empreinte=0"', 'ifeq atl_em_fin',
+           'getlocal 6', 'pushbyte 18', 'callproperty QName(%s,"substr"), 1' % AS3,
+           'pushstring ";"', 'callproperty QName(%s,"split"), 1' % AS3, 'coerce_a', 'setlocal 13']
+        + morceau(0) + ['pushstring "coin"', 'ifne atl_em_nc']
+        + pose('atl_ek', 'pushtrue')
+        + ['getlocal 13', 'callproperty QName(%s,"shift"), 0' % AS3, 'pop',
+           'atl_em_nc:',
+           'getlocal 13', LENGTH, 'pushbyte 4', 'iflt atl_em_fin',
+           'getlocal 12'] + entier(0, 10) + ['setproperty QName(%s,"atl_e1")' % PUB,
+           'getlocal 12'] + entier(1, 10) + ['setproperty QName(%s,"atl_e2")' % PUB,
+           'getlocal 12'] + entier(2, 16) + ['setproperty QName(%s,"atl_ec")' % PUB,
+           # la grille est a 55 % d'opacite : on compense pour obtenir l'opacite demandee
+           'getlocal 12', 'getlex ' + MATH, 'pushdouble 1'] + reel(3) + ['pushdouble 55', 'divide',
+           'callproperty QName(%s,"min"), 2' % PUB, 'convert_d', 'setproperty QName(%s,"atl_ea")' % PUB]
+        + pose('atl_eh', 'pushdouble 0')
+        + ['getlocal 13', LENGTH, 'pushbyte 5', 'iflt atl_em_h0',
+           'getlocal 12'] + reel(4) + ['setproperty QName(%s,"atl_eh")' % PUB,
+           'atl_em_h0:']
+        + pose('atl_e', 'pushtrue')
+        + ['atl_em_fin:', 'returnvoid', 'atl_pas_emp:'])
+
+
+def opacite_salle(CEH):
+    """
+    « atelier:opacite=m12,s34;90 » : tous les mobis (sol 10, muraux 20) repassent a 100 %,
+    puis ceux de la liste (m = mural, s = sol) a 90 % (« furniture_alpha_multiplier » du
+    modele, comme zone_salle) : mise en valeur sans contour ni couleur. « atelier:opacite= »
+    seul : tout a 100 %. Opacite absente : 90.
+    Registres : 7 moteur, 8 salle, 11 morceaux puis jetons, 12 jeton, 13 categorie,
+    14 index ou id, 15 objet puis modele, 16 opacite.
+    """
+    PUB = 'PackageNamespace("")'
+    RE = 'Namespace("com.sulake.habbo.room:IRoomEngine")'
+    ROC = 'Namespace("com.sulake.room.object:IRoomObjectController")'
+    ROMC = 'Namespace("com.sulake.room.object:IRoomObjectModelController")'
+    ALPHA = 'pushstring "furniture_alpha_multiplier"'
+    return ['getlocal 6', 'pushstring "atelier:opacite="', INDEXOF, 'pushbyte 0', 'ifne atl_pas_op',
+            'getlex QName(%s,"_-017")' % CEH, 'getproperty QName(%s,"roomEngine")' % PUB, 'coerce_a', 'setlocal 7',
+            'getlocal1', 'getproperty QName(%s,"session")' % PUB,
+            'getproperty QName(Namespace("com.sulake.habbo.session:IRoomSession"),"roomId")', 'convert_i', 'setlocal 8',
+            'getlocal 6', 'pushbyte 16', 'callproperty QName(%s,"substr"), 1' % AS3,
+            'pushstring ";"', 'callproperty QName(%s,"split"), 1' % AS3, 'coerce_a', 'setlocal 11',
+            'pushdouble 0.9', 'setlocal 16',
+            'getlocal 11', LENGTH, 'pushbyte 2', 'iflt atl_op_p',
+            'findpropstrict QName(%s,"parseFloat")' % PUB, 'getlocal 11', 'pushbyte 1', MULTI_L,
+            'callproperty QName(%s,"parseFloat"), 1' % PUB, 'convert_d', 'pushbyte 100', 'divide', 'setlocal 16',
+            'atl_op_p:',
+            # 1. tout a 100 %
+            'pushbyte 10', 'setlocal 13',
+            'atl_op_cat:', 'label',
+            'pushbyte 0', 'setlocal 14',
+            'atl_op_obj:', 'label',
+            'getlocal 14', 'getlocal 7', 'getlocal 8', 'getlocal 13',
+            'callproperty QName(%s,"getRoomObjectCount"), 2' % RE, 'ifge atl_op_catfin',
+            'getlocal 7', 'getlocal 8', 'getlocal 14', 'getlocal 13',
+            'callproperty QName(%s,"getRoomObjectWithIndex"), 3' % RE, 'coerce_a', 'setlocal 15',
+            'getlocal 15', 'iffalse atl_op_suiv',
+            'getlocal 15', 'callproperty QName(%s,"getModelController"), 0' % ROC, 'coerce_a', 'setlocal 15',
+            'getlocal 15', 'iffalse atl_op_suiv',
+            'getlocal 15', ALPHA, 'pushdouble 1.0', 'callpropvoid QName(%s,"setNumber"), 2' % ROMC,
+            'atl_op_suiv:', 'inclocal_i 14', 'jump atl_op_obj',
+            'atl_op_catfin:',
+            'getlocal 13', 'pushbyte 20', 'ifeq atl_op_liste',
+            'pushbyte 20', 'setlocal 13', 'jump atl_op_cat',
+            # 2. la liste a l'opacite demandee
+            'atl_op_liste:',
+            'getlocal 11', 'pushbyte 0', MULTI_L, 'coerce_s',
+            'pushstring ","', 'callproperty QName(%s,"split"), 1' % AS3, 'coerce_a', 'setlocal 11',
+            'atl_op_tok:', 'label',
+            'getlocal 11', LENGTH, 'pushbyte 0', 'ifle atl_op_fin',
+            'getlocal 11', 'callproperty QName(%s,"shift"), 0' % AS3, 'coerce_s', 'setlocal 12',
+            'getlocal 12', LENGTH, 'pushbyte 2', 'iflt atl_op_tok',
+            'pushbyte 10', 'setlocal 13',
+            'getlocal 12', 'pushbyte 0', 'callproperty QName(%s,"charAt"), 1' % AS3, 'pushstring "m"', 'ifne atl_op_sol',
+            'pushbyte 20', 'setlocal 13',
+            'atl_op_sol:',
+            'findpropstrict QName(%s,"parseInt")' % PUB,
+            'getlocal 12', 'pushbyte 1', 'callproperty QName(%s,"substr"), 1' % AS3,
+            'callproperty QName(%s,"parseInt"), 1' % PUB, 'convert_i', 'setlocal 14',
+            'getlocal 7', 'getlocal 8', 'getlocal 14', 'getlocal 13',
+            'callproperty QName(%s,"getRoomObject"), 3' % RE, 'coerce_a', 'setlocal 15',
+            'getlocal 15', 'iffalse atl_op_tok',
+            'getlocal 15', 'callproperty QName(%s,"getModelController"), 0' % ROC, 'coerce_a', 'setlocal 15',
+            'getlocal 15', 'iffalse atl_op_tok',
+            'getlocal 15', ALPHA, 'getlocal 16', 'callpropvoid QName(%s,"setNumber"), 2' % ROMC,
+            'jump atl_op_tok',
+            'atl_op_fin:', 'returnvoid', 'atl_pas_op:']
+
+
 CASE_FICHIER = ".atelier-case.txt"   # dans le dossier personnel : « n:x,y » de la derniere case cliquee
 
 
@@ -1162,15 +1472,17 @@ def clic_cases():
     im = next(i for i, x in enumerate(u) if x.startswith("maxstack "))
     il = next(i for i, x in enumerate(u) if x.startswith("localcount "))
     u[im] = "maxstack %d" % max(20, int(u[im].split()[1]))
-    u[il] = "localcount %d" % max(25, int(u[il].split()[1]))
+    u[il] = "localcount %d" % max(38, int(u[il].split()[1]))
+    SHAPE = 'QName(PackageNamespace("flash.display"),"Shape")'
     def vec(a, b, c):
         return ['findpropstrict ' + V3] + a + b + c + ['constructprop %s, 3' % V3]
     p = ['getlex QName(%s,"_-Tr")' % RSC, 'pushstring "atelier_grille"',
          'callproperty QName(%s,"getChildByName"), 1' % PUB, 'coerce_a', 'setlocal 19',
-         'getlocal 19', 'iffalse atl_k_non',
-         # double-clic ? (les dalles magiques ne laissent passer que lui : un clic simple les selectionne)
-         'getlocal 19', 'getlocal3', 'pushstring "doubleClick"', 'equals', 'setproperty QName(%s,"atl_dc")' % PUB,
-         'getlocal 19', 'getproperty QName(%s,"atl_c")' % PUB, 'iffalse atl_k_non',
+         'getlocal 19', 'iffalse atl_k_non']
+    # double-clic : les dalles magiques le laissent passer au mobi vise (un clic simple les selectionne)
+    p += double_clic_dalles(PUB)
+    p += empreinte_survol(PUB, RSC, V3, PT, MATH, SHAPE, vec)
+    p += ['getlocal 19', 'getproperty QName(%s,"atl_c")' % PUB, 'iffalse atl_k_non',
          'getlocal3', 'pushstring "click"', 'ifeq atl_k_clic',
          'getlocal3', 'pushstring "mouseDown"', 'ifeq atl_k_avale',
          'getlocal3', 'pushstring "doubleClick"', 'ifeq atl_k_avale',
@@ -1197,8 +1509,35 @@ def clic_cases():
           'getlocal 19', 'getlocal 22', 'setproperty QName(%s,"atl_hx")' % PUB,
           'getlocal 19', 'getlocal 23', 'setproperty QName(%s,"atl_hy")' % PUB,
           'getlocal 19', 'pushtrue', 'setproperty QName(%s,"atl_hv")' % PUB,
-          'getlocal 19', 'pushbyte -1', 'setproperty QName(%s,"atl_u")' % PUB,
-          'jump atl_k_non']
+          # forme « atelier_survol » dans la grille (recreee si la grille a ete videe)
+          'getlocal 19', 'pushstring "atelier_survol"', 'callproperty QName(%s,"getChildByName"), 1' % PUB,
+          'coerce_a', 'setlocal 24',
+          'getlocal 24', 'iftrue atl_k_f',
+          'findpropstrict ' + SHAPE, 'constructprop %s, 0' % SHAPE, 'coerce_a', 'setlocal 24',
+          'getlocal 24', 'pushstring "atelier_survol"', 'setproperty QName(%s,"name")' % PUB,
+          'getlocal 19', 'getlocal 24', 'callpropvoid QName(%s,"addChild"), 1' % PUB,
+          'atl_k_f:',
+          # taille du pinceau (25), coin du carre (26 x, 20 y)
+          'getlocal 19', 'getproperty QName(%s,"atl_pz")' % PUB, 'convert_i', 'setlocal 25',
+          'getlocal 25', 'pushbyte 1', 'ifge atl_k_p1', 'pushbyte 1', 'setlocal 25', 'atl_k_p1:',
+          'getlocal 22', 'getlocal 25', 'decrement_i', 'pushbyte 1', 'rshift', 'subtract', 'convert_d', 'setlocal 26',
+          'getlocal 23', 'getlocal 25', 'decrement_i', 'pushbyte 1', 'rshift', 'subtract', 'convert_d', 'setlocal 20',
+          'getlocal 24', 'getproperty QName(%s,"graphics")' % PUB, 'callpropvoid QName(%s,"clear"), 0' % PUB,
+          'getlocal 24', 'getproperty QName(%s,"graphics")' % PUB,
+          'pushbyte 3', 'pushint 16777215', 'pushbyte 1', 'pushtrue', 'pushstring "none"',
+          'callpropvoid QName(%s,"lineStyle"), 5' % PUB]
+    for ox, oy, trait in ((0, 0, 'moveTo'), (1, 0, 'lineTo'), (1, 1, 'lineTo'), (0, 1, 'lineTo'), (0, 0, 'lineTo')):
+        p += ['getlex QName(%s,"_geometry")' % RSC, 'findpropstrict ' + V3,
+              'getlocal 26', 'pushdouble -0.5', 'add'] + (['getlocal 25', 'convert_d', 'add'] if ox else []) + [
+              'getlocal 20', 'pushdouble -0.5', 'add'] + (['getlocal 25', 'convert_d', 'add'] if oy else []) + [
+              'getlocal 19', 'getproperty QName(%s,"atl_h")' % PUB, 'convert_d',
+              'constructprop %s, 3' % V3,
+              'callproperty QName(%s,"getScreenPoint"), 1' % PUB, 'coerce_a', 'setlocal 21',
+              'getlocal 21', 'iffalse atl_k_non',
+              'getlocal 24', 'getproperty QName(%s,"graphics")' % PUB,
+              'getlocal 21', 'getproperty QName(%s,"x")' % PUB,
+              'getlocal 21', 'getproperty QName(%s,"y")' % PUB, 'callpropvoid QName(%s,"%s"), 2' % (PUB, trait)]
+    p += ['jump atl_k_non']
     p += ['atl_k_clic:',
          'findpropstrict ' + PT,
          'getlocal1', 'getlex QName(%s,"_-Yd")' % RSC, 'pushbyte 2', 'divide', 'convert_i', 'subtract',
@@ -1233,6 +1572,136 @@ def clic_cases():
     return chemin
 
 
+def double_clic_dalles(PUB):
+    """
+    checkMouseHits, avant tout : pour un double-clic, la liste des dalles
+    magiques (grille.atl_t, « ,12,34, ») est recalculee sur place depuis les
+    objets du canevas (type tile_stackmagic*) : les dalles posees juste avant
+    (collage, pose) comptent tout de suite, sans attendre « atelier:dalles=1 ».
+    Puis grille.atl_dc (lu par clic_sol) dit si les dalles laissent passer ce
+    double-clic : oui seulement si, sous la souris, autre chose qu'une dalle,
+    le sol ou un mur repond (mobi pose dessus, avatar...) ; une dalle
+    double-cliquee seule garde son double-clic. Hors double-clic : atl_dc faux.
+    Registres : 19 grille, 34 indice, 35 objet / sprite, 36 liste, 37 texte.
+    """
+    DEF = 'ProtectedNamespace("com.sulake.room.renderer:_-b2M")'
+    CONT = 'getlex QName(PrivateNamespace("com.sulake.room.renderer:RoomSpriteCanvas"),"_container")'
+    IC = 'Namespace("com.sulake.room.renderer:IRoomSpriteCanvasContainer")'
+    RO = 'Namespace("com.sulake.room.object:IRoomObject")'
+    DC = 'setproperty QName(%s,"atl_dc")' % PUB
+    return ['getlocal 19', 'pushfalse', DC,
+            'getlocal3', 'pushstring "doubleClick"', 'ifne atl_dd_fin',
+            # 1. dalles magiques du canevas, en direct
+            'pushstring ","', 'coerce_s', 'setlocal 36',
+            'pushbyte 0', 'setlocal 34',
+            'atl_dd_l:', 'label',
+            'getlocal 34', CONT, 'callproperty QName(%s,"getRoomObjectCount"), 0' % IC, 'ifge atl_dd_lf',
+            CONT, 'getlocal 34', 'callproperty QName(%s,"getRoomObjectWithIndex"), 1' % IC, 'coerce_a', 'setlocal 35',
+            'getlocal 35', 'iffalse atl_dd_ln',
+            'getlocal 35', 'callproperty QName(%s,"getType"), 0' % RO, 'coerce_s', 'setlocal 37',
+            'getlocal 37', 'iffalse atl_dd_ln',
+            'getlocal 37', 'pushstring "tile_stackmagic"', INDEXOF, 'pushbyte 0', 'ifne atl_dd_ln',
+            'getlocal 36', CONT, 'getlocal 34', 'callproperty QName(%s,"getRoomObjectIdWithIndex"), 1' % IC, 'add',
+            'pushstring ","', 'add', 'coerce_s', 'setlocal 36',
+            'atl_dd_ln:', 'inclocal_i 34', 'jump atl_dd_l',
+            'atl_dd_lf:',
+            'getlocal 19', 'getlocal 36', 'setproperty QName(%s,"atl_t")' % PUB,
+            'getlocal 36', 'pushstring ","', 'ifeq atl_dd_fin',
+            # 2. sous la souris, autre chose qu'une dalle, le sol ou un mur ? (atl_dc encore faux :
+            #    les dalles repondent normalement ; on les reconnait a leur identifiant)
+            'getlex QName(%s,"activeSpriteCount")' % DEF, 'pushbyte 1', 'subtract', 'convert_i', 'setlocal 34',
+            'atl_dd_s:', 'label',
+            'getlocal 34', 'pushbyte 0', 'iflt atl_dd_fin',
+            'findpropstrict QName(%s,"getSprite")' % DEF, 'getlocal 34',
+            'callproperty QName(%s,"getSprite"), 1' % DEF, 'coerce_a', 'setlocal 35',
+            'getlocal 35', 'iffalse atl_dd_sn',
+            'getlocal 35', 'getproperty QName(%s,"skipMouseHandling")' % PUB, 'iftrue atl_dd_sn',
+            'getlocal 35', 'getlocal1', 'getlocal 35', 'getproperty QName(%s,"x")' % PUB, 'subtract',
+            'getlocal2', 'getlocal 35', 'getproperty QName(%s,"y")' % PUB, 'subtract',
+            'callproperty QName(%s,"hitTestPoint"), 2' % PUB, 'iffalse atl_dd_sn',
+            'getlocal 35', 'getproperty QName(%s,"tag")' % PUB, 'coerce_s', 'setlocal 37',
+            'getlocal 37', 'iffalse atl_dd_nt',
+            'getlocal 37', 'pushstring "plane"', INDEXOF, 'pushbyte 0', 'ifeq atl_dd_sn',
+            'atl_dd_nt:',
+            'getlocal 36', 'pushstring ","', 'getlocal 35', 'getproperty QName(%s,"identifier")' % PUB, 'add',
+            'pushstring ","', 'add', INDEXOF, 'pushbyte 0', 'ifge atl_dd_sn',
+            'getlocal 19', 'pushtrue', DC, 'jump atl_dd_fin',
+            'atl_dd_sn:', 'declocal_i 34', 'jump atl_dd_s',
+            'atl_dd_fin:']
+
+
+def empreinte_survol(PUB, RSC, V3, PT, MATH, SHAPE, vec):
+    """
+    checkMouseHits, survol : l'empreinte (atelier:empreinte=, voir empreinte_salle)
+    est redessinee quand la case survolee change ; rien n'est avale, le jeu et
+    les modes Cases / Zone continuent comme avant. Registres : 19 grille,
+    20-21 calculs, 27-28 case survolee, 29-32 rectangle, 33 forme.
+    """
+    def g(nom):
+        return ['getlocal 19', 'getproperty QName(%s,"%s")' % (PUB, nom)]
+    p = g('atl_e') + ['iffalse atl_e_non',
+         'getlocal3', 'pushstring "mouseMove"', 'ifne atl_e_non',
+         'findpropstrict ' + PT,
+         'getlocal1', 'getlex QName(%s,"_-Yd")' % RSC, 'pushbyte 2', 'divide', 'convert_i', 'subtract',
+         'getlocal2', 'getlex QName(%s,"_-E1E")' % RSC, 'pushbyte 2', 'divide', 'convert_i', 'subtract',
+         'constructprop %s, 2' % PT, 'coerce_a', 'setlocal 20',
+         'getlex QName(%s,"_geometry")' % RSC, 'getlocal 20']
+    p += vec(['pushbyte 0'], ['pushbyte 0'], g('atl_eh') + ['convert_d'])
+    p += vec(['pushbyte 1'], ['pushbyte 0'], ['pushbyte 0'])
+    p += vec(['pushbyte 0'], ['pushbyte 1'], ['pushbyte 0'])
+    p += ['callproperty QName(%s,"getPlanePosition"), 4' % PUB, 'coerce_a', 'setlocal 21',
+          'getlocal 21', 'iffalse atl_e_non',
+          'getlex ' + MATH, 'getlocal 21', 'getproperty QName(%s,"x")' % PUB, 'pushdouble 0.5', 'add',
+          'callproperty QName(%s,"floor"), 1' % PUB, 'convert_i', 'setlocal 27',
+          'getlex ' + MATH, 'getlocal 21', 'getproperty QName(%s,"y")' % PUB, 'pushdouble 0.5', 'add',
+          'callproperty QName(%s,"floor"), 1' % PUB, 'convert_i', 'setlocal 28']
+    p += g('atl_ehv') + ['iffalse atl_e_sv'] + g('atl_ehx') + ['getlocal 27', 'ifne atl_e_sv'] + g('atl_ehy') + [
+          'getlocal 28', 'ifeq atl_e_non',
+          'atl_e_sv:',
+          'getlocal 19', 'getlocal 27', 'setproperty QName(%s,"atl_ehx")' % PUB,
+          'getlocal 19', 'getlocal 28', 'setproperty QName(%s,"atl_ehy")' % PUB,
+          'getlocal 19', 'pushtrue', 'setproperty QName(%s,"atl_ehv")' % PUB]
+    # rectangle [29, 31[ x [30, 32[
+    p += g('atl_ek') + ['iffalse atl_e_taille']
+    for a, h, bas, haut in (('atl_e1', 27, 29, 31), ('atl_e2', 28, 30, 32)):
+        p += ['getlex ' + MATH] + g(a) + ['convert_d', 'getlocal %d' % h, 'convert_d',
+              'callproperty QName(%s,"min"), 2' % PUB, 'convert_d', 'setlocal %d' % bas,
+              'getlex ' + MATH] + g(a) + ['convert_d', 'getlocal %d' % h, 'convert_d',
+              'callproperty QName(%s,"max"), 2' % PUB, 'pushbyte 1', 'add', 'convert_d', 'setlocal %d' % haut]
+    p += ['jump atl_e_dessin', 'atl_e_taille:']
+    for a, h, bas, haut in (('atl_e1', 27, 29, 31), ('atl_e2', 28, 30, 32)):
+        p += ['getlocal %d' % h, 'convert_d', 'setlocal %d' % bas,
+              'getlocal %d' % h] + g(a) + ['add', 'convert_d', 'setlocal %d' % haut]
+    p += ['atl_e_dessin:',
+          'getlocal 19', 'pushstring "atelier_empreinte"', 'callproperty QName(%s,"getChildByName"), 1' % PUB,
+          'coerce_a', 'setlocal 33',
+          'getlocal 33', 'iftrue atl_e_f',
+          'findpropstrict ' + SHAPE, 'constructprop %s, 0' % SHAPE, 'coerce_a', 'setlocal 33',
+          'getlocal 33', 'pushstring "atelier_empreinte"', 'setproperty QName(%s,"name")' % PUB,
+          'getlocal 19', 'getlocal 33', 'callpropvoid QName(%s,"addChild"), 1' % PUB,
+          'atl_e_f:',
+          'getlocal 33', 'getproperty QName(%s,"graphics")' % PUB, 'callpropvoid QName(%s,"clear"), 0' % PUB,
+          'getlocal 33', 'getproperty QName(%s,"graphics")' % PUB] + g('atl_ec') + ['convert_u'] + g('atl_ea') + [
+          'convert_d', 'callpropvoid QName(%s,"beginFill"), 2' % PUB]
+    for cx, cy, trait in ((29, 30, 'moveTo'), (31, 30, 'lineTo'), (31, 32, 'lineTo'), (29, 32, 'lineTo'), (29, 30, 'lineTo')):
+        p += ['getlex QName(%s,"_geometry")' % RSC, 'findpropstrict ' + V3,
+              'getlocal %d' % cx, 'pushdouble -0.5', 'add',
+              'getlocal %d' % cy, 'pushdouble -0.5', 'add'] + g('atl_eh') + ['convert_d',
+              'constructprop %s, 3' % V3,
+              'callproperty QName(%s,"getScreenPoint"), 1' % PUB, 'coerce_a', 'setlocal 21',
+              'getlocal 21', 'iffalse atl_e_finf',
+              'getlocal 33', 'getproperty QName(%s,"graphics")' % PUB,
+              'getlocal 21', 'getproperty QName(%s,"x")' % PUB,
+              'getlocal 21', 'getproperty QName(%s,"y")' % PUB, 'callpropvoid QName(%s,"%s"), 2' % (PUB, trait)]
+    p += ['atl_e_finf:',
+          'getlocal 33', 'getproperty QName(%s,"graphics")' % PUB, 'callpropvoid QName(%s,"endFill"), 0' % PUB,
+          'atl_e_non:']
+    return p
+
+
+ZONE_OPACITE = 0.8      # opacite des mobis pendant le choix d'une zone
+
+
 def zone_salle(CEH):
     """
     « atelier:zone=1 » / « atelier:zone=0 » : pendant que l'Atelier attend les
@@ -1243,6 +1712,9 @@ def zone_salle(CEH):
     """
     PUB = 'PackageNamespace("")'
     MC = 'QName(PackageNamespace("flash.display"),"MovieClip")'
+    RE = 'Namespace("com.sulake.habbo.room:IRoomEngine")'
+    ROC = 'Namespace("com.sulake.room.object:IRoomObjectController")'
+    ROMC = 'Namespace("com.sulake.room.object:IRoomObjectModelController")'
     def pose(nom, val):
         return ['getlocal 12', val, 'setproperty QName(%s,"%s")' % (PUB, nom)]
     return (['getlocal 6', 'pushstring "atelier:zone="', INDEXOF, 'pushbyte 0', 'ifne atl_pas_zone']
@@ -1258,7 +1730,31 @@ def zone_salle(CEH):
         + ['getlocal 11', 'getlocal 12', 'callpropvoid QName(%s,"addChild"), 1' % PUB,
            'atl_zo_a:',
            'getlocal 12', 'getlocal 6', 'pushstring "atelier:zone=1"', 'equals',
-           'setproperty QName(%s,"atl_z")' % PUB,
+           'setproperty QName(%s,"atl_z")' % PUB]
+        # mobis a 80 % pendant le choix (sol 10, muraux 20), 100 % ensuite :
+        # « furniture_alpha_multiplier » du modele, lu par FurnitureVisualization.
+        # Registres : 13 categorie, 14 index, 15 objet puis modele, 16 opacite.
+        + ['pushdouble 1.0', 'setlocal 16',
+           'getlocal 6', 'pushstring "atelier:zone=1"', 'ifne atl_zo_al',
+           'pushdouble %s' % ZONE_OPACITE, 'setlocal 16',
+           'atl_zo_al:',
+           'pushbyte 10', 'setlocal 13',
+           'atl_zo_cat:', 'label',
+           'pushbyte 0', 'setlocal 14',
+           'atl_zo_obj:', 'label',
+           'getlocal 14', 'getlocal 7', 'getlocal 8', 'getlocal 13',
+           'callproperty QName(%s,"getRoomObjectCount"), 2' % RE, 'ifge atl_zo_catfin',
+           'getlocal 7', 'getlocal 8', 'getlocal 14', 'getlocal 13',
+           'callproperty QName(%s,"getRoomObjectWithIndex"), 3' % RE, 'coerce_a', 'setlocal 15',
+           'getlocal 15', 'iffalse atl_zo_suiv',
+           'getlocal 15', 'callproperty QName(%s,"getModelController"), 0' % ROC, 'coerce_a', 'setlocal 15',
+           'getlocal 15', 'iffalse atl_zo_suiv',
+           'getlocal 15', 'pushstring "furniture_alpha_multiplier"', 'getlocal 16',
+           'callpropvoid QName(%s,"setNumber"), 2' % ROMC,
+           'atl_zo_suiv:', 'inclocal_i 14', 'jump atl_zo_obj',
+           'atl_zo_catfin:',
+           'getlocal 13', 'pushbyte 20', 'ifeq atl_zo_fin',
+           'pushbyte 20', 'setlocal 13', 'jump atl_zo_cat',
            'atl_zo_fin:', 'returnvoid', 'atl_pas_zone:'])
 
 
@@ -1314,11 +1810,12 @@ def clic_sol():
     Sprite de la salle (§_-s9§).hitTest(x, y) : si la grille de l'Atelier porte
     atl_z (choix d'une zone en cours), seuls les plans (sol, murs : etiquette
     « plane... ») repondent au clic ; les mobis et avatars laissent passer.
-    Si elle porte atl_t (« ,12,34, » : dalles magiques, atelier:dalles=1), ces
-    dalles laissent passer le clic au mobi pose dessus.
+    Si elle porte atl_dc (double-clic sur un mobi pose sur une dalle magique,
+    voir double_clic_dalles), les dalles de atl_t (« ,12,34, ») laissent passer
+    ce double-clic au mobi pose dessus.
     C'est hitTest qu'on modifie (pas hitTestPoint) : le canevas appelle hitTest
-    directement pour les mobis a clic immediat (blocs...), et hitTestPoint
-    le rappelle pour tous les autres. Le reste est le code d'origine.
+    directement pour les mobis a clic immediat (publicites a lien), et
+    hitTestPoint le rappelle pour tous les autres. Le reste est le code d'origine.
     Le sprite est dans le calque des mobis, lui-meme dans le conteneur du
     canevas qui porte la grille : parent.parent.
     """
@@ -1411,6 +1908,9 @@ def chat_salle():
         p += cases_salle(CEH)
         p += style_salle(CEH)
         p += dalles_salle(CEH)
+        p += calque_salle(CEH)
+        p += empreinte_salle(CEH)
+        p += opacite_salle(CEH)
     p += ['getlocal 6', 'pushstring "atelier:surligner="', INDEXOF, 'pushbyte 0', 'ifne atl_normal',
          'getlex QName(%s,"_-017")' % CEH, 'getproperty QName(PackageNamespace(""),"roomEngine")', 'coerce_a', 'setlocal 7',
          'getlocal1', 'getproperty QName(PackageNamespace(""),"session")',
@@ -1438,7 +1938,7 @@ def chat_salle():
           'getlocal 12', 'getproperty QName(PackageNamespace(""),"atl_so")', 'convert_i', 'setlocal 16',
           'atl_sy_fin:']
     p += [
-         # 1. eteindre : tous les mobis de sol (10) puis muraux (20)
+         # 1. eteindre : tous les mobis de sol (10), muraux (20) et animaux (100)
          'pushbyte 10', 'setlocal 9',
          'atl_cat:', 'label',
          'pushbyte 0', 'setlocal 10',
@@ -1453,8 +1953,12 @@ def chat_salle():
          'getlocal 12', 'pushnull', FILTRES,
          'atl_clr_next:', 'inclocal_i 10', 'jump atl_clr',
          'atl_clr_fin:',
-         'getlocal 9', 'pushbyte 20', 'ifeq atl_parse',
+         # puis les animaux (100) : contour « a12 » ; les avatars ne sont pas des FurnitureVisualization
+         'getlocal 9', 'pushbyte 100', 'ifeq atl_parse',
+         'getlocal 9', 'pushbyte 20', 'ifeq atl_cat_ani',
          'pushbyte 20', 'setlocal 9', 'jump atl_cat',
+         'atl_cat_ani:',
+         'pushbyte 100', 'setlocal 9', 'jump atl_cat',
          # 2. allumer chaque mobi de la liste
          'atl_parse:',
          'getlocal 6', 'pushbyte 18', 'callproperty QName(%s,"substr"), 1' % AS3,
@@ -1472,6 +1976,12 @@ def chat_salle():
          'callpropvoid QName(%s,"selectAvatar"), 2' % RE,
          'jump atl_tok',
          'atl_pas_animal:',
+         # « a12 » : le meme animal, mais avec le contour des mobis (plusieurs a la fois ;
+         # un animal est dessine par AnimatedPetVisualization, une FurnitureVisualization)
+         'getlocal 12', 'pushbyte 0', 'callproperty QName(%s,"charAt"), 1' % AS3, 'pushstring "a"', 'ifne atl_pas_contour',
+         'pushbyte 100', 'setlocal 9',
+         'jump atl_sol',
+         'atl_pas_contour:',
          'getlocal 12', 'pushbyte 0', 'callproperty QName(%s,"charAt"), 1' % AS3, 'pushstring "m"', 'ifne atl_sol',
          'pushbyte 20', 'setlocal 9',
          'atl_sol:',
@@ -1505,6 +2015,23 @@ def chat_salle():
     c = c[:i + 1] + p + c[i + 1:]
     chemin = os.path.join(TRAVAIL, "chat.pcode")
     open(chemin, "w", encoding="utf-8").write("\n".join(c))
+    return chemin
+
+
+def garde_variablefx():
+    """
+    RoomObjectVisualizationFactory.updateVariableFxConfigs : une config d'effet de
+    variable (add-on varfx) dont le couple (categorie, style) est inconnu de ce
+    client donne null, puis une erreur : le jeu se deconnectait a chaque entree
+    dans la salle. Garde : une config inconnue est sautee (le reste s'affiche).
+    """
+    u = list(pcode_origine(ROVF_C, "updateVariableFxConfigs"))
+    u[u.index("maxstack 14")] = "maxstack 24"
+    k = u.index("setlocal 5", u.index('callproperty QName(PackageNamespace(""),"getByCategoryAndStyleId"), 2'))
+    fin = next(l[len("jump "):] for l in u if l.startswith("jump ofs"))       # test de la boucle for each
+    u = u[:k + 1] + ["getlocal 5", "iffalse " + fin] + u[k + 1:]
+    chemin = os.path.join(TRAVAIL, "varfx.pcode")
+    open(chemin, "w", encoding="utf-8").write("\n".join(u))
     return chemin
 
 
@@ -2161,14 +2688,17 @@ CEH_C = "com.sulake.habbo.freeflowchat.data.ChatEventHandler"
 RSC_C = "com.sulake.room.renderer.§_-b2M§"
 S9_C = "com.sulake.room.renderer.utils.§_-s9§"
 FVIS_C = "com.sulake.habbo.room.object.visualization.furniture.FurnitureVisualization"
+ROVF_C = "com.sulake.habbo.room.object.RoomObjectVisualizationFactory"
 
 
 def main():
     os.makedirs(TRAVAIL, exist_ok=True)
     rempl = [ident("inventory_xml"), mise_en_page()]
     fv = "com.sulake.habbo.inventory.furni.FurniView"
-    if ICONES or CATEGORIES or PAGINATION:
+    if ICONES or CATEGORIES or PAGINATION or TROC:
         rempl += [fv, window_event_proc(), corps(fv, "windowEventProc")]
+    if TROC:
+        rempl += [fv, boutons_troc(), corps(fv, "updateActionButtons")]
     if ICONES or CATEGORIES:
         rempl += [fv, populate_filter_options(), corps(fv, "populateFilterOptions")]
     if PAGINATION:
@@ -2177,6 +2707,9 @@ def main():
         rempl += [FGV_C, pass_filter(), corps(FGV_C, "passFilter")]
     if CATEGORIES:
         rempl += [fv, annees_inventaire(), corps(fv, "setViewToState")]
+        rempl += [fv, categorie_inventaire(), corps(fv, "updateActionView")]
+    # toujours : sans elle, un add-on varfx inconnu deconnecte le jeu a l'entree de la salle
+    rempl += [ROVF_C, garde_variablefx(), corps(ROVF_C, "updateVariableFxConfigs")]
     if SURLIGNAGE or GRILLE:
         rempl += [CEH_C, chat_salle(), corps(CEH_C, "onRoomChat")]
     if GRILLE:

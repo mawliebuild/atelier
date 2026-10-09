@@ -27,10 +27,17 @@ import java.util.Map;
  *   Objects / Items    proprietaires puis mobis (parseurs HFloorItem / HWallItem)
  *   ObjectAdd          HFloorItem, String proprietaire ; ObjectUpdate : HFloorItem
  *   ObjectRemove       String id ; ItemRemove : String id
+ *   ObjectRemoveMultiple int n, n x int id, int ramasseur
  *   ItemAdd            HWallItem, String proprietaire ; ItemUpdate : HWallItem
  *   ObjectDataUpdate   String id, stuffdata ; ObjectsDataUpdate : int n, n x (int id, stuffdata)
- *   ItemDataUpdate     String id, String etat
+ *   ItemDataUpdate     String id, String donnees (post-it : couleur)
+ *   ItemStateUpdate    int id, String etat ; ItemsStateUpdate : int n, n x (int id, String etat)
+ *                      (le jeu change l'etat d'un mural UNIQUEMENT par ces deux-la, comme le
+ *                      client : onItemStateUpdate / onItemsStateUpdate)
+ *   ItemRemoveMultiple int n, n x int id, int ramasseur
  *   SlideObjectBundle, WiredFurniMove, WiredMovements : nouvelles positions
+ *                      (WiredMovements genre 2 : un mural deplace par un wired ou une
+ *                      variable, « -123 », « -190 »... : sa nouvelle position murale)
  *   CloseConnection, Quit (TOSERVER) : tout remis a zero
  * En plus de FloorState : RoomEntryTile (int x, int y, int direction) pour la
  * porte, RoomVisualizationSettings (boolean mursCaches, int epMur, int epSol).
@@ -87,6 +94,7 @@ final class EtatSalle {
         canal.intercept(C, "Objects", this::surObjets);
         canal.intercept(C, "ObjectAdd", this::surAjoutSol);
         canal.intercept(C, "ObjectRemove", this::surRetraitSol);
+        canal.intercept(C, "ObjectRemoveMultiple", this::surRetraitSols);
         canal.intercept(C, "ObjectUpdate", this::surMajSol);
         canal.intercept(C, "SlideObjectBundle", this::surGlissement);
         canal.intercept(C, "WiredFurniMove", this::surMouvementWired);
@@ -98,6 +106,9 @@ final class EtatSalle {
         canal.intercept(C, "ItemRemove", this::surRetraitMur);
         canal.intercept(C, "ItemUpdate", this::surMajMur);
         canal.intercept(C, "ItemDataUpdate", this::surDonneesMur);
+        canal.intercept(C, "ItemStateUpdate", m -> etatsMuraux(lireEtatsMuraux(m.getPacket(), false)));
+        canal.intercept(C, "ItemsStateUpdate", m -> etatsMuraux(lireEtatsMuraux(m.getPacket(), true)));
+        canal.intercept(C, "ItemRemoveMultiple", this::surRetraitMurs);
         canal.intercept(C, "HeightMap", this::surHauteurs);
         canal.intercept(C, "HeightMapUpdate", this::surMajHauteurs);
         canal.intercept(C, "FloorHeightMap", this::surPlan);
@@ -215,7 +226,29 @@ final class EtatSalle {
     private void surRetraitSol(HMessage m) {
         if (!inRoom()) return;
         int id = Integer.parseInt(m.getPacket().readString());
+        tracerDalle(id, "ObjectRemove");
         synchronized (verrou) { if (sols != null) retirer(id); }
+    }
+
+    /** Diagnostic : une dalle magique retiree par le serveur (ramassee pour de vrai). */
+    private void tracerDalle(int id, String paquet) {
+        try {
+            HFloorItem it;
+            synchronized (verrou) { it = sols == null ? null : sols.get(id); }
+            if (it == null) return;
+            String c = atelier.Salle.classe(it.getTypeId(), false);
+            if (c != null && c.contains("stackmagic"))
+                atelier.Journal.debug("salle : dalle magique " + id + " retirée par le serveur (" + paquet + ").");
+        } catch (Throwable ignored) { }
+    }
+
+    private void surRetraitSols(HMessage m) {
+        if (!inRoom()) return;
+        HPacket p = m.getPacket();
+        int n = p.readInteger();
+        int[] ids = new int[Math.max(0, Math.min(n, 100_000))];
+        for (int i = 0; i < ids.length; i++) { ids[i] = p.readInteger(); tracerDalle(ids[i], "ObjectRemoveMultiple"); }
+        synchronized (verrou) { if (sols != null) for (int id : ids) retirer(id); }
     }
 
     private void surGlissement(HMessage m) {
@@ -270,7 +303,16 @@ final class EtatSalle {
                         if (p.readBoolean()) p.skip("i");
                         deplacer(id, nx, ny, nz);
                     }
-                    case 2 -> p.skip("iBiiiiiiiii");
+                    case 2 -> {
+                        // mural : (int id, boolean droite, ancien x, y, dx, dy, nouveau x, y, dx, dy, int duree)
+                        int id = p.readInteger();
+                        boolean droite = p.readBoolean();
+                        p.skip("iiii");
+                        int nx = p.readInteger(), ny = p.readInteger(), ndx = p.readInteger(), ndy = p.readInteger();
+                        p.readInteger();
+                        HWallItem w = murs == null ? null : murs.get(id);
+                        if (w != null) w.setLocation(positionMurale(nx, ny, ndx, ndy, droite));
+                    }
                     case 3 -> p.skip("iii");
                     default -> { return; }          // genre inconnu : la suite est illisible
                 }
@@ -341,6 +383,48 @@ final class EtatSalle {
             HWallItem w = murs == null ? null : murs.get(id);
             if (w != null) w.setState(p.readString());
         }
+    }
+
+    private void surRetraitMurs(HMessage m) {
+        HPacket p = m.getPacket();
+        int n = p.readInteger();
+        synchronized (verrou) {
+            for (int i = 0; i < n && i < 100_000; i++) {
+                int id = p.readInteger();
+                if (murs != null) murs.remove(id);
+            }
+        }
+    }
+
+    private void etatsMuraux(Map<Integer, String> etats) {
+        if (etats.isEmpty()) return;
+        synchronized (verrou) {
+            if (murs == null) return;
+            for (Map.Entry<Integer, String> e : etats.entrySet()) {
+                HWallItem w = murs.get(e.getKey());
+                if (w != null) w.setState(e.getValue());
+            }
+        }
+    }
+
+    /**
+     * ItemStateUpdate (int id, String etat) ou ItemsStateUpdate (int n, n x
+     * (int id, String etat)) : id -> etat. Logique pure (essais).
+     */
+    static Map<Integer, String> lireEtatsMuraux(HPacket p, boolean plusieurs) {
+        Map<Integer, String> r = new LinkedHashMap<>();
+        p.resetReadIndex();
+        int n = plusieurs ? p.readInteger() : 1;
+        for (int i = 0; i < n && i < 100_000; i++) {
+            int id = p.readInteger();
+            r.put(id, p.readString());
+        }
+        return r;
+    }
+
+    /** « :w=x,y l=dx,dy r|l », comme le jeu l'ecrit. Logique pure. */
+    static String positionMurale(int x, int y, int dx, int dy, boolean droite) {
+        return ":w=" + x + "," + y + " l=" + dx + "," + dy + " " + (droite ? "r" : "l");
     }
 
     // ================================================================ interne (sous verrou)

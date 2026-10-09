@@ -34,6 +34,11 @@ import java.util.function.IntFunction;
  * sans modificateur : en AZERTY c'est la touche « & é " ' ( - è _ » sans Maj ;
  * Maj + touche (le chiffre en AZERTY) reste au jeu.
  *
+ * Fleches des calques (seulement pendant qu'une fenetre d'action avec fleches
+ * est ouverte : Deplacer, Dupliquer, Coller, copie pivotee / miroir) : les
+ * touches fleches deplacent l'apercu (Maj : 5 cases), Entree confirme, Echap
+ * annule (pas en mode Floor, ou Echap est deja pris). Voir fleches(...).
+ *
  * Quand une fenetre de l'Atelier a le focus, c'est OutilHistorique.installerRaccourcis
  * (filtre JavaFX) qui s'en charge. Ici on couvre le cas ou l'appli Habbo est au
  * premier plan.
@@ -151,6 +156,77 @@ public final class RaccourcisGlobaux {
         return t;
     }
 
+    // ------------------------------------------------- fleches des calques
+
+    /**
+     * Fenetre d'action des calques avec fleches (Deplacer, Dupliquer...). Appele
+     * sur le fil JavaFX. direction : 0 = haut, 1 = droite, 2 = bas, 3 = gauche.
+     */
+    public interface Fleches {
+        void fleche(int direction, boolean maj);
+        void entree();
+        void echap();
+    }
+
+    /** Ids : 41..44 = haut, droite, bas, gauche ; 45..48 = Maj + idem ; 49 Entree ; 50 Echap ; 51 Entree du pave (Mac). */
+    static final int FLECHE = 40, FLECHE_ENTREE = 49, FLECHE_ECHAP = 50, FLECHE_PAVE = 51;
+    /** Mac : kVK_UpArrow, kVK_RightArrow, kVK_DownArrow, kVK_LeftArrow ; kVK_Return, kVK_ANSI_KeypadEnter. */
+    static final int[] MAC_FLECHES = {126, 124, 125, 123};
+    static final int MAC_ENTREE = 36, MAC_PAVE_ENTREE = 76;
+    /** Windows : VK_UP, VK_RIGHT, VK_DOWN, VK_LEFT ; VK_RETURN (les deux Entree). */
+    static final int[] VK_FLECHES = {0x26, 0x27, 0x28, 0x25};
+    static final int VK_ENTREE = 0x0D;
+    private static volatile Fleches surFleches = null;
+
+    /**
+     * La fenetre d'action ouverte qui veut les fleches (null = plus aucune).
+     * Les touches ne sont prises dans le jeu que tant qu'une fenetre les veut,
+     * Habbo devant et chat vide (les fleches servent aussi au chat du jeu).
+     */
+    public static void fleches(Fleches f) {
+        Fleches avant = surFleches;
+        surFleches = f;
+        if ((avant == null) == (f == null)) return;
+        Journal.debug("raccourcis globaux : flèches des calques " + (f != null ? "actives" : "coupées"));
+        reenregistrer();
+    }
+
+    /** Retire f seulement si c'est encore elle qui a les fleches (une autre fenetre a pu la remplacer). */
+    public static void retirerFleches(Fleches f) {
+        if (f != null && surFleches == f) fleches(null);
+    }
+
+    static boolean flechesActives() { return surFleches != null; }
+
+    /** Logique pure : 0..3 pour une fleche (avec ou sans Maj), -1 sinon. */
+    static int flecheDirection(int id) {
+        int i = id - FLECHE - 1;
+        return i >= 0 && i < 8 ? i % 4 : -1;
+    }
+
+    /** Logique pure : fleche avec Maj (5 cases). */
+    static boolean flecheMaj(int id) {
+        int i = id - FLECHE - 1;
+        return i >= 4 && i < 8;
+    }
+
+    /**
+     * Logique pure : raccourcis des fleches, {id, code, modificateurs}.
+     * fleches = codes haut, droite, bas, gauche ; pave < 0 = pas d'Entree du pave ;
+     * echap < 0 = Echap laisse (mode Floor : c'est son raccourci).
+     */
+    static List<int[]> raccourcisFleches(int[] fleches, int maj, int entree, int pave, int echap) {
+        List<int[]> r = new java.util.ArrayList<>();
+        for (int i = 0; i < 4; i++) {
+            r.add(new int[]{FLECHE + 1 + i, fleches[i], 0});
+            r.add(new int[]{FLECHE + 5 + i, fleches[i], maj});
+        }
+        r.add(new int[]{FLECHE_ENTREE, entree, 0});
+        if (pave >= 0) r.add(new int[]{FLECHE_PAVE, pave, 0});
+        if (echap >= 0) r.add(new int[]{FLECHE_ECHAP, echap, 0});
+        return r;
+    }
+
     // ---------------------------------------------- copier / coller des calques
 
     /** Cmd/Ctrl+C copie le calque vise, Cmd/Ctrl+V le colle (panneau des calques). */
@@ -222,6 +298,12 @@ public final class RaccourcisGlobaux {
 
     /** Idem, avec les touches du mode Floor (Echap, 1..8) si floor. */
     static int[][] raccourcis(int z, int y, int s, int c, int v, int g, boolean toucheS, boolean calques, boolean coller, boolean floor) {
+        return raccourcis(z, y, s, c, v, g, toucheS, calques, coller, floor, false);
+    }
+
+    /** Idem, avec les fleches des calques (fleches, Maj + fleches, Entree, Echap hors mode Floor) si fleches. */
+    static int[][] raccourcis(int z, int y, int s, int c, int v, int g, boolean toucheS, boolean calques, boolean coller,
+                              boolean floor, boolean fleches) {
         List<int[]> r = new java.util.ArrayList<>(List.of(
                 new int[]{CMD_Z, z, Carbon.CMD}, new int[]{CMD_MAJ_Z, z, Carbon.CMD | Carbon.MAJ}, new int[]{CMD_Y, y, Carbon.CMD},
                 new int[]{CTRL_Z, z, Carbon.CTRL}, new int[]{CTRL_MAJ_Z, z, Carbon.CTRL | Carbon.MAJ}, new int[]{CTRL_Y, y, Carbon.CTRL}));
@@ -236,6 +318,7 @@ public final class RaccourcisGlobaux {
             if (coller) r.add(new int[]{CMD_V, v, Carbon.OPTION | Carbon.MAJ});
         }
         if (floor) r.addAll(raccourcisFloor(MAC_ECHAP, MAC_CHIFFRES));
+        if (fleches) r.addAll(raccourcisFleches(MAC_FLECHES, Carbon.MAJ, MAC_ENTREE, MAC_PAVE_ENTREE, floor ? -1 : MAC_ECHAP));
         return r.toArray(new int[0][]);
     }
 
@@ -254,6 +337,12 @@ public final class RaccourcisGlobaux {
 
     /** Idem, avec les touches du mode Floor (Echap = VK_ESCAPE, 1..8 = VK_1..VK_8, sans modificateur) si floor. */
     static int[][] raccourcisWindows(int z, int y, int c, int v, int g, boolean modeCalque, boolean calques, boolean coller, boolean floor) {
+        return raccourcisWindows(z, y, c, v, g, modeCalque, calques, coller, floor, false);
+    }
+
+    /** Idem, avec les fleches des calques (VK_UP..., Maj, VK_RETURN, VK_ESCAPE hors mode Floor) si fleches. */
+    static int[][] raccourcisWindows(int z, int y, int c, int v, int g, boolean modeCalque, boolean calques, boolean coller,
+                                     boolean floor, boolean fleches) {
         int ctrl = WindowsClavier.MOD_CONTROL, alt = WindowsClavier.MOD_ALT, maj = WindowsClavier.MOD_SHIFT;
         List<int[]> r = new java.util.ArrayList<>(List.of(
                 new int[]{CTRL_Z, z, ctrl}, new int[]{CTRL_MAJ_Z, z, ctrl | maj}, new int[]{CTRL_Y, y, ctrl}));
@@ -267,6 +356,7 @@ public final class RaccourcisGlobaux {
             if (coller) r.add(new int[]{CTRL_V, v, ctrl | maj}); // coller : Ctrl + Maj + V
         }
         if (floor) r.addAll(raccourcisFloor(WindowsClavier.VK_ESCAPE, vkChiffres()));
+        if (fleches) r.addAll(raccourcisFleches(VK_FLECHES, maj, VK_ENTREE, -1, floor ? -1 : WindowsClavier.VK_ESCAPE));
         return r.toArray(new int[0][]);
     }
 
@@ -370,7 +460,32 @@ public final class RaccourcisGlobaux {
 
     private static volatile long dernier = 0;
 
+    private static volatile long derniereEntree = 0;
+
     private static void declencher(int id) {
+        int dir = flecheDirection(id);
+        if (dir >= 0 || id == FLECHE_ENTREE || id == FLECHE_PAVE || id == FLECHE_ECHAP) {
+            Fleches h = surFleches;
+            if (h == null) return;
+            if (dir < 0) {                          // Entree / Echap : un seul appui a la fois
+                long now = System.currentTimeMillis();
+                if (now - derniereEntree < 250) return;
+                derniereEntree = now;
+            }
+            boolean maj = flecheMaj(id);
+            Journal.debug("raccourci jeu : " + (dir >= 0 ? "flèche " + "↑→↓←".charAt(dir) + (maj ? " avec Maj" : "")
+                    : id == FLECHE_ECHAP ? "Échap" : "Entrée") + " (calques)");
+            try {
+                Platform.runLater(() -> {
+                    try {
+                        if (dir >= 0) h.fleche(dir, maj);
+                        else if (id == FLECHE_ECHAP) h.echap();
+                        else h.entree();
+                    } catch (Throwable t) { Journal.erreur("La touche des calques a échoué", t); }
+                });
+            } catch (IllegalStateException ignored) { }
+            return;
+        }
         if (id == FLOOR_ECHAP) {
             long now = System.currentTimeMillis();
             if (now - dernier < 200) return;
@@ -474,7 +589,7 @@ public final class RaccourcisGlobaux {
         static synchronized void appliquer() {
             int[][] r = voulu ? raccourcisWindows(WindowsClavier.vkPour('z'), WindowsClavier.vkPour('y'),
                     WindowsClavier.vkPour('c'), WindowsClavier.vkPour('v'), WindowsClavier.vkPour('g'),
-                    pVoulu, calquesVoulu, collerVoulu, floorVoulu) : new int[0][];
+                    pVoulu, calquesVoulu, collerVoulu, floorVoulu, surFleches != null) : new int[0][];
             WindowsClavier.raccourcis(r, RaccourcisGlobaux::declencher);
             enregistres = r.length > 0;
         }
@@ -599,7 +714,7 @@ public final class RaccourcisGlobaux {
         private static Lib lib;
         private static CF cf;
         private static Gestionnaire gestionnaire;          // garde en vie (sinon ramasse par le GC)
-        private static final Pointer[] refs = new Pointer[32];
+        private static final Pointer[] refs = new Pointer[64];
         static boolean enregistresAlors() { return enregistres; }
 
         static int ostype(String s) {
@@ -677,7 +792,7 @@ public final class RaccourcisGlobaux {
             } catch (Throwable t) {
                 Journal.debug("raccourcis : disposition clavier illisible, QWERTY suppose (" + t + ")");
             }
-            int[][] r = raccourcis(z, y, p, c, v, g, pVoulu, calquesVoulu, collerVoulu, floorVoulu);
+            int[][] r = raccourcis(z, y, p, c, v, g, pVoulu, calquesVoulu, collerVoulu, floorVoulu, surFleches != null);
             int ok = 0;
             for (int[] k : r) {
                 EventHotKeyID.ByValue id = new EventHotKeyID.ByValue();

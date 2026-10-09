@@ -45,7 +45,7 @@ else
   echo "! Python embarqué introuvable : les modifs du jeu ne sont pas installées (l'Atelier marche quand même)."
 fi
 
-# 4. Lancement (droits administrateur : G-Earth se branche sur la connexion de Habbo)
+# 4. Lancement (droits administrateur : l'Atelier se branche sur la connexion de Habbo)
 echo
 echo "Ton mot de passe Mac va être demandé (rien ne s'affiche quand tu le tapes, c'est normal)."
 echo "Ensuite : ouvre Habbo par le Launcher, l'Atelier se connecte tout seul."

@@ -12,7 +12,8 @@ import java.util.Set;
  *
  * Structures extraites du moteur de l'Atelier, pas devinees :
  *   PlaceObject                 (String "&lt;idInventaire&gt; :w=x,y l=oX,oY d")
- *   BuildersClubPlaceWallItem   (int pageId, int offerId, String etat, String position, false)
+ *   PlacePostIt                 (int idInventaire, String position) pour un post-it
+ *   BuildersClubPlaceWallItem   (int pageId, int offerId, String extra du produit, String position, false)
  */
 public final class PoseMur {
 
@@ -35,10 +36,12 @@ public final class PoseMur {
     public static Resultat poser(Moteur gp, int typeId, String etat, String position,
                                  Source source, Set<Integer> dejaUtilises) {
         if (source != Source.BC) {
-            Integer idInv = prochainInventaire(gp, typeId, dejaUtilises);
+            boolean postIt = PoseOutils.postIt(Salle.classe(typeId, true));
+            // un bloc de post-its sert a plusieurs poses (une feuille chacune)
+            Integer idInv = prochainInventaire(gp, typeId, postIt ? Set.of() : dejaUtilises);
             if (idInv != null) {
-                if (!envoyer(gp, new HPacket("PlaceObject", HMessage.Direction.TOSERVER,
-                        idInv + " " + position)))
+                if (!envoyer(gp, postIt ? PoseOutils.posePostIt(idInv, position)
+                        : new HPacket("PlaceObject", HMessage.Direction.TOSERVER, idInv + " " + position)))
                     return new Resultat(false, "envoi refusé (connexion ?)");
                 dejaUtilises.add(idInv);
                 return new Resultat(true, "depuis l'inventaire");
@@ -47,11 +50,10 @@ public final class PoseMur {
                 return new Resultat(false, "absent de l'inventaire");
         }
 
-        CatalogueBc.Produit p = produitBc(gp, typeId, etat);
-        if (p == null) return new Resultat(false, "absent du catalogue BC");
+        OffresBc.Offre p = offreBc(gp, typeId, etat);
+        if (p == null) return new Resultat(false, "pas au Builders Club");
 
-        if (!envoyer(gp, new HPacket("BuildersClubPlaceWallItem", HMessage.Direction.TOSERVER,
-                p.getPageId(), p.getOfferId(), p.getExtraParam(), position, false)))
+        if (!envoyer(gp, PoseOutils.poseMurBc(p.page(), p.offre(), p.extra(), position)))
             return new Resultat(false, "envoi refusé (connexion ?)");
         return new Resultat(true, "depuis le BC");
     }
@@ -69,13 +71,15 @@ public final class PoseMur {
         return null;
     }
 
-    /** Variante d'etat exacte d'abord : un repli aveugle poserait le mauvais etat. */
-    private static CatalogueBc.Produit produitBc(Moteur gp, int typeId, String etat) {
+    /**
+     * Variante d'etat exacte d'abord (un repli aveugle poserait le mauvais
+     * etat), puis une quelconque ; seulement un mobi « bc » (OffresBc).
+     */
+    private static OffresBc.Offre offreBc(Moteur gp, int typeId, String etat) {
         try {
-            CatalogueBc cat = gp.getCatalog();
-            if (cat == null) return null;
-            CatalogueBc.Produit p = cat.getWallProduct(typeId, etat);
-            return p != null ? p : cat.getAnyWallProduct(typeId);
+            String classe = Salle.classe(typeId, true);
+            OffresBc.Offre o = OffresBc.mur(gp.getCatalog(), gp.getFurniDataTools(), classe, etat == null ? "" : etat);
+            return o != null ? o : OffresBc.mur(gp.getCatalog(), gp.getFurniDataTools(), classe, null);
         } catch (Throwable t) { return null; }
     }
 }

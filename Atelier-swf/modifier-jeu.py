@@ -5,6 +5,15 @@ quelle que soit sa version (Mac ou Windows, et les prochaines mises a jour).
 
   python modifier-jeu.py              modifie le jeu installe (s'il ne l'est pas deja)
   python modifier-jeu.py --restaurer  remet le jeu d'origine
+  python modifier-jeu.py --installer-quand-ferme
+                                      (lance par l'Atelier a son demarrage) installe le jeu
+                                      modifie des que Habbo est ferme (tout de suite s'il l'est).
+  python modifier-jeu.py --restaurer-apres
+                                      (lance par l'Atelier quand il se ferme) prepare le SWF
+                                      modifie, puis apres 10 minutes sans Atelier (et Habbo
+                                      ferme) remet le jeu d'origine : sans l'Atelier, Habbo
+                                      redevient le jeu normal. S'arrete si l'Atelier est
+                                      relance entre-temps.
 
 Pour chaque client Habbo trouve (dossiers du Habbo Launcher) :
   - deja modifie par nous (empreinte connue) : rien a faire ;
@@ -118,8 +127,108 @@ def signer(app):
         subprocess.run(["xattr", "-dr", "com.apple.quarantine", app], capture_output=True)
 
 
-def modifier():
-    dire("--- %s, Python %s" % ("Windows" if WIN else "Mac", sys.version.split()[0]))
+GARDIEN = os.path.join(ICI, ".restaurer-apres.pid")
+
+
+def arreter_gardien():
+    """Une installation annule le retour au jeu d'origine prevu par une session precedente."""
+    try:
+        pid = int(open(GARDIEN).read().strip())
+        if pid != os.getpid():
+            if WIN:
+                subprocess.run(["taskkill", "/PID", str(pid), "/F"], capture_output=True)
+            else:
+                os.kill(pid, 15)
+    except Exception:
+        pass
+    try:
+        os.remove(GARDIEN)
+    except Exception:
+        pass
+
+
+def atelier_ouvert():
+    try:
+        if WIN:
+            o = subprocess.run(["powershell", "-NoProfile", "-Command",
+                                "(Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*Atelier.jar*' }).Count"],
+                               capture_output=True, text=True, errors="replace").stdout.strip()
+            return o.isdigit() and int(o) > 0
+        return subprocess.run(["pgrep", "-f", "Atelier.jar"], capture_output=True).returncode == 0
+    except Exception:
+        return False
+
+
+DELAI_RETOUR = 10 * 60      # s sans Atelier avant de remettre le jeu d'origine
+
+
+def restaurer_apres():
+    """L'Atelier vient de se fermer : s'il n'est pas relance dans les 10 minutes, le jeu
+    d'origine revient (des que Habbo est ferme). Tout fermer puis tout rouvrir aussitot
+    garde donc le jeu modifie, sans reinstallation."""
+    import time
+    arreter_gardien()
+    open(GARDIEN, "w").write(str(os.getpid()))
+    try:
+        time.sleep(5)                       # l'Atelier finit de se fermer
+        # le SWF modifie de la recette actuelle est prepare des maintenant (copie seule au
+        # prochain lancement, sans la minute de construction pendant laquelle Habbo est rouvert)
+        try:
+            modifier(installer=False)
+        except Exception:
+            pass
+        debut = time.time()
+        fin = debut + 24 * 3600
+        while time.time() < fin:
+            if atelier_ouvert():
+                dire("    Atelier relancé : le jeu modifié reste.")
+                return 0
+            if time.time() - debut >= DELAI_RETOUR and not habbo_ouvert():
+                return restaurer()
+            time.sleep(3)
+        return 0
+    finally:
+        try:
+            if open(GARDIEN).read().strip() == str(os.getpid()):
+                os.remove(GARDIEN)
+        except Exception:
+            pass
+
+
+VERROU = os.path.join(ICI, ".installation.verrou")
+
+
+def modifier(installer=True):
+    """Une seule installation a la fois (gardien de l'Atelier + « Lancer l'Atelier »).
+    installer=False : prepare seulement le SWF modifie (dans travail/), Habbo peut etre ouvert."""
+    import time
+    for _ in range(200):                       # une autre installe deja : on attend sa fin
+        try:
+            fd = os.open(VERROU, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.write(fd, str(os.getpid()).encode()); os.close(fd)
+            break
+        except FileExistsError:
+            try:
+                if time.time() - os.path.getmtime(VERROU) > 600:
+                    os.remove(VERROU)          # verrou abandonne
+                    continue
+            except OSError:
+                continue
+            time.sleep(2)
+    try:
+        return _modifier(installer)
+    finally:
+        try:
+            os.remove(VERROU)
+        except OSError:
+            pass
+
+
+def _modifier(installer=True):
+    if installer:
+        arreter_gardien()
+    dire("--- %s, Python %s%s" % ("Windows" if WIN else "Mac", sys.version.split()[0],
+                                  "" if installer else " (préparation)"))
     l = clients()
     for swf, _ in l:
         dire("    client trouvé : %s" % swf)
@@ -148,10 +257,6 @@ def modifier():
             # modifie par une version precedente de l'Atelier : on ne remodifie pas par-dessus
             dire("OK  Modifs du jeu déjà installées (version %s, installées avant)" % version)
             continue
-        if habbo_ouvert():
-            dire("! Habbo est ouvert : ferme-le puis relance pour avoir les modifs du jeu (version %s)." % version)
-            code = 2
-            continue
         os.makedirs(os.path.join(ICI, "origines"), exist_ok=True)
         os.makedirs(os.path.join(ICI, "travail"), exist_ok=True)
         orig = os.path.join(ICI, "origines", "HabboAir-%s.swf" % h[:12])
@@ -164,7 +269,7 @@ def modifier():
         sortie = os.path.join(ICI, "travail", "HabboAir-atelier-%s-%s.swf" % (h[:12], recette[:8]))
         if not os.path.isfile(sortie):
             if not maj:
-                dire("… Nouvelle version de Habbo (%s) : préparation des modifs (une minute environ)" % version)
+                dire("… Préparation des modifs du jeu (version %s, une minute environ)" % version)
             r = subprocess.run([sys.executable, os.path.join(ICI, "construire.py"), sortie, "--origine", orig],
                                capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=ICI)
             if r.returncode != 0 or not os.path.isfile(sortie):
@@ -180,6 +285,14 @@ def modifier():
                     pass
                 code = 1
                 continue
+        if not installer:
+            dire("OK  Modifs du jeu prêtes (version %s) : installées dès que Habbo sera fermé." % version)
+            continue
+        # la construction prend une minute : Habbo a pu etre ouvert entre-temps
+        if habbo_ouvert():
+            dire("! Habbo est ouvert : ferme-le puis relance pour avoir les modifs du jeu (version %s)." % version)
+            code = 2
+            continue
         try:
             shutil.copyfile(sortie, swf)
             signer(app)
@@ -215,5 +328,30 @@ def restaurer():
     return 0
 
 
+def installer_quand_ferme():
+    """Lance par l'Atelier a son demarrage : installe le jeu modifie des que Habbo est ferme
+    (tout de suite s'il l'est deja). S'arrete si l'Atelier se ferme entre-temps."""
+    import time
+    if habbo_ouvert():
+        # la longue construction se fait tout de suite : a la fermeture de Habbo, il ne reste
+        # qu'une copie (sinon Habbo, rouvert pendant la construction, garderait l'original)
+        modifier(installer=False)
+    fin = time.time() + 12 * 3600
+    while time.time() < fin:
+        if not habbo_ouvert():
+            code = modifier()
+            if code != 2:
+                return code
+            # Habbo rouvert pendant la preparation : on attend sa prochaine fermeture
+        if not atelier_ouvert():
+            return 0
+        time.sleep(3)
+    return 0
+
+
 if __name__ == "__main__":
+    if "--installer-quand-ferme" in sys.argv:
+        sys.exit(installer_quand_ferme())
+    if "--restaurer-apres" in sys.argv:
+        sys.exit(restaurer_apres())
     sys.exit(restaurer() if "--restaurer" in sys.argv else modifier())

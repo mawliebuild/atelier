@@ -70,7 +70,12 @@ public final class Prerequis extends VBox {
         horloge.play();
     }
 
+    /** Gele l'affichage de tous les blocs Prerequis (collage en cours : la salle se recharge). */
+    private static volatile boolean gele = false;
+    static void geler(boolean oui) { gele = oui; }
+
     private void majUne() {
+        if (gele) return;
         boolean tout = true;
         for (int i = 0; i < conditions.length; i++) {
             String[] r = etat(conditions[i]);

@@ -26,7 +26,7 @@ public final class Journal {
 
     /** Echec franc : le message le dit deja (« échec », « impossible »…) ou non. */
     static final Pattern ERREUR = Pattern.compile(
-            "(échec|échou|erreur|impossible|refusé|introuvable|interromp|n'a pas pu|pas pu être|n'a pas reçu|bloqué|⚠)",
+            "(échec|échou|refuse|erreur|impossible|refusé|introuvable|interromp|n'a pas pu|pas pu être|n'a pas reçu|bloqué|⚠)",
             Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
     /** Resultat reussi. */
     static final Pattern SUCCES = Pattern.compile(

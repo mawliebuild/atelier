@@ -42,7 +42,6 @@ public final class Historique {
     private static final int  LIMITE = 100;
     private static final long PERIODE = 280;       // ms entre deux photos
     private static final long RAFALE = 600;        // ms : au-dela, nouvelle action
-    private static final long PAUSE_ENVOI = 150;   // ms entre deux paquets
     private static final long REPOS_SALLE = 1500;  // ms d'attente apres entree en salle
     private static final long GRACE = 3000;        // ms pendant lesquelles un retour attendu est ignore
 
@@ -451,16 +450,16 @@ public final class Historique {
         for (Changement c : ramasser) {
             if (partie.getAsBoolean()) return null;
             attendre(mesCles, c);
+            Salle.espacer();
             Salle.ramasser(c.id, c.mural);
-            Salle.sommeil(PAUSE_ENVOI);
         }
         for (Changement c : deplacer) {
             if (partie.getAsBoolean()) return null;
             Place cible = arriere ? c.avant : c.apres;
             attendre(mesCles, c);
+            Salle.espacer();
             if (c.mural) Salle.deplacerMur(c.id, cible.pos);
             else Salle.deplacerSol(c.id, cible.x, cible.y, cible.rot);
-            Salle.sommeil(PAUSE_ENVOI);
         }
         // Repasse : un mobi bloque par un voisin pas encore revenu retente sa place.
         if (!deplacer.isEmpty()) Salle.sommeil(900);
@@ -470,8 +469,8 @@ public final class Historique {
             Place cible = arriere ? c.avant : c.apres;
             HFloorItem it = Salle.sol(c.id);
             if (it != null && it.getTile() != null && (it.getTile().getX() != cible.x || it.getTile().getY() != cible.y)) {
+                Salle.espacer();
                 Salle.deplacerSol(c.id, cible.x, cible.y, cible.rot);
-                Salle.sommeil(PAUSE_ENVOI);
             }
         }
         if (!poser.isEmpty() && !partie.getAsBoolean()) {
@@ -489,13 +488,13 @@ public final class Historique {
                 PoseAttendue p = new PoseAttendue(c, cible);
                 synchronized (VERROU) { posesAttendues.add(p); }
                 mesPoses.add(p);
+                Salle.espacer();
                 if (c.mural) Salle.envoyer(new HPacket("PlaceObject", HMessage.Direction.TOSERVER,
                         inv + " " + cible.pos));
                 // Format du moteur de pose (v1.3.8) pour un mobi de sol depuis l'inventaire
                 // (ancien moteur de pose : "-%d %d %d %d", HInventoryItem.getId()).
                 else Salle.envoyer(new HPacket("PlaceObject", HMessage.Direction.TOSERVER,
                         "-" + inv + " " + cible.x + " " + cible.y + " " + cible.rot));
-                Salle.sommeil(PAUSE_ENVOI);
             }
         }
         } finally {

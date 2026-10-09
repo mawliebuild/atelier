@@ -13,7 +13,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * Fenetre Reglages : une barre de menu a gauche (Connexion, Fenetres,
+ * Fenetre Reglages : une barre de menu a gauche (Connexion, Fenetres, Envois,
  * Donnees), la partie choisie a droite. Connexion porte aussi l'etat du jeu
  * modifie (le message dit si les modifs de l'Atelier sont bien installees).
  * L'Atelier reste toujours devant le jeu ; les raccourcis sont dans
@@ -77,6 +77,9 @@ public class OngletParametres {
                 Ui.aide("À 100 %, la fenêtre reste opaque. Plus bas, elle devient "
                         + "transparente quand ta souris est sur le jeu, pour voir les mobis derrière.")));
 
+        // --- Envois
+        VBox partEnvois = envois();
+
         // --- Donnees
         Button cacheBc = plein("Vider le cache BC", gp -> { if (gp.getCatalog() != null) gp.getCatalog().viderCache(); }, "Cache BC vidé.");
         Button cacheWired = plein("Vider le cache wired", gp -> WiredLecteur.viderCache(), "Cache wired vidé.");
@@ -86,6 +89,7 @@ public class OngletParametres {
         Map<String, VBox> parties = new LinkedHashMap<>();
         parties.put("Connexion", partConnexion);
         parties.put("Fenêtres", partFenetres);
+        parties.put("Envois", partEnvois);
         parties.put("Mise en valeur", ApercuSurlignage.section());
         parties.put("Données", partDonnees);
         parties.put("À propos", aPropos());
@@ -101,7 +105,7 @@ public class OngletParametres {
         menu.setPrefWidth(150);
         menu.setStyle("-fx-border-color: transparent #E2DFD6 transparent transparent; -fx-border-width: 0 1 0 0;");
         Map<String, String> icones = Map.of("Connexion", Icones.CONNEXION, "Fenêtres", Icones.FENETRES,
-                "Mise en valeur", Icones.ETINCELLE, "Données", Icones.DONNEES);
+                "Envois", CHRONO, "Mise en valeur", Icones.ETINCELLE, "Données", Icones.DONNEES);
         ToggleGroup g = new ToggleGroup();
         for (Map.Entry<String, VBox> e : parties.entrySet()) {
             VBox p = e.getValue();
@@ -132,6 +136,58 @@ public class OngletParametres {
         Tab t = new Tab("Paramètres", racine);
         t.setClosable(false);
         return t;
+    }
+
+    /** Icone de la partie Envois : un chronometre. */
+    private static final String CHRONO = "M12 6a7.5 7.5 0 1 0 0.01 0z M12 9.5v4l2.5 1.5 M9.5 2.5h5 M12 2.5V6";
+
+    /**
+     * Vitesse des envois : l'ecart entre deux envois d'une rafale (Salle.ecart),
+     * 50..300 ms au pas de 10 ; une ligne discrete dit si le frein l'a remonte
+     * a 150 ms (actions refusees meme apres reessai).
+     */
+    static VBox envois() {
+        Slider vitesse = new Slider(Salle.ECART_MIN, Salle.ECART_MAX, Salle.ecartVoulu());
+        vitesse.setMajorTickUnit(Salle.ECART_PAS);
+        vitesse.setMinorTickCount(0);
+        vitesse.setSnapToTicks(true);
+        vitesse.setBlockIncrement(Salle.ECART_PAS);
+        vitesse.setFocusTraversable(false);
+        HBox.setHgrow(vitesse, Priority.ALWAYS);
+        Label valeur = new Label(Salle.ecartVoulu() + " ms");
+        valeur.setMinWidth(52);
+        Label frein = Ui.discret("");
+        frein.managedProperty().bind(frein.visibleProperty());
+        Runnable majFrein = () -> {
+            boolean f = Salle.freine();
+            frein.setText(f ? "Ralenti à " + Salle.ecart() + " ms après des refus" : "");
+            frein.setVisible(f);
+        };
+        majFrein.run();
+        Salle.surChangementEcart(() -> Platform.runLater(majFrein));
+        // enregistre au lacher (pas a chaque pas du glissement)
+        vitesse.valueProperty().addListener((o, x, v) -> {
+            valeur.setText(Salle.borner((int) Math.round(v.doubleValue())) + " ms");
+            if (!vitesse.isValueChanging()) Salle.ecartVoulu((int) Math.round(v.doubleValue()));
+        });
+        vitesse.valueChangingProperty().addListener((o, x, enCours) -> {
+            if (!enCours) Salle.ecartVoulu((int) Math.round(vitesse.getValue()));
+        });
+        Button defaut = new Button("Par défaut (" + Salle.ECART_DEFAUT + " ms)");
+        Ui.bulle(defaut, "Remet l'écart conseillé entre deux envois.");
+        defaut.setOnAction(e -> {
+            vitesse.setValue(Salle.ECART_DEFAUT);
+            Salle.ecartVoulu(Salle.ECART_DEFAUT);     // aussi si le curseur y etait deja : le frein repart de zero
+        });
+        HBox ligne = new HBox(8, vitesse, valeur);
+        ligne.setAlignment(Pos.CENTER_LEFT);
+        return new VBox(12, Ui.bloc("Vitesse des envois", ligne,
+                Ui.discret("Plus bas = plus rapide, mais le jeu peut refuser des actions ou te déconnecter. "
+                        + "Si le jeu refuse une action, l'Atelier la réessaie ; s'il refuse encore souvent, "
+                        + "il ralentit à " + Salle.ECART_DEFAUT + " ms."),
+                frein, defaut,
+                Ui.aide("Temps entre deux envois d'une rafale (poses, déplacements, hauteurs…). "
+                        + "Les envois volontairement plus lents (marché, plantes, catalogue) ne changent pas.")));
     }
 
     /**

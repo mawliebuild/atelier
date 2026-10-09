@@ -201,11 +201,15 @@ public class PanneauCalques implements Ancrage.Ancrable {
                 () -> surCible(actions::hauteur));
 
         Button remplir = icone(Icones.REMPLIR, "Remplir une zone avec un mobi : choisis la zone (deux cases), puis pose "
-                + "le mobi depuis ton inventaire, il couvre toute la zone (re-clique pour annuler)",
+                + "le mobi depuis ton inventaire ou clique un mobi de la salle, il couvre toute la zone (re-clique pour annuler)",
                 RemplirZone::lancer);
 
         Button etats = icone(Icones.ETAT, "Changer l'état des mobis d'une zone : choisis la zone (deux cases), "
                 + "puis chaque clic sur le bouton de la fenêtre les change tous", actions::etatsZone);
+
+        Button remplacer = icone(Icones.TROC, "Remplacer dans une zone : choisis la zone (deux cases), puis un type de mobi "
+                + "de la zone et son remplaçant (pipette ou nom technique) : mêmes cases, hauteurs et rotations",
+                actions::remplacerZone);
 
         regle = icone(Icones.REGLE, "Mesurer : clique deux cases dans le jeu", () -> {
             Runnable r = surMesure;
@@ -225,6 +229,8 @@ public class PanneauCalques implements Ancrage.Ancrable {
             boolean on = grille.isSelected();
             if (!GrilleVue.montrer(on)) grille.setSelected(false);
         });
+        Button photo = icone(Icones.GALERIE, "Photo de référence : une photo de la Galerie en transparence sur la salle",
+                () -> CalquePhoto.ouvrir(css, stage));
         Button escalier = icone(Icones.ESCALIER, "Escalier : ouvre la fenêtre de l'outil", () -> {
             Runnable r = surEscalier;
             if (r == null) dire("L'escalier n'est pas encore branché."); else r.run();
@@ -236,8 +242,8 @@ public class PanneauCalques implements Ancrage.Ancrable {
         // (les familles s'ouvrent dans leur fenetre).
         VBox l = new VBox(4,
                 rangee("Sélection", modeSel, zone, vider),
-                rangee("Actions", deplacer, pivoter, miroir, hauteur, remplir, etats),
-                rangee("Composants", escalier, regle, grille),
+                rangee("Actions", deplacer, pivoter, miroir, hauteur, remplir, etats, remplacer),
+                rangee("Composants", escalier, regle, grille, photo),
                 rangee("Masquer", fam));
         return l;
     }

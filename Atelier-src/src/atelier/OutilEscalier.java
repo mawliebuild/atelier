@@ -29,6 +29,9 @@ public class OutilEscalier {
     private Label apercu, departLbl, etat;
     private volatile HPoint depart;
     private volatile boolean attenteDepart = false;
+    /** Pipette : le prochain clic sur un mobi de la salle choisit le petit bloc. */
+    private volatile boolean attentePipette = false;
+    private Button pipette;
 
     public Tab construire() {
         etat = Ui.etat();
@@ -72,6 +75,24 @@ public class OutilEscalier {
             Platform.runLater(() -> departLbl.setText("1re marche en (" + c.getX() + "," + c.getY() + ")"));
         });
 
+        pipette = Icones.sur(new Button("Pipette"), Icones.PIPETTE);
+        pipette.setTooltip(new Tooltip("Clique ensuite un petit bloc dans le jeu : sa couleur est choisie ici. Re-clique pour annuler."));
+        pipette.setOnAction(e -> {
+            attentePipette = !attentePipette;
+            pipette.setText(attentePipette ? "Annuler la pipette" : "Pipette");
+            InfoJeu.consigne(attentePipette ? "Clique un petit bloc dans le jeu pour prendre sa couleur." : "Pipette annulée.");
+        });
+        Salle.surClicMobi(it -> {
+            if (!attentePipette) return;
+            attentePipette = false;
+            int n = numeroBloc(Salle.classe(it.getTypeId(), false));
+            Platform.runLater(() -> {
+                pipette.setText("Pipette");
+                if (n > 0) palette.choisir(n);             // surChoix retient la preference
+            });
+            if (n <= 0) InfoJeu.consigne("Ce n'est pas un petit bloc : choisis-en un dans la palette.");
+        });
+
         apercu = Ui.valeur("—");
         apercu.setWrapText(true);
 
@@ -103,7 +124,7 @@ public class OutilEscalier {
         Tab t = new Tab("Escalier", Generateur.defiler(
                 Ui.aide("Un escalier en petits blocs de la couleur choisie : chaque bloc est posé "
                         + "puis mis à sa hauteur exacte, sans dalle magique."),
-                Ui.bloc("Couleur des petits blocs", palette.vue()),
+                Ui.bloc("Couleur des petits blocs", palette.vue(), Ui.ligne(pipette)),
                 Ui.bloc("Marches",
                         formulaire("Nombre", marches, "Largeur (cases)", largeur, "Pas (cases)", pas,
                                 "Montée", montee, "Hauteur du mobi", hauteurMobi),
@@ -149,6 +170,15 @@ public class OutilEscalier {
             g.addRow(i / 2, l, n);
         }
         return g;
+    }
+
+    /** N de « bc_block_small*N » (1 a 69) ; 0 si ce n'est pas un petit bloc. */
+    static int numeroBloc(String classe) {
+        if (classe == null || !classe.startsWith("bc_block_small*")) return 0;
+        try {
+            int n = Integer.parseInt(classe.substring("bc_block_small*".length()));
+            return n >= 1 && n <= PaletteBlocs.COULEURS.length ? n : 0;
+        } catch (NumberFormatException e) { return 0; }
     }
 
     // ------------------------------------------------------------ calcul
@@ -240,7 +270,15 @@ public class OutilEscalier {
             HPoint d = dep;
             if (d == null) {
                 InfoJeu.consigne("Clique dans le jeu la case de la 1re marche.");
-                d = Generateur.Dalle.attendreClic(120_000);
+                // empreinte de l'escalier sous la souris (si la 1re marche est bien le coin du haut)
+                int x0 = Integer.MAX_VALUE, y0 = Integer.MAX_VALUE, x1 = Integer.MIN_VALUE, y1 = Integer.MIN_VALUE;
+                for (Generateur.Mobi b : p) {
+                    x0 = Math.min(x0, b.x); y0 = Math.min(y0, b.y);
+                    x1 = Math.max(x1, b.x); y1 = Math.max(y1, b.y);
+                }
+                d = !p.isEmpty() && x0 == 0 && y0 == 0
+                        ? Generateur.Dalle.attendreClic(120_000, x1 + 1, y1 + 1)
+                        : Generateur.Dalle.attendreClic(120_000);
                 if (d == null) { Journal.erreur("Escalier annulé : pas de clic dans le jeu en 2 minutes."); return; }
             }
             double sol = Math.max(0, Salle.hauteurSol(d.getX(), d.getY()));

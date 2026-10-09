@@ -287,7 +287,6 @@ public final class Groupes {
         try {
             GroupeModele.Plan p = GroupeStockage.lire(DOSSIER, s);
             if (salleIllisible == s) salleIllisible = Integer.MIN_VALUE;
-            Journal.debug("calques : appart " + s + " : " + p.calques.size() + " calque(s) relu(s).");
             return p;
         } catch (Throwable t) {
             boolean abime = String.valueOf(t.getMessage()).startsWith("Fichier des calques abîmé");
@@ -956,8 +955,8 @@ public final class Groupes {
 
     /**
      * Pose VRAIE de la copie placee avec les fantomes, a leur place exacte
-     * (pose hybride : rafale directe + @altitude, puis la dalle magique pour
-     * les seuls mobis refuses ; voir PoseHybride). Devient un nouveau calque rangé au-dessus
+     * (tapis de dalles : dalles sous la copie, chaque mobi pose puis mis a sa
+     * hauteur par @altitude, dalles ramassees ; voir PoseTapis). Devient un nouveau calque rangé au-dessus
      * de « dessus » (null : en haut). Permis sur un calque verrouille (copie).
      * @param calqueId calque d'origine (null si ids donnes : copie collee)
      * @param ids      null : les mobis du calque
@@ -1024,6 +1023,15 @@ public final class Groupes {
         return lancer("pivoter", calqueId, true, p, t -> GroupeActions.pivoter(t, calqueId, horaire, toutLeCalque));
     }
 
+    /**
+     * Miroir SUR PLACE des mobis de sol du calque (gauche↔droite si surX,
+     * sinon haut↔bas), dans le cadre qui les contient, par le tapis de dalles
+     * (GroupeActions.miroirSurPlace) ; une action a la fois, verrou respecte, Arreter.
+     */
+    public static Tache miroirSurPlace(String calqueId, boolean surX, Progression p) {
+        return lancer("miroir", calqueId, true, p, t -> GroupeActions.miroirSurPlace(t, calqueId, surX));
+    }
+
     /** Change l'altitude des mobis du calque (decalage si relatif, sinon valeur commune), d'un coup. */
     public static Tache hauteur(String calqueId, boolean relatif, double valeur, Progression p) {
         return lancer("hauteur", calqueId, true, p, t -> GroupeActions.hauteur(t, calqueId, relatif, valeur));
@@ -1036,8 +1044,8 @@ public final class Groupes {
 
     /**
      * Deplace ET pivote (quarts de tour horaires) le calque, d'un seul coup :
-     * MoveObject en rafale + @altitude, puis la dalle magique pour les seuls
-     * mobis refuses ou restes a une mauvaise hauteur (PoseHybride).
+     * tapis de dalles (PoseTapis) : dalles sous les cases d'arrivee, chaque
+     * mobi deplace (MoveObject) puis mis a sa hauteur (@altitude), dalles ramassees.
      */
     public static Tache deplacer(String calqueId, int dx, int dy, int quarts, Progression p) {
         return lancer("deplacer", calqueId, true, p, t -> GroupeActions.deplacerAvecDalles(t, calqueId, quarts, dx, dy));
@@ -1271,7 +1279,6 @@ public final class Groupes {
                     if (s != -1 && !recharge) Journal.info("Entrée dans l'appart " + s + ".");
                     if (recharge) {
                         // meme appart recharge : le client a tout recu de nouveau, plus rien n'est masque
-                        Journal.debug("calques : appart " + s + " recharge.");
                         Calques.oublier();
                     }
                     derniere = s;

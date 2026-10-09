@@ -49,7 +49,8 @@ public class OngletWired {
 
     private Label caseLbl, etat, altLbl;
     private TableView<LigneWired> table;
-    private Button remettre;
+    private Button remettre, tous, arreter;
+    private ProgressBar barre;
     /**
      * La pile lue sur la case choisie, du bas vers le haut. Liste figee,
      * remplacee d'un bloc : elle est ecrite par le fil des paquets et lue par
@@ -147,25 +148,29 @@ public class OngletWired {
         remettre.getStyleClass().add("primaire");
         remettre.setMaxWidth(Double.MAX_VALUE);
         remettre.setDisable(true);
-        remettre.setOnAction(e -> {
-            if (!rangementPris.compareAndSet(false, true)) return;     // deja en cours
-            remettre.setDisable(true);
-            enRangement = true;
-            Salle.tache("wired", () -> {
-                try { remettreEnOrdre(); }
-                catch (Throwable t) { dire(""); Journal.erreur("Rangement des wired interrompu", t); }
-                finally {
-                    enRangement = false;
-                    caseRelue = true;
-                    rangementPris.set(false);
-                    Platform.runLater(() -> remettre.setDisable(piles.size() < 2));
-                }
-            });
-        });
+        remettre.setOnAction(e -> lancer("Rangement des wired interrompu", this::remettreEnOrdre));
+
+        tous = Ui.bouton(Icones.TRIER, "Remettre en ordre tous les wired de l'appart");
+        tous.setMaxWidth(Double.MAX_VALUE);
+        Ui.bulle(tous, "Trouve toutes les piles de wired de l'appart dont l'ordre n'est pas bon "
+                + "et les remet en ordre en une fois. Les piles déjà dans l'ordre ne reçoivent rien.");
+        tous.setOnAction(e -> lancer("Rangement des wired de l'appart interrompu", this::toutRemettreEnOrdre));
+
+        arreter = Ui.bouton(Icones.ARRET, "Arrêter");
+        Ui.bulle(arreter, "Arrêter la remise en ordre : les wired déjà envoyés restent où ils sont.");
+        arreter.setOnAction(e -> { arret.set(true); arreter.setDisable(true); dire("Arrêt demandé…"); });
+        arreter.managedProperty().bind(arreter.visibleProperty());
+        arreter.setVisible(false);
+
+        barre = new ProgressBar(0);
+        barre.setMaxWidth(Double.MAX_VALUE);
+        barre.managedProperty().bind(barre.visibleProperty());
+        barre.setVisible(false);
 
         Label aide = Ui.aide("Clique un wired dans le jeu : toute la pile de sa case "
                 + "est lue. L'ordre visé, du bas vers le haut : déclencheur, sélecteur, "
-                + "sélecteur filtre, condition, effet, effet envoyer un signal, "
+                + "sélecteur filtre, condition, add-on de condition (« au moins une "
+                + "condition est remplie »), effet, effet envoyer un signal, "
                 + "effet négatif, add-on. Les mobis wired (dalles, antennes, compteurs…) "
                 + "ne bougent pas.");
 
@@ -176,6 +181,9 @@ public class OngletWired {
                         Ui.aide("Rien à faire : l'Atelier vérifie @altitude tout seul "
                                 + "au premier rangement, sur un wired de la pile.")),
                 remettre,
+                tous,
+                barre,
+                arreter,
                 etat);
         v.setFillWidth(true);
         v.setPadding(new Insets(12, 14, 14, 14));
@@ -183,6 +191,41 @@ public class OngletWired {
         installerEcoute();
         suivreCase();
         return v;
+    }
+
+    /**
+     * Lance une remise en ordre hors du fil JavaFX : une seule a la fois,
+     * boutons bloques, barre de progression et bouton « Arrêter » visibles.
+     */
+    private void lancer(String siErreur, Runnable travail) {
+        if (!rangementPris.compareAndSet(false, true)) return;     // deja en cours
+        arret.set(false);
+        remettre.setDisable(true);
+        tous.setDisable(true);
+        barre.setProgress(0);
+        barre.setVisible(true);
+        arreter.setDisable(false);
+        arreter.setVisible(true);
+        enRangement = true;
+        Salle.tache("wired", () -> {
+            try { travail.run(); }
+            catch (Throwable t) { dire(""); Journal.erreur(siErreur, t); }
+            finally {
+                enRangement = false;
+                caseRelue = true;
+                rangementPris.set(false);
+                Platform.runLater(() -> {
+                    remettre.setDisable(piles.size() < 2);
+                    tous.setDisable(false);
+                    barre.setVisible(false);
+                    arreter.setVisible(false);
+                });
+            }
+        });
+    }
+
+    private void progression(double part) {
+        Platform.runLater(() -> barre.setProgress(Math.max(0, Math.min(1, part))));
     }
 
     /**
@@ -414,9 +457,13 @@ public class OngletWired {
     private static final long ARRIVEE_MS = 2500;
     /** Ecritures d'une meme hauteur avant d'abandonner ce wired pour la passe. */
     private static final int ENVOIS = 2;
-    /** Calme avant la relecture finale de la pile (dernieres mises a jour du jeu). */
+    /** Relecture finale : la pile doit rester en place ce temps-la (dernieres mises a jour du jeu)... */
+    private static final long CALME_MS = 250;
+    /** ...dans cette limite ; au-dela, elle est tenue pour mal rangee. */
     private static final long RELECTURE_MS = 900;
-    /** Passes au plus (chacune : tout monter, puis redescendre du bas vers le haut). */
+    /** Pas du suivi des arrivees (lecture de l'etat de la salle en memoire, sans envoi). */
+    private static final long SUIVI_MS = 15;
+    /** Passes « par relais » au plus, apres la passe directe (chacune : tout monter, puis redescendre). */
     private static final int PASSES = 3;
 
     /**
@@ -438,6 +485,13 @@ public class OngletWired {
     record Etape(int id, double z, boolean montee, String nom) { }
 
     /**
+     * Une ecriture de la passe directe, et les ecritures (leurs numeros dans
+     * le plan) qui doivent etre ARRIVEES avant elle : celles qui liberent sa
+     * place, et la precedente du meme wired.
+     */
+    record Coup(Etape etape, int[] apres) { }
+
+    /**
      * Calcul pur de la remise en ordre (sans le jeu) : ordre voulu, altitudes
      * visees, wired deja en place, relais et suite des ecritures. Teste hors du jeu.
      */
@@ -450,6 +504,21 @@ public class OngletWired {
             r.sort(Comparator.comparingDouble((Place p) -> p.z).thenComparingInt(p -> p.id));   // ordre actuel
             r.sort(Comparator.comparingInt((Place p) -> p.rang));           // tri stable : egalites gardees
             return r;
+        }
+
+        /**
+         * true si les RANGS de la pile ne se suivent pas du bas vers le haut
+         * (un wired au-dessus d'un autre de rang plus grand). Deux wired a la
+         * meme altitude ne comptent pas comme un desordre. Seules ces piles
+         * sont corrigees par « tous les wired de l'appart » ; une pile dans le
+         * bon ordre mais avec des trous ne recoit aucun envoi.
+         */
+        static boolean desordre(Collection<Place> pile) {
+            List<Place> l = new ArrayList<>();
+            for (Place p : pile) if (p.z >= 0) l.add(p);
+            l.sort(Comparator.comparingLong((Place p) -> Math.round(p.z * 100)).thenComparingInt(p -> p.rang));
+            for (int i = 1; i < l.size(); i++) if (l.get(i).rang < l.get(i - 1).rang) return true;
+            return false;
         }
 
         /** Hauteur de depart : le plus bas wired de la pile, sinon le sol de la case. */
@@ -480,6 +549,97 @@ public class OngletWired {
         static List<Place> malPlaces(List<Place> ordre, java.util.function.IntToDoubleFunction z) {
             List<Place> r = new ArrayList<>();
             for (Place p : ordre) if (!enPlace(z.applyAsDouble(p.id), p.voulu)) r.add(p);
+            return r;
+        }
+
+        /** Les intervalles [a, a+ha] et [b, b+hb] se recouvrent (au-dela de la tolerance). */
+        static boolean recouvre(double a, double ha, double b, double hb) {
+            return a < b + Math.max(hb, 0) - TOLERANCE && b < a + Math.max(ha, 0) - TOLERANCE;
+        }
+
+        /**
+         * Passe DIRECTE : chaque wired mal place va droit a sa hauteur visee, des
+         * que sa place est libre (aucun wired pas encore range ne l'occupe). Les
+         * wired deja a leur place ne recoivent rien. Quand plus aucune place
+         * n'est libre (permutation circulaire, par exemple deux wired a
+         * echanger), UN wired qui gene monte au relais, au-dessus de tout, et
+         * libere la sienne ; il redescendra a son tour. On n'ecrit donc jamais
+         * un wired par-dessus un autre qui n'est pas encore range.
+         *
+         * Chaque ecriture dit lesquelles doivent etre arrivees avant elle : les
+         * ecritures sans lien partent sans attendre (au rythme commun).
+         * Ecritures : les mal places + une par cycle, contre deux par wired
+         * deplace pour la passe par relais.
+         */
+        static List<Coup> direct(List<Place> ordre, java.util.function.IntToDoubleFunction z) {
+            int n = ordre.size();
+            double[] pos = new double[n];
+            boolean[] fini = new boolean[n], auRelais = new boolean[n];
+            int[] dernier = new int[n];
+            double haut = 0;
+            for (int i = 0; i < n; i++) {
+                Place p = ordre.get(i);
+                pos[i] = z.applyAsDouble(p.id);
+                fini[i] = pos[i] < 0 || enPlace(pos[i], p.voulu);       // disparu, ou deja a sa place
+                dernier[i] = -1;
+                haut = Math.max(haut, Math.max(pos[i], p.voulu) + Math.max(p.h, 0));
+            }
+            long relais = Math.round(Math.ceil(haut + 1) * 100);
+            List<Coup> r = new ArrayList<>();
+            List<double[]> quitte = new ArrayList<>();                   // place laissee par chaque ecriture
+            while (true) {
+                int libre = -1, gene = -1;
+                boolean reste = false;
+                for (int i = 0; i < n && libre < 0; i++) {
+                    if (fini[i]) continue;
+                    reste = true;
+                    int occupant = occupant(ordre, pos, fini, i);
+                    if (occupant < 0) libre = i;
+                    else if (gene < 0 && !auRelais[occupant]) gene = occupant;
+                }
+                if (!reste) break;
+                if (libre >= 0) {
+                    Place p = ordre.get(libre);
+                    List<Integer> apres = new ArrayList<>();
+                    if (dernier[libre] >= 0) apres.add(dernier[libre]);
+                    for (int k = 0; k < quitte.size(); k++) {
+                        double[] q = quitte.get(k);
+                        if (k != dernier[libre] && recouvre(q[0], q[1], p.voulu, p.h)) apres.add(k);
+                    }
+                    quitte.add(new double[]{pos[libre], p.h});
+                    r.add(new Coup(new Etape(p.id, p.voulu, false, p.nom), entiers(apres)));
+                    dernier[libre] = r.size() - 1;
+                    pos[libre] = p.voulu;
+                    fini[libre] = true;
+                } else {
+                    if (gene < 0) break;                                // impossible : un occupant au relais ne gene rien
+                    Place p = ordre.get(gene);
+                    double zr = relais / 100.0;
+                    relais += Math.max(1, Math.round(p.h * 100));
+                    quitte.add(new double[]{pos[gene], p.h});
+                    r.add(new Coup(new Etape(p.id, zr, true, p.nom),
+                            dernier[gene] >= 0 ? new int[]{dernier[gene]} : new int[0]));
+                    dernier[gene] = r.size() - 1;
+                    pos[gene] = zr;
+                    auRelais[gene] = true;
+                }
+            }
+            return r;
+        }
+
+        /** Un wired pas encore range qui occupe la place visee de ordre[i], sinon -1. */
+        private static int occupant(List<Place> ordre, double[] pos, boolean[] fini, int i) {
+            Place p = ordre.get(i);
+            for (int j = 0; j < ordre.size(); j++) {
+                if (j == i || fini[j] || pos[j] < 0) continue;
+                if (recouvre(pos[j], ordre.get(j).h, p.voulu, p.h)) return j;
+            }
+            return -1;
+        }
+
+        private static int[] entiers(List<Integer> l) {
+            int[] r = new int[l.size()];
+            for (int i = 0; i < r.length; i++) r[i] = l.get(i);
             return r;
         }
 
@@ -525,11 +685,12 @@ public class OngletWired {
         }
 
         /**
-         * La suite des ecritures d'une passe. D'abord la MONTEE : chaque wired a
-         * deplacer (hors socle) va a son relais, en commencant par le plus haut,
-         * pour que la pile soit hors de portee. Puis la DESCENTE, du BAS vers le
-         * HAUT : chaque wired va a sa hauteur visee ; il n'a alors en dessous que
-         * des wired deja places, et rien entre eux et lui.
+         * La suite des ecritures d'une passe PAR RELAIS (secours, quand la passe
+         * directe n'a pas suffi). D'abord la MONTEE : chaque wired a deplacer
+         * (hors socle) va a son relais, en commencant par le plus haut, pour que
+         * la pile soit hors de portee. Puis la DESCENTE, du BAS vers le HAUT :
+         * chaque wired va a sa hauteur visee ; il n'a alors en dessous que des
+         * wired deja places, et rien entre eux et lui.
          */
         static List<Etape> plan(List<Place> ordre, java.util.function.IntToDoubleFunction z) {
             int k = socle(ordre, z);
@@ -550,19 +711,68 @@ public class OngletWired {
     }
 
     /**
-     * Remet la pile en ordre en ecrivant @altitude sur chaque wired.
-     *
-     * @altitude est une variable de type Mobi, inscriptible : on l'ecrit
-     * directement, sans deplacer ni reposer aucun mobi. La variable est celle
-     * d'OutilMiroir.Altitude, toujours verifiee sur un vrai mobi avant d'etre
-     * tenue pour bonne (la premiere ecriture de la session passe par mettre()).
-     *
-     * Le serveur peut reempiler les mobis d'une case quand l'un change de
-     * hauteur : on ne regle donc jamais un wired au milieu des autres. Chaque
-     * passe (Rangement.plan) monte d'abord tous les wired a deplacer au-dessus
-     * de la pile, puis les redescend du bas vers le haut, chacun attendu a sa
-     * hauteur (mise a jour du jeu recue) avant le suivant. Puis on relit la
-     * pile apres un temps de calme ; s'il en reste de travers, nouvelle passe.
+     * Une pile a ranger : sa case, son ordre voulu, le plan de la passe
+     * directe et le suivi de chaque ecriture.
+     */
+    private static final class Chantier {
+        static final int ATTENTE = 0, ENVOYE = 1, ARRIVE = 2, RATE = 3;
+        final HPoint c;
+        final List<Place> ordre;
+        final java.util.function.IntToDoubleFunction zDe;
+        List<Coup> coups = List.of();
+        int[] etat = new int[0], envois = new int[0];
+        long[] echeance = new long[0];
+        /** Une ecriture de la passe directe n'est pas arrivee : la suite attend la passe par relais. */
+        boolean bloque = false;
+        final Set<Integer> bouges = new HashSet<>();
+        int passes = 0;
+        List<Place> faux = List.of();
+
+        Chantier(Moteur gp, HPoint c, List<Place> ordre) {
+            this.c = c; this.ordre = ordre;
+            this.zDe = id -> altitudeSur(gp, id, c);
+        }
+
+        void planifier() {
+            coups = Rangement.direct(ordre, zDe);
+            etat = new int[coups.size()];
+            envois = new int[coups.size()];
+            echeance = new long[coups.size()];
+        }
+
+        boolean fini() {
+            if (bloque) return true;
+            for (int e : etat) if (e != ARRIVE) return false;
+            return true;
+        }
+
+        String ou() { return "(" + c.getX() + "," + c.getY() + ")"; }
+    }
+
+    /** Demande d'arret de la remise en ordre en cours (bouton « Arrêter »). */
+    private final java.util.concurrent.atomic.AtomicBoolean arret = new java.util.concurrent.atomic.AtomicBoolean(false);
+
+    /**
+     * Lit une pile et calcule son ordre voulu et ses altitudes visees. null
+     * s'il y a moins de deux wired sur la case.
+     */
+    private static Chantier preparer(Moteur gp, HPoint c) {
+        List<Place> pile = lirePile(gp, c);
+        if (pile.size() < 2) return null;
+        List<Place> ordre = Rangement.ordonner(pile);
+        double depart = Rangement.depart(pile, Salle.hauteurSol(c.getX(), c.getY()));
+        Rangement.viser(ordre, depart);
+        StringBuilder plan = new StringBuilder();
+        for (Place p : ordre)
+            plan.append(String.format(Locale.ROOT, " [%d %s rang=%d z=%.2f h=%.2f -> %.2f]",
+                    p.id, p.nom, p.rang, p.z, p.h, p.voulu));
+        Journal.debug("rangement wired (" + c.getX() + "," + c.getY() + ") depart=" + depart + plan);
+        return new Chantier(gp, c, ordre);
+    }
+
+    /**
+     * Remet la pile choisie en ordre en ecrivant @altitude sur chaque wired
+     * (voir ranger).
      */
     private void remettreEnOrdre() {
         Moteur gp = AtelierLauncher.moteur();
@@ -570,84 +780,262 @@ public class OngletWired {
         if (gp == null || c == null) { dire("Aucune case choisie."); return; }
 
         // Lue fraiche dans la salle, pas dans le tableau (qui peut etre perime).
-        List<Place> pile = lirePile(gp, c);
-        if (pile.size() < 2) {
+        Chantier ch = preparer(gp, c);
+        if (ch == null) {
             dire("Il faut au moins deux wired sur la case pour les réordonner.");
             return;
         }
-        List<Place> ordre = Rangement.ordonner(pile);
-        double depart = Rangement.depart(pile, Salle.hauteurSol(c.getX(), c.getY()));
-        Rangement.viser(ordre, depart);
-        java.util.function.IntToDoubleFunction zDe = id -> altitudeSur(gp, id, c);
-        StringBuilder plan = new StringBuilder();
-        for (Place p : ordre)
-            plan.append(String.format(Locale.ROOT, " [%d %s rang=%d z=%.2f h=%.2f -> %.2f]",
-                    p.id, p.nom, p.rang, p.z, p.h, p.voulu));
-        Journal.debug("rangement wired (" + c.getX() + "," + c.getY() + ") depart=" + depart + plan);
-
-        List<Place> faux = Rangement.malPlaces(ordre, zDe);
-        if (faux.isEmpty()) {
+        if (Rangement.malPlaces(ch.ordre, ch.zDe).isEmpty()) {
             dire("");
             Journal.succes("Pile de wired déjà dans le bon ordre.");
             return;
         }
+        long t0 = System.currentTimeMillis();
+        if (!ranger(gp, List.of(ch))) return;
+        Journal.debug("rangement : pile " + ch.ou() + " en " + (System.currentTimeMillis() - t0) + " ms");
 
-        Set<Integer> ids = new HashSet<>();
-        for (Place p : ordre) ids.add(p.id);
-        Set<Integer> bouges = new HashSet<>();
-        int passe = 0;
-        while (passe < PASSES) {
-            passe++;
-            List<Etape> etapes = Rangement.plan(ordre, zDe);
-            Journal.debug("rangement : passe " + passe + ", " + etapes.size() + " écriture(s), socle "
-                    + (ordre.size() - etapes.stream().filter(e -> !e.montee()).count()));
-            int n = 0;
-            for (Etape e : etapes) {
-                n++;
-                // (a) jamais une hauteur sur un mobi qui n'est pas un wired de CETTE pile
-                if (!ids.contains(e.id())) { Journal.debug("rangement : id " + e.id() + " hors pile, ignoré"); continue; }
-                if (zDe.applyAsDouble(e.id()) < 0) { Journal.debug("rangement : wired " + e.id() + " plus sur la case."); continue; }
-                dire("Passe " + passe + " : " + (e.montee() ? "montée" : "mise en place") + " " + n + " / " + etapes.size() + "…");
-                if (!OutilMiroir.Altitude.confirmee()) {
-                    // premiere ecriture de la session : elle verifie (ou trouve) @altitude
-                    if (!verifierAltitude(gp, e, c)) return;
-                    bouges.add(e.id());
-                    continue;
-                }
-                boolean arrive = ecrire(gp, e, c);
-                if (!e.montee()) bouges.add(e.id());
-                if (!arrive)
-                    Journal.debug("rangement : " + e.id() + (e.montee() ? " pas monté à " : " pas arrivé à ")
-                            + hauteurTexte(e.z()) + " (lu " + hauteurTexte(zDe.applyAsDouble(e.id())) + ")");
-            }
-            // (c) relecture apres un temps de calme : les dernieres mises a jour du jeu sont arrivees
-            sommeil(RELECTURE_MS);
-            faux = Rangement.malPlaces(ordre, zDe);
-            Journal.debug("rangement : passe " + passe + ", mal placés : " + faux.size());
-            if (faux.isEmpty()) break;
-            dire(Ui.accorder("Passe " + passe + " : " + faux.size() + " wired encore de travers, nouvelle passe…"));
-        }
-
-        // (d) bilan
         dire("");
-        if (faux.isEmpty()) {
-            Journal.succes(Ui.accorder("Pile de wired (" + c.getX() + "," + c.getY() + ") rangée et vérifiée : "
-                    + bouges.size() + " wired remis à leur place en " + passe + " passe(s)."));
+        if (arret.get() && !ch.faux.isEmpty()) { Journal.erreur("Rangement arrêté : " + bilanFaux(ch) + "."); return; }
+        if (ch.faux.isEmpty()) {
+            Journal.succes(Ui.accorder("Pile de wired " + ch.ou() + " rangée et vérifiée : "
+                    + ch.bouges.size() + " wired remis à leur place"
+                    + (ch.passes == 0 ? "." : ", avec " + ch.passes + " passe(s) par relais.")));
             return;
         }
+        int n = ch.faux.size();
+        Journal.erreur(n + " wired " + (n == 1 ? "reste mal placé" : "restent mal placés")
+                + " sur la case " + ch.ou() + " : " + bilanFaux(ch)
+                + ". Le jeu n'a pas suivi : réessaie, ou vérifie que tu as les droits.");
+    }
+
+    /**
+     * Toutes les piles de wired de l'appart dont l'ordre n'est pas bon
+     * (Rangement.desordre), remises en ordre en une seule action. Les piles
+     * deja dans l'ordre ne recoivent aucun envoi.
+     */
+    private void toutRemettreEnOrdre() {
+        Moteur gp = AtelierLauncher.moteur();
+        if (gp == null) { dire("L'Atelier n'est pas connecté au jeu."); return; }
+        dire("Lecture des piles de l'appart…");
+        Map<Long, HPoint> cases = new LinkedHashMap<>();
+        for (HFloorItem it : WiredLecteur.boitesDeLaSalle()) {
+            HPoint t = it.getTile();
+            cases.putIfAbsent(((long) t.getX() << 32) | (t.getY() & 0xffffffffL), new HPoint(t.getX(), t.getY()));
+        }
+        List<Chantier> aCorriger = new ArrayList<>();
+        for (HPoint c : cases.values()) {
+            Chantier ch = preparer(gp, c);
+            if (ch != null && Rangement.desordre(ch.ordre)) aCorriger.add(ch);
+        }
+        int total = cases.size();
+        if (aCorriger.isEmpty()) {
+            dire("");
+            Journal.succes(Ui.accorder(total == 0 ? "Aucun wired dans l'appart."
+                    : "Toutes les piles de wired sont déjà dans l'ordre (" + total + " pile(s) dans l'appart)."));
+            return;
+        }
+        long t0 = System.currentTimeMillis();
+        if (!ranger(gp, aCorriger)) return;
+        Journal.debug("rangement : " + aCorriger.size() + " pile(s) en " + (System.currentTimeMillis() - t0) + " ms");
+
+        dire("");
+        int ok = 0;
         StringBuilder d = new StringBuilder();
-        for (Place p : faux) {
-            double z = zDe.applyAsDouble(p.id);
+        for (Chantier ch : aCorriger) {
+            if (ch.faux.isEmpty()) { ok++; continue; }
+            if (d.length() > 0) d.append(" ; ");
+            d.append("case ").append(ch.ou()).append(" : ").append(bilanFaux(ch));
+        }
+        String compte = ok + " pile(s) remise(s) en ordre sur " + aCorriger.size() + " à corriger ("
+                + total + " pile(s) dans l'appart)";
+        if (ok == aCorriger.size()) { Journal.succes(Ui.accorder(compte + ".")); return; }
+        Journal.erreur(Ui.accorder((arret.get() ? "Rangement arrêté. " : "") + compte
+                + ". Restent mal placés : " + d + "."));
+    }
+
+    /** « « Nom » à 1,20 au lieu de 0,60 ; « Autre » a quitté la case ». */
+    private static String bilanFaux(Chantier ch) {
+        StringBuilder d = new StringBuilder();
+        for (Place p : ch.faux) {
+            double z = ch.zDe.applyAsDouble(p.id);
             if (d.length() > 0) d.append(" ; ");
             d.append("« ").append(p.nom).append(" » ");
             d.append(z < 0 ? "a quitté la case"
                     : "à " + hauteurTexte(z) + " au lieu de " + hauteurTexte(p.voulu));
         }
-        int n = faux.size();
-        Journal.erreur(n + " wired " + (n == 1 ? "reste mal placé" : "restent mal placés")
-                + " sur la case (" + c.getX() + "," + c.getY() + ")"
-                + Ui.accorder(" après " + passe + " passe(s) : ") + d
-                + ". Le jeu n'a pas suivi : réessaie, ou vérifie que tu as les droits.");
+        return d.toString();
+    }
+
+    /**
+     * Range ces piles en ecrivant @altitude sur leurs wired.
+     *
+     * @altitude est une variable de type Mobi, inscriptible : on l'ecrit
+     * directement, sans deplacer ni reposer aucun mobi. La variable est celle
+     * d'OutilMiroir.Altitude, toujours verifiee sur un vrai mobi avant d'etre
+     * tenue pour bonne (la premiere ecriture de la session passe par mettre()).
+     *
+     * 1. Passe DIRECTE (Rangement.direct) : chaque wired mal place va droit a
+     *    sa hauteur, des que sa place est libre ; les piles avancent ensemble,
+     *    envois entrelaces au rythme commun (Salle.espacer) : une ecriture ne
+     *    depend que des ecritures de SA pile qui liberent sa place, suivies
+     *    par leur arrivee dans l'etat de la salle (pas d'attente fixe).
+     * 2. Relecture : la pile doit rester en place un court temps de calme.
+     * 3. Secours seulement pour les piles encore de travers : passes PAR RELAIS
+     *    (tout monter au-dessus de la pile, puis redescendre du bas vers le haut).
+     *
+     * Remplit faux, bouges et passes de chaque chantier. false si @altitude est
+     * introuvable (erreur deja dite).
+     */
+    private boolean ranger(Moteur gp, List<Chantier> chantiers) {
+        for (Chantier ch : chantiers) ch.planifier();
+        int total = 0;
+        for (Chantier ch : chantiers) total += ch.coups.size();
+        Journal.debug("rangement : passe directe, " + chantiers.size() + " pile(s), " + total + " écriture(s)");
+
+        // Premiere ecriture de la session : elle verifie (ou trouve) @altitude.
+        if (!OutilMiroir.Altitude.confirmee()) {
+            for (Chantier ch : chantiers) {
+                if (ch.coups.isEmpty()) continue;
+                Etape e = ch.coups.get(0).etape();              // sans dependance : la premiere du plan
+                if (!verifierAltitude(gp, e, ch.c)) return false;
+                ch.etat[0] = Chantier.ENVOYE;
+                ch.envois[0] = 1;
+                ch.echeance[0] = System.currentTimeMillis() + ARRIVEE_MS;
+                if (e.montee()) ch.bouges.remove(e.id()); else ch.bouges.add(e.id());
+                break;
+            }
+        }
+
+        avancer(chantiers, total);
+        attendreCalme(chantiers);
+
+        // Secours : passes par relais, pile par pile, pour celles encore de travers.
+        for (Chantier ch : chantiers) {
+            while (!ch.faux.isEmpty() && ch.passes < PASSES && !arret.get()) {
+                ch.passes++;
+                passeParRelais(gp, ch);
+                attendreCalme(List.of(ch));
+                Journal.debug("rangement " + ch.ou() + " : passe par relais " + ch.passes
+                        + ", mal placés : " + ch.faux.size());
+            }
+        }
+        return true;
+    }
+
+    /**
+     * La passe directe de toutes les piles : a chaque tour, les arrivees sont
+     * relevees dans l'etat de la salle, puis chaque pile envoie au plus UNE
+     * ecriture prete (toutes celles dont elle depend sont arrivees). Les
+     * ecritures deja faites (wired deja a sa hauteur) ne partent pas.
+     */
+    private void avancer(List<Chantier> chantiers, int total) {
+        int faits = 0;
+        while (!arret.get()) {
+            long t = System.currentTimeMillis();
+            boolean reste = false, envoye = false;
+            faits = 0;
+            // (1) arrivees et delais
+            for (Chantier ch : chantiers) {
+                for (int k = 0; k < ch.coups.size(); k++) {
+                    if (ch.etat[k] == Chantier.ARRIVE) { faits++; continue; }
+                    if (ch.etat[k] != Chantier.ENVOYE) continue;
+                    Etape e = ch.coups.get(k).etape();
+                    double z = ch.zDe.applyAsDouble(e.id());
+                    if (Rangement.enPlace(z, e.z())) { ch.etat[k] = Chantier.ARRIVE; faits++; }
+                    else if (z < 0) { ch.etat[k] = Chantier.RATE; ch.bloque = true;
+                        Journal.debug("rangement " + ch.ou() + " : wired " + e.id() + " plus sur la case."); }
+                    else if (t > ch.echeance[k]) {
+                        if (ch.envois[k] < ENVOIS) ch.etat[k] = Chantier.ATTENTE;    // renvoyee au tour suivant
+                        else {
+                            ch.etat[k] = Chantier.RATE; ch.bloque = true;
+                            Journal.debug("rangement " + ch.ou() + " : " + e.id() + (e.montee() ? " pas monté à " : " pas arrivé à ")
+                                    + hauteurTexte(e.z()) + " (lu " + hauteurTexte(z) + ")");
+                        }
+                    }
+                }
+            }
+            // (2) un envoi par pile prete, piles entrelacees
+            for (Chantier ch : chantiers) {
+                if (ch.fini()) continue;
+                reste = true;
+                for (int k = 0; k < ch.coups.size(); k++) {
+                    if (ch.etat[k] != Chantier.ATTENTE || !pret(ch, k)) continue;
+                    Etape e = ch.coups.get(k).etape();
+                    double z = ch.zDe.applyAsDouble(e.id());
+                    if (z < 0) { ch.etat[k] = Chantier.RATE; ch.bloque = true; break; }
+                    if (Rangement.enPlace(z, e.z())) { ch.etat[k] = Chantier.ARRIVE; continue; }   // deja la : rien a envoyer
+                    if (arret.get()) break;
+                    Salle.espacer();
+                    try { OutilMiroir.Altitude.ecrire(e.id(), e.z()); } finally { Salle.envoiFait(); }
+                    ch.etat[k] = Chantier.ENVOYE;
+                    ch.envois[k]++;
+                    ch.echeance[k] = System.currentTimeMillis() + ARRIVEE_MS;
+                    if (e.montee()) ch.bouges.remove(e.id()); else ch.bouges.add(e.id());
+                    envoye = true;
+                    break;
+                }
+            }
+            dire("Mise en ordre : " + faits + " / " + total + "…");
+            progression(total == 0 ? 1 : (double) faits / total);
+            if (!reste) break;
+            if (!envoye) sommeil(SUIVI_MS);
+        }
+    }
+
+    /** Toutes les ecritures dont celle-ci depend sont arrivees. */
+    private static boolean pret(Chantier ch, int k) {
+        for (int a : ch.coups.get(k).apres()) if (ch.etat[a] != Chantier.ARRIVE) return false;
+        return true;
+    }
+
+    /**
+     * Relecture finale : chaque pile doit etre en place et y rester CALME_MS
+     * (une mise a jour tardive du jeu la defait parfois) ; au plus RELECTURE_MS.
+     * Remplit faux.
+     */
+    private void attendreCalme(List<Chantier> chantiers) {
+        long debut = System.currentTimeMillis(), stable = debut;
+        while (true) {
+            boolean tout = true;
+            for (Chantier ch : chantiers) {
+                ch.faux = Rangement.malPlaces(ch.ordre, ch.zDe);
+                if (!ch.faux.isEmpty()) tout = false;
+            }
+            long t = System.currentTimeMillis();
+            if (!tout) stable = t;
+            if (tout && t - stable >= CALME_MS) return;
+            if (t - debut >= RELECTURE_MS || arret.get()) return;
+            sommeil(SUIVI_MS * 2);
+        }
+    }
+
+    /**
+     * Une passe de secours par relais (Rangement.plan), wired par wired, chacun
+     * attendu a sa hauteur avant le suivant. Les wired deja a la hauteur de
+     * l'etape ne recoivent rien.
+     */
+    private void passeParRelais(Moteur gp, Chantier ch) {
+        List<Etape> etapes = Rangement.plan(ch.ordre, ch.zDe);
+        Set<Integer> ids = new HashSet<>();
+        for (Place p : ch.ordre) ids.add(p.id);
+        int n = 0;
+        for (Etape e : etapes) {
+            if (arret.get()) return;
+            n++;
+            // jamais une hauteur sur un mobi qui n'est pas un wired de CETTE pile
+            if (!ids.contains(e.id())) { Journal.debug("rangement : id " + e.id() + " hors pile, ignoré"); continue; }
+            double z = ch.zDe.applyAsDouble(e.id());
+            if (z < 0) { Journal.debug("rangement : wired " + e.id() + " plus sur la case."); continue; }
+            dire("Case " + ch.ou() + ", passe par relais " + ch.passes + " : "
+                    + (e.montee() ? "montée" : "mise en place") + " " + n + " / " + etapes.size() + "…");
+            progression((double) n / Math.max(1, etapes.size()));
+            if (Rangement.enPlace(z, e.z())) continue;
+            boolean arrive = ecrire(gp, e, ch.c);
+            if (!e.montee()) ch.bouges.add(e.id());
+            if (!arrive)
+                Journal.debug("rangement : " + e.id() + (e.montee() ? " pas monté à " : " pas arrivé à ")
+                        + hauteurTexte(e.z()) + " (lu " + hauteurTexte(ch.zDe.applyAsDouble(e.id())) + ")");
+        }
     }
 
     /**
@@ -668,7 +1056,6 @@ public class OngletWired {
                 altLbl.setText("@altitude vérifiée — variable « " + var + " »");
                 altLbl.getStyleClass().setAll("label", "etat-ok");
             });
-            attendreArrivee(gp, e.id(), e.z(), c);
             return true;
         }
         dire("");
@@ -679,11 +1066,11 @@ public class OngletWired {
     }
 
     /**
-     * Ecrit la hauteur et attend la mise a jour du jeu ; sans nouvelles, un
-     * second envoi (le premier a pu etre ignore). true si le wired est arrive.
+     * Ecrit la hauteur et suit l'arrivee du wired ; sans nouvelles, un second
+     * envoi (le premier a pu etre ignore). true si le wired est arrive.
      */
-    private static boolean ecrire(Moteur gp, Etape e, HPoint c) {
-        for (int i = 0; i < ENVOIS; i++) {
+    private boolean ecrire(Moteur gp, Etape e, HPoint c) {
+        for (int i = 0; i < ENVOIS && !arret.get(); i++) {
             Salle.espacer();
             try { OutilMiroir.Altitude.ecrire(e.id(), e.z()); } finally { Salle.envoiFait(); }
             if (attendreArrivee(gp, e.id(), e.z(), c)) return true;
@@ -713,7 +1100,7 @@ public class OngletWired {
         while (true) {
             if (Rangement.enPlace(altitudeSur(gp, id, c), voulu)) return true;
             if (System.currentTimeMillis() > fin) return false;
-            sommeil(40);
+            sommeil(SUIVI_MS);
         }
     }
 

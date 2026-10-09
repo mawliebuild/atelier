@@ -71,10 +71,30 @@ public final class Salle {
         try {
             List<HFloorItem> l = s.getItems();
             if (l == null) return List.of();
-            l.removeIf(it -> GrilleCalcul.estFictif(it.getId()) || GroupeFantomes.estFantome(it.getId()));
+            l.removeIf(it -> {
+                if (!idFictif(it.getId())) return false;
+                return true;
+            });
             return l;
         }
         catch (Throwable t) { return List.of(); }
+    }
+
+    /** Plus bas des identifiants fictifs vus dans le jeu (0x7FFF0000 et au-dessus : jamais un vrai mobi). */
+    static final int ID_FICTIF_MIN = 0x7FFF0000;
+    private static final java.util.Set<Integer> fictifsVus = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /**
+     * Identifiant qui n'est pas un vrai mobi du serveur : marqueurs de la
+     * grille, fantomes des calques, et la plage 0x7FFF0000.. (un « mobi »
+     * 0x7FFF0001 pris pour une dalle magique faisait rater toute une reprise).
+     * A filtrer partout ou l'on cherche un mobi a deplacer ou ramasser.
+     */
+    static boolean idFictif(int id) {
+        // ATTENTION : les mobis poses depuis le Builders Club ont de VRAIS ids dans la
+        // plage 0x7FFF.... (constate en jeu : 2147418113, 2147418118...). Seuls nos
+        // marqueurs de grille et nos fantomes sont fictifs.
+        return GrilleCalcul.estFictif(id) || GroupeFantomes.estFantome(id);
     }
 
     /** Copie des mobis muraux ; jamais null. */
@@ -84,7 +104,7 @@ public final class Salle {
         try {
             List<HWallItem> l = s.getWallItems();
             if (l == null) return List.of();
-            l.removeIf(it -> GroupeFantomes.estFantome(it.getId()));
+            l.removeIf(it -> idFictif(it.getId()));
             return l;
         }
         catch (Throwable t) { return List.of(); }
@@ -188,26 +208,159 @@ public final class Salle {
      * @altitude...) : le serveur refuse ou ignore les envois trop rapproches.
      * Un seul rythme pour toutes les rafales de l'Atelier, meme lancees par
      * des fils differents.
+     *
+     * Reglable dans Parametres > Envois (preference « envoi.ecart », 50..300 ms,
+     * 150 par defaut). Une action refusee est d'abord REESSAYEE (REESSAIS fois,
+     * apres pauseReessai) ; si des actions restent refusees malgre leurs
+     * reessais, le FREIN (signalerRefus) remonte l'ecart a 150 ms pour la
+     * session (jamais plus). ECART_MS reste la valeur par defaut, pour les
+     * rythmes qui s'y comparent.
      */
     public static final long ECART_MS = 150;
+    static final int ECART_MIN = 50, ECART_MAX = 300, ECART_DEFAUT = 150, ECART_PAS = 10;
+    static final String PREF_ECART = "envoi.ecart";
+
     private static final Object RYTHME = new Object();
     private static long prochainEnvoi = 0;
+    private static final Frein FREIN = new Frein(lireEcart());
+    private static final List<Runnable> ecouteursEcart = new CopyOnWriteArrayList<>();
 
-    /** Attend son tour (ECART_MS apres l'envoi precedent) ; a appeler juste avant d'envoyer. */
+    /** Ecart effectif entre deux envois d'une rafale (reglage, ou plus si le frein a joue). */
+    public static int ecart() { return FREIN.effectif(); }
+
+    /** Le reglage de l'utilisatrice (50..300 ms). */
+    public static int ecartVoulu() { return FREIN.voulu(); }
+
+    /** Le frein a-t-il allonge l'ecart pendant cette session ? */
+    public static boolean freine() { return FREIN.effectif() > FREIN.voulu(); }
+
+    /** Change le reglage (borne, enregistre) ; le frein repart de zero. */
+    public static void ecartVoulu(int ms) {
+        int v = borner(ms);
+        FREIN.regler(v);
+        try { java.util.prefs.Preferences.userRoot().node("atelier").putInt(PREF_ECART, v); } catch (Throwable ignored) { }
+        Journal.debug("envois : écart réglé à " + v + " ms.");
+        prevenirEcart();
+    }
+
+    /** Appele (sur un fil quelconque) quand l'ecart voulu ou effectif change. */
+    public static void surChangementEcart(Runnable r) { ecouteursEcart.add(r); }
+
+    private static void prevenirEcart() {
+        for (Runnable r : ecouteursEcart) try { r.run(); } catch (Throwable ignored) { }
+    }
+
+    /** Reglage borne a 50..300 ms, au pas de 10 (logique pure). */
+    static int borner(int ms) {
+        int v = Math.max(ECART_MIN, Math.min(ECART_MAX, ms));
+        return (int) (Math.round(v / (double) ECART_PAS) * ECART_PAS);
+    }
+
+    private static int lireEcart() {
+        try { return borner(java.util.prefs.Preferences.userRoot().node("atelier").getInt(PREF_ECART, ECART_DEFAUT)); }
+        catch (Throwable t) { return ECART_DEFAUT; }
+    }
+
+    /** Reessais d'une action refusee ou ignoree, avant de passer a la suivante. */
+    static final int REESSAIS = 2;
+
+    /** Courte attente avant de renvoyer une action refusee : 2 fois l'ecart courant. */
+    static long attenteReessai() { return 2L * ecart(); }
+
+    public static void pauseReessai() { sommeil(attenteReessai()); }
+
+    /**
+     * Une action d'une rafale est RESTEE refusee ou ignoree apres ses reessais
+     * (mobi pas apparu, pas arrive, dalle pas ramassee...). Assez de tels refus
+     * recents : l'ecart passe a 150 ms pour le reste de la session (s'il etait
+     * plus bas), et on le dit une fois. Pas pour un refus definitif (pas dans
+     * l'inventaire, BC refuse, pas de droits, salle quittee, Arreter).
+     * @param quoi pour le diagnostic (« pose », « déplacement »...)
+     */
+    public static void signalerRefus(String quoi) {
+        int[] cran = FREIN.signal(true, System.currentTimeMillis());
+        if (cran == null) return;
+        Journal.debug("frein : refus après réessai (dernier : " + quoi + "), écart " + cran[0] + " → " + cran[1] + " ms.");
+        Journal.erreur("Le jeu refuse des actions même après réessai : l'Atelier passe à " + cran[1] + " ms.");
+        prevenirEcart();
+    }
+
+    /** Une action d'une rafale a bien ete prise par le jeu, au besoin apres reessai (fenetre du frein). */
+    public static void signalerReussite() { FREIN.signal(false, System.currentTimeMillis()); }
+
+    /** n refus d'un coup (meme raison). */
+    public static void signalerRefus(String quoi, int n) { for (int i = 0; i < n; i++) signalerRefus(quoi); }
+
+    /** n reussites d'un coup. */
+    public static void signalerReussite(int n) { for (int i = 0; i < n; i++) signalerReussite(); }
+
+    /**
+     * Le frein (logique pure, l'heure est donnee) : fenetre glissante des
+     * FENETRE dernieres actions signalees, de moins de FENETRE_MS ; une action
+     * n'y est un refus que si elle est restee refusee APRES ses reessais.
+     * SEUIL refus ou plus : l'ecart effectif passe a 150 ms s'il etait plus bas
+     * (une seule fois), sinon rien ; jamais au-dela de 150.
+     */
+    static final class Frein {
+        static final int FENETRE = 20, SEUIL = 3;
+        /** Large : une action refusee apres 2 reessais prend plusieurs secondes. */
+        static final long FENETRE_MS = 60_000;
+        private final long[] temps = new long[FENETRE];
+        private final boolean[] refus = new boolean[FENETRE];
+        private int n = 0, tete = 0;              // tete : prochaine case ecrite
+        private volatile int voulu, effectif;
+
+        Frein(int voulu) { this.voulu = voulu; this.effectif = voulu; }
+
+        int voulu() { return voulu; }
+        int effectif() { return effectif; }
+
+        synchronized void regler(int v) {
+            voulu = v; effectif = v; n = 0; tete = 0;
+        }
+
+        /** L'ecart apres le frein (logique pure) : sous 150, 150 ; sinon inchange. */
+        static int cran(int e) { return Math.max(e, ECART_DEFAUT); }
+
+        /** Note une action ; rend {avant, apres} si l'ecart vient de monter, null sinon. */
+        synchronized int[] signal(boolean estRefus, long t) {
+            if (effectif >= ECART_DEFAUT) return null;          // deja a 150 ou plus : le frein ne fait rien
+            temps[tete] = t; refus[tete] = estRefus;
+            tete = (tete + 1) % FENETRE;
+            if (n < FENETRE) n++;
+            if (!estRefus) return null;
+            int compte = 0;
+            for (int i = 0; i < n; i++) {
+                int k = Math.floorMod(tete - 1 - i, FENETRE);
+                if (t - temps[k] > FENETRE_MS) break;          // plus ancien : hors fenetre (et les suivants aussi)
+                if (refus[k]) compte++;
+            }
+            if (compte < SEUIL) return null;
+            n = 0;
+            int avant = effectif, apres = cran(avant);
+            if (apres == avant) return null;
+            effectif = apres;
+            return new int[]{avant, apres};
+        }
+    }
+
+    /** Attend son tour (ecart() apres l'envoi precedent) ; a appeler juste avant d'envoyer. */
     public static void espacer() {
         long attente;
+        int e = ecart();
         synchronized (RYTHME) {
             long t = System.currentTimeMillis();
             long a = Math.max(t, prochainEnvoi);
-            prochainEnvoi = a + ECART_MS;
+            prochainEnvoi = a + e;
             attente = a - t;
         }
         if (attente > 0) sommeil(attente);
     }
 
-    /** Un envoi vient de finir (apres une operation longue) : le suivant attendra ECART_MS a partir de maintenant. */
+    /** Un envoi vient de finir (apres une operation longue) : le suivant attendra ecart() a partir de maintenant. */
     public static void envoiFait() {
-        synchronized (RYTHME) { prochainEnvoi = Math.max(prochainEnvoi, System.currentTimeMillis() + ECART_MS); }
+        int e = ecart();
+        synchronized (RYTHME) { prochainEnvoi = Math.max(prochainEnvoi, System.currentTimeMillis() + e); }
     }
 
     /** envoyer, a son tour dans le rythme des rafales. */

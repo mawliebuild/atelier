@@ -69,8 +69,8 @@ final class PoseCopie {
             if (wired != null && wired.attendus > 0) {
                 b.append(" ; ").append(PoseOutils.nombre(wired.confirmes.size(), "wired réglé", "wired réglés"))
                         .append(" sur ").append(wired.attendus);
-                if (!wired.rates.isEmpty())
-                    b.append(" (").append(PoseOutils.nombre(wired.rates.size(), "raté", "ratés")).append(")");
+                int rates = wired.rates.size() + wired.refuses.size() + wired.nonEnvoyes.size();
+                if (rates > 0) b.append(" (").append(PoseOutils.nombre(rates, "raté", "ratés")).append(")");
             }
             if (murs != null && murs.avertissement != null) b.append(". ").append(murs.avertissement);
             String t = b.toString().trim();
@@ -120,6 +120,18 @@ final class PoseCopie {
      */
     static Resultat poser(CopieAppart copie, HPoint coin, Generateur.Source source, HPoint caseDalle,
                           Consumer<String> dire, BooleanSupplier stop, Runnable suivi) {
+        return poser(copie, coin, source, caseDalle, dire, stop, suivi, null);
+    }
+
+    /**
+     * Comme poser, avec completer : appele (fil de la pose) apres les sols et
+     * AVANT les reglages des wired, avec la table des ids (copie -> reel) a
+     * completer sur place (mobis apparus en retard). Une seule table sert
+     * ensuite aux reglages et a la verification de l'appelant (Resultat.ids).
+     */
+    static Resultat poser(CopieAppart copie, HPoint coin, Generateur.Source source, HPoint caseDalle,
+                          Consumer<String> dire, BooleanSupplier stop, Runnable suivi,
+                          Consumer<Map<Integer, Integer>> completer) {
         Resultat r = new Resultat();
         if (dire == null) dire = m -> { };
         Moteur m = Salle.gp();
@@ -148,7 +160,7 @@ final class PoseCopie {
             fil.start();
         }
         try {
-            poser0(m, copie, coin, source(source), caseDalle, dire, fin, r);
+            poser0(m, copie, coin, source(source), caseDalle, dire, fin, r, completer);
         } catch (Throwable t) {
             Journal.debug("pose de la copie : " + t);
             if (r.raison == null) r.raison = "erreur (" + t.getClass().getSimpleName() + ")";
@@ -166,7 +178,8 @@ final class PoseCopie {
     }
 
     private static void poser0(Moteur m, CopieAppart c, HPoint coin, PoseOutils.Source src, HPoint caseDalle,
-                               Consumer<String> dire, BooleanSupplier fin, Resultat r) {
+                               Consumer<String> dire, BooleanSupplier fin, Resultat r,
+                               Consumer<Map<Integer, Integer>> completer) {
         EtatSalle salle = m.getFloorState();
         Map<String, String> tableVariables = new HashMap<>();
         PoseDalle pd = m.poseDalle();
@@ -185,6 +198,10 @@ final class PoseCopie {
             if (r.sols.erreur != null && r.sols.ids.isEmpty()) { r.raison = r.sols.erreur; r.lancee = false; return; }
         }
         if (fin.getAsBoolean()) return;
+        if (completer != null) {
+            try { completer.accept(r.ids); }
+            catch (Throwable t) { Journal.debug("pose de la copie : table des ids non complétée : " + t); }
+        }
 
         // 2. fonds des publicites, puis les wired
         ReglageWiredPose rw = m.reglageWired();

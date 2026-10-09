@@ -164,6 +164,13 @@ public final class BarrePremierPlan {
         if (w instanceof Stage) {
             Stage s = (Stage) w;
             if (estPanneau(s.getTitle())) menu(s);
+            // Une boite de dialogue (Nouveau tag, Renommer, confirmation...) ouverte
+            // depuis une fenetre de l'Atelier passait SOUS les fenetres « toujours
+            // devant » : elle le devient aussi, donc au niveau des fenetres.
+            if (!s.isAlwaysOnTop() && !menus.contains(s)
+                    && (s.getModality() != javafx.stage.Modality.NONE || s.getOwner() != null)) {
+                try { s.setAlwaysOnTop(true); } catch (Throwable ignored) { }
+            }
             suivre(s);
             Ui.bullesRapides(s.getScene());   // bulles a 150 ms dans toutes les fenetres de l'Atelier
             if (WIN) hwnds.remove(s);       // nouvelle fenetre native a chaque show

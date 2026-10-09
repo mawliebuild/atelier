@@ -116,6 +116,8 @@ public class OngletApparts {
         sp.setFitToHeight(true);
         sp.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
         sp.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
+        // jamais de defilement en largeur (pave tactile compris)
+        sp.hvalueProperty().addListener((o, a, b) -> { if (b.doubleValue() != sp.getHmin()) sp.setHvalue(sp.getHmin()); });
         return sp;
     }
 
@@ -338,6 +340,7 @@ public class OngletApparts {
     private Boolean dernierEtat = null;
 
     private void montrerEtat(boolean enAttente) {
+        if (fenetreGelee) return;
         if (Boolean.valueOf(enAttente).equals(dernierEtat)) return;
         dernierEtat = enAttente;
         Platform.runLater(() -> {
@@ -419,47 +422,35 @@ public class OngletApparts {
         // --- 2. mes copies : une carte par copie (apercu, nom, contenu, date)
         choixAppart = new ComboBox<>();             // garde la selection (lue partout) ; la liste l'affiche
         choixAppart.valueProperty().addListener((o, a, b) -> { lireAppart(); majFloor(); });
-        ListView<String> liste = new ListView<>(choixAppart.getItems());
+        // la liste montre le dossier ouvert : ses sous-dossiers d'abord, puis ses copies
+        ListView<String> liste = new ListView<>(elements);
+        listeCopies = liste;
         liste.setPrefHeight(250);
         liste.setMinHeight(150);
-        Label vide = new Label("Aucune copie pour l'instant : copie un appart au-dessus.");
+        Label vide = new Label("Dossier vide.");
         vide.setWrapText(true);
         vide.getStyleClass().add("aide-vide");
+        videCopies = vide;
         liste.setPlaceholder(vide);
-        liste.setCellFactory(lv -> new ListCell<>() {
-            {
-                // la cellule suit la largeur de la liste : le texte passe a la ligne, pas d'ascenseur de cote
-                setPrefWidth(0);
-            }
-            @Override protected void updateItem(String nom, boolean vide) {
-                super.updateItem(nom, vide);
-                if (vide || nom == null) { setText(null); setGraphic(null); return; }
-                Label n = new Label(nom);
-                n.setStyle("-fx-font-weight: bold;");
-                n.setWrapText(true);
-                String[] r = Ui.accorder(resumeCopie(nom)).split(" · ");
-                Label d = Ui.discret(r.length >= 2 ? Ui.majuscule(r[0] + " · " + r[1]) : r[0]);
-                d.setStyle("-fx-font-style: normal; -fx-opacity: 0.7; -fx-font-size: 11px;");
-                VBox texte = new VBox(2, n, d);
-                if (r.length >= 3) {
-                    Label q = Ui.discret(r[2]);
-                    q.setStyle("-fx-font-style: normal; -fx-opacity: 0.55; -fx-font-size: 11px;");
-                    texte.getChildren().add(q);
-                }
-                texte.setAlignment(Pos.CENTER_LEFT);
-                texte.setMinWidth(0);
-                HBox.setHgrow(texte, Priority.ALWAYS);
-                HBox h = new HBox(10, vignetteCopie(nom, lv), texte);
-                h.setAlignment(Pos.CENTER_LEFT);
-                h.setPadding(new Insets(2, 0, 2, 0));
-                setGraphic(h);
-                setText(null);
-            }
+        liste.setCellFactory(lv -> new CelluleCopie(lv));
+        liste.getSelectionModel().selectedItemProperty().addListener((o, a, b) -> {
+            if (b != null && !b.startsWith(DOS)) choixAppart.setValue(b);
         });
-        liste.getSelectionModel().selectedItemProperty().addListener((o, a, b) -> { if (b != null) choixAppart.setValue(b); });
         choixAppart.valueProperty().addListener((o, a, b) -> {
             if (b != null && !b.equals(liste.getSelectionModel().getSelectedItem())) liste.getSelectionModel().select(b);
         });
+        // Entree sur un dossier choisi au clavier : l'ouvrir (Retour sur Mac, Entree sous Windows)
+        liste.setOnKeyPressed(e -> {
+            String it = liste.getSelectionModel().getSelectedItem();
+            if (e.getCode() == javafx.scene.input.KeyCode.ENTER && it != null && it.startsWith(DOS)) {
+                naviguer(CopiesDossiers.dossier(it.substring(1)));
+                e.consume();
+            }
+        });
+        fil.setAlignment(Pos.CENTER_LEFT);
+        fil.setRowValignment(javafx.geometry.VPos.CENTER);
+        Button nouveauDossier = Ui.bouton(Icones.DOSSIER_NOUVEAU, "Nouveau dossier…");
+        nouveauDossier.setOnAction(e -> nouveauDossier());
 
         cptAppart = new Label("--");
         cptAppart.getStyleClass().add("salle-compte");
@@ -479,6 +470,8 @@ public class OngletApparts {
         poser.getStyleClass().add("primaire");
         // Pendant un collage : « Arrêter » a la place de « Coller ici »
         Button arreter = plein("Arrêter le collage", e -> arreterCollage());
+        // jamais declenche par une touche (Entree / Espace envoyees pendant que l'on joue)
+        arreter.setFocusTraversable(false);
         arreter.visibleProperty().bind(collageEnCours);
         arreter.managedProperty().bind(collageEnCours);
         poser.visibleProperty().bind(collageEnCours.not());
@@ -486,9 +479,9 @@ public class OngletApparts {
         boutonArreter = arreter;
         // Actions sur la copie choisie : des icones, avec leur bulle
         Button renommer = Icones.seul(Icones.CRAYON, "Renommer la copie");
-        renommer.setOnAction(e -> renommerCopie());
+        renommer.setOnAction(e -> renommerCopie(choixAppart.getValue()));
         Button supprimer = Icones.seul(Icones.CORBEILLE, "Supprimer la copie (définitif)");
-        supprimer.setOnAction(e -> supprimerCopie());
+        supprimer.setOnAction(e -> supprimerCopie(choixAppart.getValue()));
         Button apercu = Icones.seul(Icones.CAPTURE, "Reprendre l'aperçu : nouvelle photo de la copie choisie, "
                 + "depuis l'appart où tu es (pour une zone : la zone choisie). "
                 + "Utile pour les copies faites avant les aperçus.");
@@ -496,7 +489,7 @@ public class OngletApparts {
         apercu.getTooltip().setMaxWidth(300);
         apercu.setOnAction(e -> reprendreApercu(liste));
         for (Button b : new Button[]{poser, renommer, supprimer, apercu})
-            b.disableProperty().bind(liste.getSelectionModel().selectedItemProperty().isNull());
+            b.disableProperty().bind(choixAppart.valueProperty().isNull());
         HBox actions = new HBox(4, renommer, apercu, supprimer);
         actions.setAlignment(Pos.CENTER_RIGHT);
         actions.setMinWidth(Region.USE_PREF_SIZE);
@@ -505,27 +498,9 @@ public class OngletApparts {
         HBox.setHgrow(cptAppart, Priority.ALWAYS);
         cptAppart.setMaxWidth(Double.MAX_VALUE);
 
-        // Source des mobis : un reglage rare, replie derriere un ⚙ (le choix en cours reste ecrit).
-        Label sourceTxt = new Label();
-        sourceTxt.setWrapText(true);
-        Runnable majSource = () -> sourceTxt.setText("Mobis pris : " + (sInv.isSelected() ? "inventaire"
-                : sBc.isSelected() ? "BC" : sBcInv.isSelected() ? "BC, puis inventaire" : "inventaire, puis BC") + ".");
-        source.selectedToggleProperty().addListener((o, a, b) -> majSource.run());
-        majSource.run();
+        // Source des mobis : les 4 choix restent affiches.
         VBox choixSource = new VBox(4, sInv, sInvBc, sBc, sBcInv);
         choixSource.setPadding(new Insets(0, 0, 0, 4));
-        choixSource.setVisible(false);
-        choixSource.setManaged(false);
-        Button reglerSource = Icones.seul(Icones.REGLAGES, "Changer d'où viennent les mobis");
-        reglerSource.setOnAction(e -> {
-            boolean v = !choixSource.isVisible();
-            choixSource.setVisible(v);
-            choixSource.setManaged(v);
-        });
-        HBox ligneSource = new HBox(8, sourceTxt, reglerSource);
-        ligneSource.setAlignment(Pos.CENTER_LEFT);
-        HBox.setHgrow(sourceTxt, Priority.ALWAYS);
-        sourceTxt.setMaxWidth(Double.MAX_VALUE);
 
         Label salleLbl = Ui.etiquette("Salle actuelle");
         salleLbl.setMinWidth(Region.USE_PREF_SIZE);
@@ -544,12 +519,18 @@ public class OngletApparts {
                                 + "Une photo de l'appart (ou de la zone seule) est prise à chaque copie : "
                                 + "elle s'affiche dans « Mes copies », clique-la pour l'agrandir.")),
                 Ui.bloc("Mes copies",
+                        fil,
                         liste,
                         sousListe,
-                        Ui.aide("Clique un aperçu pour l'agrandir. Les icônes sous la liste renomment, "
+                        Ui.boutons(nouveauDossier),
+                        Ui.aide("Les copies d'un appart entier vont dans « Apparts », les zones dans « Zones » "
+                                + "(ou dans le dossier ouvert, s'il est du bon côté). Clique un dossier pour l'ouvrir, "
+                                + "le chemin en haut pour remonter. Glisse une copie sur un dossier (ou sur le chemin) "
+                                + "pour l'y ranger ; clic droit : renommer, déplacer, supprimer. "
+                                + "Clique un aperçu pour l'agrandir. Les icônes sous la liste renomment, "
                                 + "reprennent la photo ou suppriment la copie choisie.")),
                 Ui.bloc("Coller dans l'appart où je suis",
-                        ligneSource, choixSource,
+                        choixSource,
                         avecFloor,
                         poser, boutonArreter,
                         Ui.aide("Sans le floor (ou pour une zone), clique dans le jeu la case du coin "
@@ -642,7 +623,7 @@ public class OngletApparts {
         final boolean z = zone;
         Salle.tache("Aperçu", () -> {
             String err = ApercuPreset.prendre(ApercuPreset.de(f), z);
-            direJeu(err == null ? "Aperçu de « " + nom + " » repris." : err);
+            direJeu(err == null ? "Aperçu de « " + CopiesDossiers.court(nom) + " » repris." : err);
             Platform.runLater(liste::refresh);
         });
     }
@@ -664,55 +645,80 @@ public class OngletApparts {
         });
     }
 
-    private void renommerCopie() {
-        String nom = choixAppart.getValue();
+    private void renommerCopie(String nom) {
         if (nom == null) return;
-        TextInputDialog d = new TextInputDialog(nom);
+        String ancien = CopiesDossiers.court(nom);
+        File src = new File(dossierApparts(), nom + ".json");
+        TextInputDialog d = new TextInputDialog(ancien);
         d.setTitle("Renommer la copie");
         d.setHeaderText(null);
         d.setContentText("Nouveau nom :");
+        devant(d);
         d.showAndWait().ifPresent(n -> {
             n = n.replaceAll("[<>:\"/\\\\|?*]", "-").trim();
-            if (n.isEmpty() || n.equals(nom)) return;
-            File src = new File(dossierApparts(), nom + ".json"), dest = new File(dossierApparts(), n + ".json");
-            if (dest.exists()) { note("Renommage impossible : une copie s'appelle déjà « " + n + " »."); return; }
-            if (!src.renameTo(dest)) { note("Renommage impossible pour « " + nom + " »."); return; }
+            if (n.isEmpty() || n.equals(ancien)) return;
+            if (CopiesDossiers.interne(n)) { note("Renommage impossible : un nom de copie ne commence pas par « _atelier »."); return; }
+            File dest = new File(src.getParentFile(), n + ".json");
+            if (dest.exists()) { note("Renommage impossible : une copie s'appelle déjà « " + n + " » dans ce dossier."); return; }
+            if (!src.renameTo(dest)) { note("Renommage impossible pour « " + ancien + " »."); return; }
             File png = ApercuPreset.de(src);
-            if (png.isFile() && !png.renameTo(ApercuPreset.de(dest))) System.err.println("[Atelier] aperçu non renommé : " + png);
-            note("« " + nom + " » renommée en « " + n + " ».");
-            final String nouveau = n;
+            if (png.isFile() && !png.renameTo(ApercuPreset.de(dest))) Journal.debug("aperçu non renommé : " + png);
+            note("« " + ancien + " » renommée en « " + n + " ».");
+            final String nouveau = CopiesDossiers.relatif(dest);
             chargerListeApparts();
             Platform.runLater(() -> choixAppart.setValue(nouveau));
         });
     }
 
-    private void supprimerCopie() {
-        String nom = choixAppart.getValue();
+    private void supprimerCopie(String nom) {
         if (nom == null) return;
-        Alert a = new Alert(Alert.AlertType.CONFIRMATION, "Supprimer la copie « " + nom + " » ? C'est définitif.",
+        String court = CopiesDossiers.court(nom);
+        Alert a = new Alert(Alert.AlertType.CONFIRMATION, "Supprimer la copie « " + court + " » ? C'est définitif.",
                 ButtonType.OK, ButtonType.CANCEL);
         a.setHeaderText(null);
+        devant(a);
         if (a.showAndWait().orElse(ButtonType.CANCEL) != ButtonType.OK) return;
         File f = new File(dossierApparts(), nom + ".json");
-        if (!f.delete()) { note("Impossible de supprimer « " + nom + " »."); return; }
+        if (!f.delete()) { note("Impossible de supprimer « " + court + " »."); return; }
         File png = ApercuPreset.de(f);
-        if (png.isFile() && !png.delete()) System.err.println("[Atelier] aperçu non supprimé : " + png);
-        note("Copie « " + nom + " » supprimée.");
+        if (png.isFile() && !png.delete()) Journal.debug("aperçu non supprimé : " + png);
+        note("Copie « " + court + " » supprimée.");
         chargerListeApparts();
     }
 
     /**
      * La liste se tient a jour toute seule : on surveille la date du dossier des
-     * apparts, ce qui evite un bouton « Recharger » a cliquer apres chaque export.
+     * copies et celle du dossier ouvert, ce qui evite un bouton « Recharger » a
+     * cliquer apres chaque export.
      */
+    /** Dates des dossiers de l'arbre des copies (4 niveaux), pour voir un ajout n'importe ou. */
+    private static long signature(File d, int prof) {
+        if (d == null || !d.isDirectory() || prof > 4) return 0;
+        long s = d.lastModified();
+        File[] l = d.listFiles(File::isDirectory);
+        if (l != null) for (File f : l) s = s * 31 + signature(f, prof + 1);
+        return s;
+    }
+
+    /** Dates et tailles des fichiers d'un dossier (copie reecrite sous le meme nom). */
+    private static long signatureFichiers(File d) {
+        long s = d.lastModified();
+        File[] l = d.listFiles(File::isFile);
+        if (l != null) for (File f : l) s = s * 31 + f.lastModified() + f.length();
+        return s;
+    }
+
     private void surveillerDossier() {
         Thread t = new Thread(() -> {
-            long vue = 0;
+            String vue = "";
             while (true) {
                 try {
                     File d = dossierApparts();
-                    long m = d.exists() ? d.lastModified() : 0;
-                    if (m != vue) {
+                    File c = courant;
+                    // tous les dossiers (une copie ajoutee dans un sous-dossier, ex. Zones/Generes) et les
+                    // fichiers du dossier ouvert (une copie reecrite sous le meme nom)
+                    String m = signature(d, 0) + "|" + (c == null ? "" : c.getPath() + "@" + signatureFichiers(c));
+                    if (!m.equals(vue)) {
                         vue = m;
                         Platform.runLater(this::chargerListeApparts);
                     }
@@ -724,15 +730,446 @@ public class OngletApparts {
         t.start();
     }
 
+    // ------------------------------------------------------- dossiers des copies
+
+    /** Prefixe des dossiers dans la liste (caractere de controle 1, puis « Apparts/Noel ») ; le reste : des copies. */
+    private static final String DOS = "\u0001";
+    /** Contenu d'un glisser de copie : « atelier-copie:Apparts/Noel/Loft ». */
+    private static final String GLISSE_COPIE = "atelier-copie:";
+    private static final java.util.prefs.Preferences PREFS = java.util.prefs.Preferences.userRoot().node("atelier");
+    private static final String PREF_DOSSIER = "copies.dossier";
+    private static final String FOND_DEPOT = "-fx-background-color: rgba(62,134,172,0.30);";
+
+    /** Ce que montre « Mes copies » : dossiers (prefixe DOS) puis copies du dossier ouvert. */
+    private final ObservableList<String> elements = FXCollections.observableArrayList();
+    private ListView<String> listeCopies;
+    private Label videCopies;
+    /** Fil d'Ariane : « Mes copies › Apparts › Noel », chaque partie cliquable. */
+    private final FlowPane fil = new FlowPane(2, 2);
+    /** Dossier ouvert (retenu dans les preferences). */
+    private volatile File courant;
+
+    /** Le dossier ouvert, s'il existe encore (sinon celui retenu, sinon la racine). */
+    private File ici() {
+        File r = dossierApparts();
+        if (courant == null) {
+            String rel = PREFS.get(PREF_DOSSIER, "");
+            File d = r;
+            for (String p : rel.split("/")) if (!p.isEmpty() && !p.equals(".") && !p.equals("..")) d = new File(d, p);
+            courant = d;
+        }
+        if (!courant.isDirectory() || !CopiesDossiers.dans(courant, r)) courant = r;
+        return courant;
+    }
+
+    private void naviguer(File d) {
+        File r = dossierApparts();
+        if (d == null || !d.isDirectory() || !CopiesDossiers.dans(d, r)) d = r;
+        courant = d;
+        try { PREFS.put(PREF_DOSSIER, d.equals(r) ? "" : CopiesDossiers.relatif(d)); PREFS.flush(); } catch (Throwable ignored) { }
+        chargerListeApparts();
+        if (listeCopies != null) listeCopies.scrollTo(0);
+    }
+
+    /**
+     * Boite de dialogue DEVANT la fenetre de l'Atelier (toujours au premier
+     * plan) : rattachee a elle, et elle-meme au premier plan.
+     */
+    private <D extends Dialog<?>> D devant(D d) {
+        javafx.stage.Window w = listeCopies == null || listeCopies.getScene() == null ? null : listeCopies.getScene().getWindow();
+        if (w != null && d.getOwner() == null) d.initOwner(w);
+        ((javafx.stage.Stage) d.getDialogPane().getScene().getWindow()).setAlwaysOnTop(true);
+        return d;
+    }
+
+    private void succesCopies(String m) { Ui.succes(etatAppart, Ui.accorder(Ui.majuscule(m))); }
+
+    private void erreurCopies(String m) { Ui.erreur(etatAppart, Ui.accorder(Ui.majuscule(m))); }
+
+    /** « dans « Apparts › Noel » » pour un message. */
+    private static String dansDossier(File d) { return " dans « " + CopiesDossiers.lisible(d) + " »"; }
+
+    private void nouveauDossier() {
+        File ici = ici();
+        if (CopiesDossiers.arbre(ici) == null) {
+            erreurCopies("Ouvre d'abord « Apparts » ou « Zones » : les dossiers se créent dedans.");
+            return;
+        }
+        TextInputDialog d = new TextInputDialog();
+        d.setTitle("Nouveau dossier");
+        d.setHeaderText(null);
+        d.setContentText("Nom du dossier (dans « " + ici.getName() + " ») :");
+        devant(d);
+        d.showAndWait().ifPresent(brut -> {
+            String nom = OngletGalerie.nomDeDossier(brut);
+            if (nom.isEmpty()) { erreurCopies("Donne un nom au dossier."); return; }
+            File n = new File(ici, nom);
+            if (n.exists()) { erreurCopies("« " + nom + " » existe déjà ici."); return; }
+            if (!n.mkdir()) { erreurCopies("Impossible de créer le dossier « " + nom + " »."); return; }
+            Capture.rendre(n);
+            succesCopies("Dossier « " + nom + " » créé" + dansDossier(ici) + ".");
+            chargerListeApparts();
+        });
+    }
+
+    private void renommerDossier(File d) {
+        if (CopiesDossiers.fixe(d)) { erreurCopies("« " + d.getName() + " » est un dossier fixe : il ne se renomme pas."); return; }
+        TextInputDialog dlg = new TextInputDialog(d.getName());
+        dlg.setTitle("Renommer le dossier");
+        dlg.setHeaderText(null);
+        dlg.setContentText("Nouveau nom :");
+        devant(dlg);
+        dlg.showAndWait().ifPresent(brut -> {
+            String nom = OngletGalerie.nomDeDossier(brut);
+            if (nom.isEmpty()) { erreurCopies("Donne un nom au dossier."); return; }
+            if (nom.equals(d.getName())) return;
+            File n = new File(d.getParentFile(), nom);
+            // « noel » -> « Noel » : meme dossier sur un disque qui ignore la casse
+            if (n.exists() && !nom.equalsIgnoreCase(d.getName())) { erreurCopies("« " + nom + " » existe déjà ici."); return; }
+            // la copie choisie, lue avant : elle garde sa place dans la liste apres le renommage
+            String v = choixAppart.getValue();
+            String ancien = CopiesDossiers.relatif(d), nouveau = CopiesDossiers.relatif(n);
+            if (!d.renameTo(n)) { erreurCopies("Impossible de renommer le dossier « " + d.getName() + " »."); return; }
+            if (v != null && v.startsWith(ancien + "/")) choixAppart.setValue(nouveau + v.substring(ancien.length()));
+            File c = courant;
+            if (c != null && (c.equals(d) || c.getPath().startsWith(d.getPath() + File.separator)))
+                naviguer(new File(n, c.getPath().substring(d.getPath().length())));
+            succesCopies("Dossier renommé en « " + nom + " ».");
+            chargerListeApparts();
+        });
+    }
+
+    /**
+     * Supprime un dossier, SEULEMENT s'il est vide (sous-dossiers vides
+     * compris) : jamais de copie perdue d'un clic. Les deux dossiers fixes,
+     * jamais.
+     */
+    private void supprimerDossier(File d) {
+        if (CopiesDossiers.fixe(d)) { erreurCopies("« " + d.getName() + " » est un dossier fixe : il ne se supprime pas."); return; }
+        int[] c = new int[3];   // copies, autres fichiers, sous-dossiers
+        CopiesDossiers.inventaire(d, c, 0);
+        if (c[0] > 0) {
+            erreurCopies("Le dossier « " + d.getName() + " » n'est pas vide : " + c[0] + " copie(s) dedans. "
+                    + "Seul un dossier vide se supprime : déplace ou supprime d'abord ses copies.");
+            return;
+        }
+        if (c[1] > 0) {
+            erreurCopies("Le dossier « " + d.getName() + " » contient " + c[1] + " autre(s) fichier(s) : il n'est pas supprimé.");
+            return;
+        }
+        Alert a = new Alert(Alert.AlertType.CONFIRMATION, "Supprimer le dossier vide « " + d.getName() + " » ?"
+                + (c[2] > 0 ? Ui.accorder(" Ses " + c[2] + " sous-dossier(s) vide(s) aussi.").replace("Ses 1 ", "Son ") : ""),
+                ButtonType.OK, ButtonType.CANCEL);
+        a.setHeaderText(null);
+        devant(a);
+        if (a.showAndWait().orElse(ButtonType.CANCEL) != ButtonType.OK) return;
+        File cour = courant;
+        boolean dedans = cour != null && (cour.equals(d) || cour.getPath().startsWith(d.getPath() + File.separator));
+        if (!CopiesDossiers.effacer(d, 0)) {
+            erreurCopies("Impossible de supprimer entièrement le dossier « " + d.getName() + " ».");
+            chargerListeApparts();
+            return;
+        }
+        if (dedans) naviguer(d.getParentFile());
+        succesCopies("Dossier « " + d.getName() + " » supprimé.");
+        chargerListeApparts();
+    }
+
+    /** Range la copie dans dir (meme arbre seulement) ; son apercu la suit. */
+    private void deplacerCopie(File json, File dir) {
+        if (json == null || dir == null || !json.isFile() || dir.equals(json.getParentFile())) return;
+        if (!CopiesDossiers.accepte(dir, json)) {
+            erreurCopies(CopiesDossiers.estZone(json)
+                    ? "Une zone se range dans « Zones » ou ses dossiers, pas ailleurs."
+                    : "Une copie d'appart se range dans « Apparts » ou ses dossiers, pas ailleurs.");
+            return;
+        }
+        String court = json.getName().substring(0, json.getName().length() - 5);
+        boolean choisie = CopiesDossiers.relatif(json).equals(choixAppart.getValue());
+        File dest;
+        try {
+            dest = CopiesDossiers.deplacer(json, dir);
+        } catch (Throwable t) {
+            erreurCopies("La copie « " + court + " » n'a pas pu être déplacée (" + lisible(t) + ").");
+            return;
+        }
+        String n = dest.getName().substring(0, dest.getName().length() - 5);
+        succesCopies("Copie « " + court + " » rangée" + dansDossier(dir)
+                + (n.equals(court) ? "" : " sous le nom « " + n + " »") + ".");
+        if (choisie && dir.equals(ici())) choixAppart.setValue(CopiesDossiers.relatif(dest));
+        chargerListeApparts();
+    }
+
+    /** « Deplacer vers… » : choisir un dossier dans l'arbre de la copie (Apparts ou Zones). */
+    private void choisirDossierCopie(String rel) {
+        File json = new File(dossierApparts(), rel + ".json");
+        if (!json.isFile()) return;
+        File tete = CopiesDossiers.arbreAttendu(json);
+        TreeItem<File> rac = branche(tete, 0);
+        if (rac.getChildren().isEmpty() && tete.equals(json.getParentFile())) {
+            erreurCopies("Aucun dossier où la ranger : crée-en un dans « " + tete.getName() + " » avec « Nouveau dossier ».");
+            return;
+        }
+        TreeView<File> tv = new TreeView<>(rac);
+        tv.setCellFactory(x -> new TreeCell<>() {
+            @Override protected void updateItem(File d, boolean vide) {
+                super.updateItem(d, vide);
+                if (vide || d == null) { setText(null); setGraphic(null); setOpacity(1); return; }
+                setText(d.getName());
+                setGraphic(Icones.petite(Icones.DOSSIER, 15, false));
+                // son dossier actuel : grise
+                setOpacity(d.equals(json.getParentFile()) ? 0.5 : 1);
+            }
+        });
+        TreeItem<File> actuel = deplier(rac, json.getParentFile());
+        if (actuel != null) tv.getSelectionModel().select(actuel);
+        tv.setPrefSize(340, 300);
+
+        Dialog<ButtonType> dlg = new Dialog<>();
+        dlg.setTitle("Déplacer vers…");
+        dlg.setHeaderText(null);
+        ButtonType deplacer = new ButtonType("Déplacer", ButtonBar.ButtonData.OK_DONE);
+        dlg.getDialogPane().getButtonTypes().addAll(deplacer, ButtonType.CANCEL);
+        Label l = new Label("Choisis le dossier où ranger « " + CopiesDossiers.court(rel) + " » :");
+        l.setWrapText(true);
+        dlg.getDialogPane().setContent(new VBox(8, l, tv));
+        javafx.scene.Node ok = dlg.getDialogPane().lookupButton(deplacer);
+        ok.disableProperty().bind(javafx.beans.binding.Bindings.createBooleanBinding(() -> {
+            TreeItem<File> s = tv.getSelectionModel().getSelectedItem();
+            return s == null || s.getValue().equals(json.getParentFile());
+        }, tv.getSelectionModel().selectedItemProperty()));
+        // double-clic sur un dossier : deplace tout de suite
+        tv.setOnMouseClicked(e -> {
+            if (e.getClickCount() == 2 && !ok.isDisabled()) { dlg.setResult(deplacer); dlg.close(); }
+        });
+        devant(dlg);
+        if (dlg.showAndWait().orElse(ButtonType.CANCEL) != deplacer) return;
+        TreeItem<File> s = tv.getSelectionModel().getSelectedItem();
+        if (s != null) deplacerCopie(json, s.getValue());
+    }
+
+    private static TreeItem<File> branche(File d, int prof) {
+        TreeItem<File> t = new TreeItem<>(d);
+        if (prof < 20) for (File s : CopiesDossiers.sousDossiers(d)) t.getChildren().add(branche(s, prof + 1));
+        return t;
+    }
+
+    /** Deplie tout l'arbre ; rend l'element du dossier cherche. */
+    private static TreeItem<File> deplier(TreeItem<File> t, File cherche) {
+        t.setExpanded(true);
+        TreeItem<File> r = t.getValue().equals(cherche) ? t : null;
+        for (TreeItem<File> c : t.getChildren()) { TreeItem<File> x = deplier(c, cherche); if (r == null) r = x; }
+        return r;
+    }
+
+    /** La copie glissee depuis la liste (null si ce n'en est pas une). */
+    private static File copieGlissee(javafx.scene.input.DragEvent e) {
+        String t = e.getDragboard().hasString() ? e.getDragboard().getString() : null;
+        if (t == null || !t.startsWith(GLISSE_COPIE)) return null;
+        File f = new File(dossierApparts(), t.substring(GLISSE_COPIE.length()) + ".json");
+        return f.isFile() ? f : null;
+    }
+
+    /** Fil d'Ariane : chaque partie ouvre son dossier, et recoit une copie glissee. */
+    private void construireFil() {
+        fil.getChildren().clear();
+        File r = dossierApparts();
+        List<File> parts = new ArrayList<>();
+        for (File x = ici(); x != null; x = x.getParentFile()) { parts.add(0, x); if (x.equals(r)) break; }
+        for (int i = 0; i < parts.size(); i++) {
+            File d = parts.get(i);
+            boolean dernier = i == parts.size() - 1;
+            if (i > 0) {
+                Label s = new Label("›");
+                s.setStyle("-fx-opacity: 0.55;");
+                fil.getChildren().add(s);
+            }
+            Button b = new Button(i == 0 ? "Mes copies" : d.getName());
+            if (i == 0) b.setGraphic(Icones.petite(Icones.DOSSIER, 15, false));
+            b.setGraphicTextGap(5);
+            b.setFocusTraversable(false);
+            b.setMinWidth(Region.USE_PREF_SIZE);
+            String base = "-fx-background-color: transparent; -fx-background-radius: 4; -fx-padding: 2 5 2 5; -fx-cursor: hand; "
+                    + (dernier ? "-fx-font-weight: bold; -fx-text-fill: #3B382F;" : "-fx-text-fill: #2F6F92;");
+            b.setStyle(base);
+            if (!dernier) b.setTooltip(Ui.bulle(i == 0 ? "Ouvrir « Mes copies »."
+                    : "Ouvrir « " + d.getName() + " ». Glisse une copie ici pour l'y ranger."));
+            b.hoverProperty().addListener((o, x, h) -> b.setStyle(base + (h && !dernier ? "-fx-underline: true;" : "")));
+            b.setOnAction(e -> naviguer(d));
+            b.setOnDragOver(e -> {
+                File p = copieGlissee(e);
+                if (p != null && CopiesDossiers.accepte(d, p)) { e.acceptTransferModes(javafx.scene.input.TransferMode.MOVE); e.consume(); }
+            });
+            b.setOnDragEntered(e -> {
+                File p = copieGlissee(e);
+                if (p != null && CopiesDossiers.accepte(d, p)) b.setStyle(base + "-fx-background-color: #3E86AC; -fx-text-fill: white;");
+            });
+            b.setOnDragExited(e -> b.setStyle(base));
+            b.setOnDragDropped(e -> {
+                File p = copieGlissee(e);
+                if (p == null) return;
+                Platform.runLater(() -> deplacerCopie(p, d));
+                e.setDropCompleted(true);
+                e.consume();
+            });
+            fil.getChildren().add(b);
+        }
+    }
+
+    /** Une ligne de « Mes copies » : un dossier (clic : l'ouvrir) ou une copie (apercu, nom, contenu, date). */
+    private final class CelluleCopie extends ListCell<String> {
+        private final ListView<String> lv;
+
+        CelluleCopie(ListView<String> lv) {
+            this.lv = lv;
+            // la cellule suit la largeur de la liste : le texte passe a la ligne, pas d'ascenseur de cote
+            setPrefWidth(0);
+            // un dossier s'ouvre d'un clic (le 2e clic d'un double-clic ne rouvre pas le dossier suivant)
+            setOnMouseClicked(e -> {
+                String it = getItem();
+                if (it == null || !it.startsWith(DOS)) return;
+                // CTRL+clic sur Mac = clic droit : il ouvre le menu, pas le dossier
+                if (e.getButton() == javafx.scene.input.MouseButton.PRIMARY && e.getClickCount() == 1 && e.isStillSincePress()
+                        && !e.isControlDown() && !e.isPopupTrigger()) {
+                    naviguer(CopiesDossiers.dossier(it.substring(1)));
+                    e.consume();
+                }
+            });
+            // glisser une copie : sur un dossier de la liste ou du chemin en haut
+            setOnDragDetected(e -> {
+                String it = getItem();
+                if (it == null || it.startsWith(DOS)) return;
+                javafx.scene.input.Dragboard db = startDragAndDrop(javafx.scene.input.TransferMode.MOVE);
+                ClipboardContent c = new ClipboardContent();
+                c.putString(GLISSE_COPIE + it);
+                db.setContent(c);
+                e.consume();
+            });
+            setOnDragOver(e -> {
+                File d = dossierIci(), p = copieGlissee(e);
+                if (d != null && p != null && CopiesDossiers.accepte(d, p)) { e.acceptTransferModes(javafx.scene.input.TransferMode.MOVE); e.consume(); }
+            });
+            setOnDragEntered(e -> {
+                File d = dossierIci(), p = copieGlissee(e);
+                if (d != null && p != null && CopiesDossiers.accepte(d, p)) setStyle(FOND_DEPOT);
+            });
+            setOnDragExited(e -> setStyle(""));
+            setOnDragDropped(e -> {
+                File d = dossierIci(), p = copieGlissee(e);
+                if (d == null || p == null) return;
+                Platform.runLater(() -> deplacerCopie(p, d));
+                e.setDropCompleted(true);
+                e.consume();
+            });
+        }
+
+        /** Le dossier de cette ligne (null pour une copie). */
+        private File dossierIci() {
+            String it = getItem();
+            return it == null || !it.startsWith(DOS) || isEmpty() ? null : CopiesDossiers.dossier(it.substring(1));
+        }
+
+        @Override protected void updateItem(String nom, boolean vide) {
+            super.updateItem(nom, vide);
+            setStyle("");
+            if (vide || nom == null) { setText(null); setGraphic(null); setContextMenu(null); return; }
+            setText(null);
+            if (nom.startsWith(DOS)) {
+                File d = CopiesDossiers.dossier(nom.substring(1));
+                setGraphic(carteDossier(d));
+                setContextMenu(menuDossier(d));
+                return;
+            }
+            Label n = new Label(CopiesDossiers.court(nom));
+            n.setStyle("-fx-font-weight: bold;");
+            n.setWrapText(true);
+            String[] r = Ui.accorder(resumeCopie(nom)).split(" · ");
+            Label d = Ui.discret(r.length >= 2 ? Ui.majuscule(r[0] + " · " + r[1]) : r[0]);
+            d.setStyle("-fx-font-style: normal; -fx-opacity: 0.7; -fx-font-size: 11px;");
+            VBox texte = new VBox(2, n, d);
+            if (r.length >= 3) {
+                Label q = Ui.discret(r[2]);
+                q.setStyle("-fx-font-style: normal; -fx-opacity: 0.55; -fx-font-size: 11px;");
+                texte.getChildren().add(q);
+            }
+            texte.setAlignment(Pos.CENTER_LEFT);
+            texte.setMinWidth(0);
+            HBox.setHgrow(texte, Priority.ALWAYS);
+            HBox h = new HBox(10, vignetteCopie(nom, lv), texte);
+            h.setAlignment(Pos.CENTER_LEFT);
+            h.setPadding(new Insets(2, 0, 2, 0));
+            setGraphic(h);
+            setContextMenu(menuCopie(nom));
+        }
+    }
+
+    /** Ligne d'un dossier : une icone de dossier, son nom, ce qu'il contient. */
+    private javafx.scene.Node carteDossier(File d) {
+        StackPane cadre = new StackPane();
+        cadre.setMinSize(88, 60); cadre.setPrefSize(88, 60); cadre.setMaxSize(88, 60);
+        cadre.setStyle("-fx-background-color: rgba(0,0,0,0.05); -fx-background-radius: 4;");
+        javafx.scene.Node ic = Icones.petite(Icones.DOSSIER, 40, false);
+        ic.setOpacity(0.6);
+        ic.setMouseTransparent(true);
+        cadre.getChildren().add(ic);
+        Label n = new Label(d.getName());
+        n.setStyle("-fx-font-weight: bold;");
+        n.setWrapText(true);
+        int nC = CopiesDossiers.compter(d, 0), nS = CopiesDossiers.sousDossiers(d).size();
+        String resume = (nC == 0 ? "Aucune copie" : Ui.accorder(nC + " copie(s)"))
+                + (nS == 0 ? "" : " · " + Ui.accorder(nS + " dossier(s)"));
+        Label r = Ui.discret(resume);
+        r.setStyle("-fx-font-style: normal; -fx-opacity: 0.7; -fx-font-size: 11px;");
+        VBox texte = new VBox(2, n, r);
+        if (CopiesDossiers.fixe(d)) {
+            Label q = Ui.discret(d.getName().equals(CopiesDossiers.ZONES) ? "Copies de zones" : "Copies d'apparts entiers");
+            q.setStyle("-fx-font-style: normal; -fx-opacity: 0.55; -fx-font-size: 11px;");
+            texte.getChildren().add(q);
+        }
+        texte.setAlignment(Pos.CENTER_LEFT);
+        texte.setMinWidth(0);
+        HBox.setHgrow(texte, Priority.ALWAYS);
+        HBox h = new HBox(10, cadre, texte);
+        h.setAlignment(Pos.CENTER_LEFT);
+        h.setPadding(new Insets(2, 0, 2, 0));
+        h.setCursor(javafx.scene.Cursor.HAND);
+        Tooltip.install(h, bulle("Ouvrir « " + d.getName() + " »."
+                + (CopiesDossiers.fixe(d) ? "" : " Clic droit : renommer, supprimer.")));
+        return h;
+    }
+
+    private ContextMenu menuDossier(File d) {
+        MenuItem ouvrir = new MenuItem("Ouvrir");
+        ouvrir.setOnAction(e -> naviguer(d));
+        if (CopiesDossiers.fixe(d)) return new ContextMenu(ouvrir);
+        MenuItem renommer = new MenuItem("Renommer…");
+        renommer.setOnAction(e -> renommerDossier(d));
+        MenuItem suppr = new MenuItem("Supprimer le dossier");
+        suppr.setOnAction(e -> supprimerDossier(d));
+        return new ContextMenu(ouvrir, renommer, new SeparatorMenuItem(), suppr);
+    }
+
+    private ContextMenu menuCopie(String rel) {
+        MenuItem renommer = new MenuItem("Renommer…");
+        renommer.setOnAction(e -> renommerCopie(rel));
+        MenuItem vers = new MenuItem("Déplacer vers…");
+        vers.setOnAction(e -> choisirDossierCopie(rel));
+        MenuItem suppr = new MenuItem("Supprimer la copie");
+        suppr.setOnAction(e -> supprimerCopie(rel));
+        return new ContextMenu(renommer, vers, new SeparatorMenuItem(), suppr);
+    }
+
     /**
      * Pose l'appart choisi dans la salle courante.
      *
-     * Pose HYBRIDE (PoseHybride) : 1. les sols en rafale (inventaire / BC),
-     * chacun a son altitude (@altitude) ; 2. ceux que le jeu refuse ou laisse a
-     * une mauvaise hauteur, et seulement eux, repris avec la dalle magique ;
-     * 3. sans @altitude, les sols en hauteur passent directement par la dalle.
-     * Puis les muraux (PoseMuraux), enfin les reglages des wired, les fonds des
-     * publicites et les valeurs des variables des mobis (ReglagesWired). Le
+     * TAPIS DE DALLES (PoseTapis) : 1. les dalles magiques sous toutes les
+     * cases des mobis de sol, au niveau du sol ; 2. chaque mobi de sol (wired
+     * compris), du bas vers le haut, pose (inventaire / BC) puis mis a sa
+     * hauteur (@altitude) ; 3. les muraux (PoseMuraux), puis les reglages des
+     * wired, les fonds des publicites et les valeurs des variables des mobis
+     * (ReglagesWired) ; 4. les dalles ramassees ; 5. verification, une
+     * nouvelle tentative par mobi. Sans @altitude, les mobis en hauteur
+     * passent par la dalle, un par un. Le
      * fichier est relu ici (CopieAppart) : c'est bien l'appart choisi qui est pose.
      */
     private void collerAppart() {
@@ -755,6 +1192,8 @@ public class OngletApparts {
         boolean floorVoulu = avecFloor == null || avecFloor.isSelected();
 
         Salle.tache("coller", () -> {
+            // floor + pose : la salle se recharge, la fenetre ne doit pas basculer sur les prerequis
+            gelerFenetre(true);
             try {
                 File f = new File(dossierApparts(), nom + ".json");
                 if (!f.isFile()) { dire.accept("Collage impossible : fichier introuvable (" + f.getName() + ")."); return; }
@@ -786,9 +1225,12 @@ public class OngletApparts {
                     if (!appliquerFloor(floor, dire)) return;
                     racine = new gearth.extensions.parsers.HPoint(floor.optInt("x0", 0), floor.optInt("y0", 0));
                 } else {
-                    dire.accept("« " + nom + " » : clique dans le jeu la case où mettre le coin haut-gauche de l'appart. "
+                    dire.accept("« " + CopiesDossiers.court(nom) + " » : clique dans le jeu la case où mettre le coin haut-gauche de l'appart. "
                             + "Ton avatar ne bougera pas.");
-                    racine = Generateur.Dalle.attendreClic(120_000);
+                    Empreinte.Boite boite = new Empreinte.Boite();       // taille de la copie, pour l'empreinte
+                    for (CopieAppart.MobiSol pf : cfg.sols) boite.sol(pf.classe, pf.x, pf.y, pf.rotation);
+                    for (CopieAppart.MobiMur pw : cfg.murs) boite.cases(pw.position.x(), pw.position.y(), 1, 1);
+                    racine = Generateur.Dalle.attendreClic(120_000, boite.largeur(), boite.profondeur());
                     if (racine == null) { dire.accept("Collage impossible : pas de clic dans le jeu en 2 minutes."); return; }
                     // La case cliquee = coin haut-gauche des MOBIS copies. Une copie d'appart
                     // complet garde les positions depuis le coin (0,0) de l'appart d'origine :
@@ -805,114 +1247,142 @@ public class OngletApparts {
                     } else clic = racine;
                 }
 
-                // Pose directe, mobi par mobi, chacun a son altitude (@altitude), wired compris ;
-                // puis les reglages des wired, sur les wired qu'on vient de poser.
+                // Tapis de dalles (PoseTapis) : dalles sous toutes les cases des mobis de sol,
+                // puis chaque mobi (wired compris), du bas vers le haut, pose puis mis a sa
+                // hauteur (@altitude) ; puis les muraux et les reglages des wired ; enfin
+                // les dalles ramassees et la verification.
                 boolean avecWired = aDesWired(brut);
                 boolean floorRemis = floor != null && floorVoulu;
                 double ancre = cfg.ancre == null ? 0 : cfg.ancre;
                 gearth.extensions.parsers.HPoint repere = clic != null ? clic : racine;   // case de reference des hauteurs
                 double sol0 = Math.max(0, Salle.hauteurSol(repere.getX(), repere.getY()));
-                List<PoseDirecte.Sol> sols = new ArrayList<>();
-                for (CopieAppart.MobiSol pf : cfg.sols)
+                Furnidata fdt = gp.getFurniDataTools();
+                List<PoseTapis.Piece> sols = new ArrayList<>();
+                for (CopieAppart.MobiSol pf : cfg.sols) {
+                    int x = racine.getX() + pf.x, y = racine.getY() + pf.y;
                     // floor de la copie remis tel quel : z est deja l'altitude absolue d'origine
-                    sols.add(new PoseDirecte.Sol(pf.classe, racine.getX() + pf.x, racine.getY() + pf.y,
-                            floorRemis ? Math.max(0, pf.z) : Math.max(0, pf.z - ancre + sol0), pf.rotation, pf.etat, pf.id));
-                // Tout est une seule action pour Ctrl+Z.
+                    double z = Generateur.arrondi(floorRemis ? Math.max(0, pf.z) : Math.max(0, pf.z - ancre + sol0));
+                    int[] e = PoseTapis.emprise(pf.classe, pf.rotation);
+                    String nomMobi = pf.nom;
+                    if (nomMobi == null || nomMobi.isBlank())
+                        try { nomMobi = Generateur.nomSol(fdt, pf.classe); } catch (Throwable ignored) { nomMobi = pf.classe; }
+                    sols.add(PoseTapis.Piece.nouveau(pf.classe, pf.etat, nomMobi, x, y, z, pf.rotation, e[0], e[1], pf.id));
+                }
+                // Tout est une seule action pour Ctrl+Z (les dalles n'y vont pas).
                 collageArrete = false;
+                dernierBilanMuraux = null;
                 Platform.runLater(() -> collageEnCours.set(true));
                 int salle0 = Groupes.salleCourante();
-                java.util.function.BooleanSupplier stop = () -> collageArrete || Groupes.salleCourante() != salle0;
-                long[] derniere = {0};
-                java.util.function.BiConsumer<String, int[]> etape = (quoi, kn) -> {
-                    long t = System.currentTimeMillis();
-                    if (kn[0] < kn[1] && t - derniere[0] < 250) return;
-                    derniere[0] = t;
-                    note(quoi + " : " + kn[0] + "/" + kn[1]);
+                // changement de salle : seulement une autre vraie salle, vue 2 fois de suite
+                // (un rechargement de la salle donne un instant 0 / -1)
+                int[] autreSalle = {0};
+                java.util.function.BooleanSupplier stop = () -> {
+                    if (collageArrete) return true;
+                    int sc = Groupes.salleCourante();
+                    if (sc > 0 && sc != salle0) {
+                        if (++autreSalle[0] >= 2) { Journal.debug("collage : arrêt, autre salle (" + sc + ")."); return true; }
+                    } else autreSalle[0] = 0;
+                    return false;
                 };
-                PoseDirecte.Resultat pr;
-                PoseHybride.Bilan rb = null;
-                boolean altitude = true;
-                int mursPoses = 0;
-                ReglagesWired.Bilan rw = null;
-                Map<Integer, Integer> cles;
-                Historique.grouper(true);
-                try {
-                    boolean enHauteur = false;
-                    for (PoseDirecte.Sol so : sols)
-                        if (!PoseHybride.parRafale(so.z, Salle.hauteurSol(so.x, so.y), false)) { enHauteur = true; break; }
-                    if (enHauteur) altitude = PoseHybride.altitudeDisponible(this::note);
-                    List<PoseDirecte.Sol> rafale = new ArrayList<>();
-                    List<PoseHybride.Piece> reprise = new ArrayList<>();
-                    for (PoseDirecte.Sol so : sols) {
-                        if (PoseHybride.parRafale(so.z, Salle.hauteurSol(so.x, so.y), altitude)) rafale.add(so);
-                        else reprise.add(PoseHybride.Piece.depuis(so, -1));
-                    }
-                    pr = PoseDirecte.poser(rafale, List.of(), src, m -> { }, stop,
-                            (k, tot) -> etape.accept("Pose rapide", new int[]{k, tot}), altitude);
-                    // verification : refuses et mauvaises hauteurs -> dalle
-                    if (!stop.getAsBoolean()) {
-                        for (PoseDirecte.Sol so : pr.solsRefuses) reprise.add(PoseHybride.Piece.depuis(so, -1));
-                        for (Map.Entry<Integer, PoseDirecte.Sol> e : pr.solsPoses.entrySet()) {
-                            gearth.extensions.parsers.HFloorItem now = Salle.sol(e.getKey());
-                            if (now != null && PoseHybride.trier(true, true, now.getTile().getZ(), e.getValue().z)
-                                    == PoseHybride.Issue.HAUTEUR) reprise.add(PoseHybride.Piece.depuis(e.getValue(), e.getKey()));
-                        }
-                        if (!reprise.isEmpty()) {
-                            Journal.debug("collage « " + nom + " » : " + reprise.size() + " mobi(s) repris à la dalle.");
-                            note("Reprise à la dalle : 0/" + reprise.size());
-                            rb = PoseHybride.reprendre(reprise, src, m -> Journal.debug("reprise : " + m), stop,
-                                    (k, tot) -> etape.accept("Reprise à la dalle", new int[]{k, tot}));
-                        }
-                    }
-                    // id de la copie -> id reel, apres la reprise (nouveaux ids)
-                    cles = new LinkedHashMap<>(pr.cles);
-                    if (rb != null) {
-                        Set<Integer> partis = rb.ramassesSols;
-                        cles.values().removeIf(partis::contains);
-                        cles.putAll(rb.cles);
-                    }
+                long[] derniere = {0};
+                PoseTapis.Suivi suivi = (k, tot, texte) -> {
+                    long t = System.currentTimeMillis();
+                    if (tot > 0 && k < tot && t - derniere[0] < 250) return;
+                    derniere[0] = t;
+                    note(texte);
+                };
+                PoseTapis.JeuSalle jeu = new PoseTapis.JeuSalle(src, () -> collageArrete, this::note, suivi, false);
+                int[] mursPoses = {0};
+                ReglagesWired.Bilan[] rw = {null, null};
+                PoseTapis.Bilan[] tb = {null};
+                List<PoseTapis.Piece> piecesFinales = sols;
+                final gearth.extensions.parsers.HPoint coin = racine;
+                Runnable etape3 = () -> {
                     // muraux : leur position, leur hauteur et leur decalage (variables du jeu)
-                    if (!cfg.murs.isEmpty() && !stop.getAsBoolean())
-                        mursPoses = poserMuraux(cfg, src, racine, stop);
-                    // enfin les reglages des wired, sur les wired poses (cle -> id reel)
+                    if (!cfg.murs.isEmpty() && !stop.getAsBoolean()) {
+                        note("Muraux…");
+                        mursPoses[0] = poserMuraux(cfg, src, coin, stop);
+                    }
+                    // les reglages des wired, sur les wired poses (cle -> id reel)
                     if (avecWired && !stop.getAsBoolean()) {
                         note("Réglages des wired…");
-                        rw = ReglagesWired.appliquer(cfg, cles, racine);
+                        Map<Integer, Integer> cles = new LinkedHashMap<>();
+                        for (PoseTapis.Piece p : piecesFinales) if (p.obtenu >= 0 && p.cle != -1) cles.put(p.cle, p.obtenu);
+                        rw[0] = ReglagesWired.appliquer(cfg, cles, coin);
+                    }
+                };
+                Historique.grouper(true);
+                try {
+                    tb[0] = PoseTapis.executer(sols, jeu, suivi, etape3);
+                    // les wired repris a la dalle a la verification (nouveaux ids) : leurs reglages
+                    if (avecWired && !stop.getAsBoolean()) {
+                        Map<Integer, Integer> repris = new LinkedHashMap<>();
+                        for (PoseTapis.Piece p : sols)
+                            if (p.parDalle && p.obtenu >= 0 && p.cle != -1 && Wired.estWired(p.classe)) repris.put(p.cle, p.obtenu);
+                        if (!repris.isEmpty()) {
+                            note("Réglages des wired repris…");
+                            rw[1] = ReglagesWired.appliquer(cfg, repris, racine);
+                        }
                     }
                 } finally {
                     Historique.grouper(false);
                     Platform.runLater(() -> collageEnCours.set(false));
                 }
-                boolean arrete = stop.getAsBoolean();
-                int solsPoses = pr.sols.size() - (rb == null ? 0 : rb.ramassesSols.size()) + (rb == null ? 0 : rb.obtenus());
-                int hauteursFausses = rb == null ? pr.hauteursFausses : rb.hauteursFausses;
-                if (rb != null && (rb.raison != null || rb.arrete))       // pas reprises : restees fausses
-                    for (Map.Entry<Integer, PoseDirecte.Sol> e : pr.solsPoses.entrySet()) {
-                        if (rb.ramassesSols.contains(e.getKey())) continue;
-                        gearth.extensions.parsers.HFloorItem now = Salle.sol(e.getKey());
-                        if (now != null && Math.abs(now.getTile().getZ() - e.getValue().z) > PoseHybride.TOLERANCE) hauteursFausses++;
-                    }
-                int introuvables = Math.max(0, pr.manquants - pr.solsRefuses.size());
+                PoseTapis.Bilan b = tb[0];
+                boolean arrete = collageArrete || b.arrete;
+                if (b.sortie) { dire.accept("Collage interrompu : tu as changé de salle."); return; }
                 // Un seul bilan. Un manque ou une hauteur fausse en fait une erreur (Journal.ERREUR).
-                String bilan = PoseHybride.bilan("posé", n, solsPoses + mursPoses,
-                        rb == null ? 0 : rb.obtenus(), hauteursFausses, arrete);
+                b.arrete = arrete;
+                String bilan = b.texte("posé");
                 bilan = bilan.substring(0, bilan.length() - 1)
-                        + (introuvables > 0 ? " ; " + introuvables + " introuvable(s) dans la source choisie" : "")
-                        + (pr.etatsFaux > 0 ? " ; " + pr.etatsFaux + " pas dans le bon état" : "")
-                        + (rb != null && rb.raison != null && !arrete ? " ; reprise à la dalle impossible (" + rb.raison + ")" : "");
-                if (rw != null && !rw.possible)
-                    bilan += " ; réglages des wired pas appliqués (" + rw.raison + ")";
-                else if (rw != null && rw.attendus > 0)
-                    bilan += " ; " + rw.regles + " wired réglé(s) sur " + rw.attendus
-                            + (rw.rates > 0 ? ", " + rw.rates + " pas confirmé(s)" : "")
-                            + (rw.relusDifferents > 0 ? ", " + rw.relusDifferents + " relu(s) différent(s)" : "");
-                bilan += "." + (!altitude ? PoseHybride.SANS_ALTITUDE : "");
+                        + (!cfg.murs.isEmpty() ? " ; muraux : " + mursPoses[0] + "/" + cfg.murs.size()
+                                + (mursPoses[0] < cfg.murs.size() && !arrete ? " (" + (cfg.murs.size() - mursPoses[0]) + " refusé(s)"
+                                        + pasAuBcMuraux() + raisonsMuraux() + ")" : "")
+                                + (dernierBilanMuraux != null && dernierBilanMuraux.etatsFaux > 0
+                                        ? ", " + dernierBilanMuraux.etatsFaux + " pas dans le bon état" : "") : "")
+                        + (b.etatsFaux > 0 ? " ; " + b.etatsFaux + " pas dans le bon état" : "");
+                ReglagesWired.Bilan r0 = rw[0];
+                if (r0 != null && !r0.possible)
+                    bilan += " ; réglages des wired pas appliqués (" + r0.raison + ")";
+                else if (r0 != null && r0.attendus > 0) {
+                    int regles = r0.regles + (rw[1] != null ? rw[1].regles : 0);
+                    int attendus = r0.attendus + (rw[1] != null ? rw[1].attendus : 0);
+                    int rates = r0.rates + (rw[1] != null ? rw[1].rates : 0);
+                    bilan += " ; " + regles + " wired réglé(s) sur " + attendus
+                            + (rates > 0 ? ", " + rates + " pas confirmé(s)" : "")
+                            + (r0.relusDifferents > 0 ? ", " + r0.relusDifferents + " relu(s) différent(s)" : "");
+                }
+                bilan += "." + (b.sansAltitude ? PoseTapis.SANS_ALTITUDE : "");
                 dire.accept(Ui.accorder(bilan));
             } catch (Throwable t) {
                 Journal.debug("collage : " + t);
                 dire.accept("Collage impossible : " + lisible(t) + ".");
+            } finally {
+                gelerFenetre(false);
             }
         });
+    }
+
+    /** Pendant un collage : la fenetre Apparts et les Prerequis ne changent pas d'aspect. */
+    private static volatile boolean fenetreGelee = false;
+
+    private void gelerFenetre(boolean oui) {
+        fenetreGelee = oui;
+        Prerequis.geler(oui);
+        if (!oui) dernierEtat = null;          // rattrape l'etat reel a la fin
+    }
+
+    /** « , dont 2 pas au Builders Club » pour les muraux du dernier collage, ou "". */
+    private String pasAuBcMuraux() {
+        PoseMuraux.Bilan b = dernierBilanMuraux;
+        return b == null || b.pasAuBc.isEmpty() ? "" : ", dont " + b.pasAuBc.size() + " pas au Builders Club";
+    }
+
+    /** « : raison donnée par le jeu » des muraux refuses du dernier collage, ou "". */
+    private String raisonsMuraux() {
+        PoseMuraux.Bilan b = dernierBilanMuraux;
+        if (b == null || b.raisons.isEmpty()) return "";
+        return " : " + String.join(", ", b.raisons.keySet());
     }
 
     /** Demande d'arret du collage en cours (pose hybride) : plus rien ne part ensuite. */
@@ -922,12 +1392,19 @@ public class OngletApparts {
     private Button boutonArreter;
 
     /** Arrete le collage en cours (rafale ou reprise a la dalle). A brancher sur un bouton « Arrêter ». */
-    void arreterCollage() { collageArrete = true; PoseCopie.arreter(); }
+    void arreterCollage() {
+        Journal.debug("collage : arrêt demandé (bouton « Arrêter le collage »).");
+        collageArrete = true;
+        PoseCopie.arreter();
+    }
 
     /**
      * Les muraux d'une copie (PoseMuraux : position, altitude, decalage, etat,
      * variables). Rend le nombre de muraux poses. Sans message pendant la pose.
      */
+    /** Le bilan des muraux du dernier collage (raisons de refus, etats faux), null sans. */
+    private volatile PoseMuraux.Bilan dernierBilanMuraux;
+
     private int poserMuraux(CopieAppart cfg, Generateur.Source src, gearth.extensions.parsers.HPoint racine,
                             java.util.function.BooleanSupplier stop) {
         Moteur gp = AtelierLauncher.moteur();
@@ -938,6 +1415,7 @@ public class OngletApparts {
             PoseMuraux.Bilan b = pm.poser(cfg, racine, PoseCopie.source(src), null,
                     () -> stop.getAsBoolean() || PoseCopie.arretDemande());
             Journal.debug("muraux : " + b.texte());
+            dernierBilanMuraux = b;
             return b.ids.size();
         } catch (Throwable t) {
             Journal.debug("muraux : " + t);
@@ -960,6 +1438,33 @@ public class OngletApparts {
      * attend que la salle se recharge avec le nouveau plan. false = abandon
      * (la raison est dite).
      */
+    /**
+     * Meme plan, aux lignes et colonnes vides de la fin pres : le jeu les retire
+     * quand il enregistre le floor (un plan envoye avec une marge revient sans).
+     */
+    static boolean memePlan(String a, String b) {
+        return rogne(a).equals(rogne(b));
+    }
+
+    private static String rogne(String plan) {
+        if (plan == null) return "";
+        List<String> l = new ArrayList<>(Arrays.asList(plan.replace("\r\n", "\n").replace('\r', '\n').split("\n")));
+        while (!l.isEmpty() && l.get(l.size() - 1).replace("x", "").replace("X", "").isEmpty()) l.remove(l.size() - 1);
+        int larg = 0;
+        for (String r : l) {
+            int k = r.length();
+            while (k > 0 && (r.charAt(k - 1) == 'x' || r.charAt(k - 1) == 'X')) k--;
+            larg = Math.max(larg, k);
+        }
+        StringBuilder sb = new StringBuilder();
+        for (String r : l) {
+            String t = r.length() > larg ? r.substring(0, larg) : r;
+            while (t.length() < larg) t += "x";
+            sb.append(t.toLowerCase(java.util.Locale.ROOT)).append('\n');
+        }
+        return sb.toString();
+    }
+
     private boolean appliquerFloor(JSONObject f, java.util.function.Consumer<String> dire) {
         FloorModele m = FloorModele.depuisTexte(f.optString("plan", null));
         if (m == null) { dire.accept("Collage impossible : floor de l'appart illisible."); return false; }
@@ -975,7 +1480,7 @@ public class OngletApparts {
             Salle.sommeil(700);
             FloorSession.Lecture l = FloorSession.lire();
             FloorModele a = l.modele;
-            if (a != null && a.texte().equals(m.texte()) && a.porteX == m.porteX && a.porteY == m.porteY
+            if (a != null && memePlan(a.texte(), m.texte()) && a.porteX == m.porteX && a.porteY == m.porteY
                     && a.porteDir == m.porteDir && (m.hauteurMur < 0 || a.hauteurMur == m.hauteurMur)
                     && a.epMur == m.epMur && a.epSol == m.epSol) {
                 dire.accept("Le floor est déjà le bon (plan, murs, épaisseurs) : je passe directement aux mobis.");
@@ -998,7 +1503,7 @@ public class OngletApparts {
             EtatSalle e = Salle.etat();
             String p = e == null ? null : e.getRawFloorplan();
             FloorModele r = p == null ? null : FloorModele.depuisTexte(p);
-            if (FloorReseau.planRecu > t0 && r != null && r.texte().equals(m.texte())) {
+            if (FloorReseau.planRecu > t0 && r != null && memePlan(r.texte(), m.texte())) {
                 Salle.sommeil(2500);              // le temps que les mobis de la salle arrivent
                 dire.accept("Floor appliqué. Je pose les mobis...");
                 return true;
@@ -1046,9 +1551,11 @@ public class OngletApparts {
 
         // Caracteres refuses par le moteur de l'Atelier dans un nom ; un nom deja pris recoit (2), (3)...
         String base = saisi.replaceAll("[<>:\"/\\\\|?*]", "-").trim();
-        String nom = base;
-        for (int k = 2; new File(dossierApparts(), nom + ".json").exists(); k++) nom = base + " (" + k + ")";
-        final String nomFinal = nom;
+        if (CopiesDossiers.interne(base)) base = base.substring(1);
+        if (base.isEmpty()) base = "Sans nom";
+        // Apparts ou Zones selon le type ; le dossier ouvert s'il est du bon cote
+        final File dest = CopiesDossiers.dossierPour(!complet, ici());
+        final String nomFinal = CopiesDossiers.libre(dest, base);
         nomNouvelAppart.setText(nomFinal);
 
         Salle.tache("copier", () -> {
@@ -1085,12 +1592,13 @@ public class OngletApparts {
                     }
                 }
 
-                EnregistrementCopie.Bilan eb = enr.enregistrer(nomFinal, zone, opt, dossierApparts(), () -> false);
+                EnregistrementCopie.Bilan eb = enr.enregistrer(nomFinal, zone, opt, dest, () -> false);
                 if (eb.erreur != null || eb.fichier == null) {
                     dire.accept("Copie impossible : " + (eb.erreur == null ? "rien n'a été écrit" : eb.erreur) + ".");
                     return;
                 }
                 File fichier = eb.fichier;
+                Capture.rendre(fichier);
 
                 JSONObject o = new JSONObject(new String(Files.readAllBytes(fichier.toPath()), StandardCharsets.UTF_8));
                 String floor = "";
@@ -1130,7 +1638,13 @@ public class OngletApparts {
                 // l'apercu en image (appart entier, ou la zone seule)
                 String ap = ApercuPreset.prendre(ApercuPreset.de(fichier), !complet);
                 if (ap != null) floor += " Pas d'aperçu : " + ap;
-                dire.accept("Appart « " + nomFinal + " » enregistré : " + (fs == null ? 0 : fs.length()) + " sols, "
+                // la liste montre le dossier de la nouvelle copie, elle choisie
+                String rel = CopiesDossiers.relatif(fichier);
+                Platform.runLater(() -> {
+                    if (!dest.equals(ici())) naviguer(dest); else chargerListeApparts();
+                    if (choixAppart.getItems().contains(rel)) choixAppart.setValue(rel);
+                });
+                dire.accept("Appart « " + nomFinal + " » enregistré" + dansDossier(dest) + " : " + (fs == null ? 0 : fs.length()) + " sols, "
                         + (ws == null ? 0 : ws.length()) + " murs, " + nWired + " réglages wired." + floor
                         + (eb.avertissement != null ? " " + eb.avertissement : ""));
             } catch (Throwable t) {
@@ -1606,6 +2120,8 @@ public class OngletApparts {
         d.mkdirs();
         migrerAnciennesCopies(d);
         migrerDepuisRoot(base);
+        // les deux dossiers fixes (Apparts, Zones) ; les copies de la racine y sont rangees une fois
+        CopiesDossiers.preparer(d);
         return d;
     }
 
@@ -1640,6 +2156,8 @@ public class OngletApparts {
             File g = new File(vers, f.getName());
             if (f.isDirectory()) { recopier(f, g, n); continue; }
             if (g.exists()) continue;
+            // une copie deja rangee dans Apparts ou Zones ne revient pas a la racine
+            if (CopiesDossiers.dejaRange(vers, f.getName())) continue;
             Files.copy(f.toPath(), g.toPath());
             Capture.rendre(g);
             n[0]++;
@@ -1660,7 +2178,7 @@ public class OngletApparts {
             int n = 0;
             for (File f : l) {
                 File g = new File(cible, f.getName());
-                if (g.exists()) continue;
+                if (g.exists() || CopiesDossiers.dejaRange(cible, f.getName())) continue;
                 Files.copy(f.toPath(), g.toPath());
                 n++;
             }
@@ -1677,17 +2195,31 @@ public class OngletApparts {
             Platform.runLater(this::chargerListeApparts);
             return;
         }
-        // les fichiers internes de l'Atelier (« _atelier_… », ex. _atelier_calque) ne sont pas des copies
-        File[] fs = dossierApparts().listFiles((d, n) -> n.endsWith(".json") && !n.startsWith("_atelier"));
-        List<String> noms = new ArrayList<>();
-        if (fs != null) {
-            Arrays.sort(fs, Comparator.comparing(File::getName));
-            for (File f : fs) noms.add(f.getName().substring(0, f.getName().length() - 5));
+        // le dossier ouvert : ses sous-dossiers, puis ses copies (jamais les fichiers internes « _atelier… »)
+        File ici = ici();
+        List<String> elems = new ArrayList<>(), noms = new ArrayList<>();
+        for (File d : CopiesDossiers.sousDossiers(ici)) elems.add(DOS + CopiesDossiers.relatif(d));
+        for (File f : CopiesDossiers.copiesDe(ici)) noms.add(CopiesDossiers.relatif(f));
+        elems.addAll(noms);
+        construireFil();
+        if (videCopies != null) {
+            File a = CopiesDossiers.arbre(ici);
+            videCopies.setText(a == null ? "Aucune copie pour l'instant : copie un appart au-dessus."
+                    : "Dossier vide. " + (a.getName().equals(CopiesDossiers.ZONES)
+                        ? "Une zone copiée pendant qu'il est ouvert arrive ici"
+                        : "Un appart entier copié pendant qu'il est ouvert arrive ici")
+                    + " ; tu peux aussi y glisser une copie par le chemin en haut.");
         }
         String garde = choixAppart.getValue();
-        choixAppart.getItems().setAll(noms);
-        if (garde != null && noms.contains(garde)) choixAppart.setValue(garde);
-        else if (!noms.isEmpty()) choixAppart.setValue(noms.get(0));
+        if (!elems.equals(elements)) elements.setAll(elems);
+        if (!noms.equals(choixAppart.getItems())) choixAppart.getItems().setAll(noms);
+        String v = garde != null && noms.contains(garde) ? garde : noms.isEmpty() ? null : noms.get(0);
+        choixAppart.setValue(v);
+        if (listeCopies != null) {
+            if (v == null) listeCopies.getSelectionModel().clearSelection();
+            else if (!v.equals(listeCopies.getSelectionModel().getSelectedItem())) listeCopies.getSelectionModel().select(v);
+            listeCopies.refresh();      // le contenu des dossiers a pu changer
+        }
     }
 
     // ----------------------------------------------------------------- outils

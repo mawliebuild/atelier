@@ -246,9 +246,11 @@ public class BarreFloor implements Ancrage.Ancrable {
         effacer = icone(Icones.CORBEILLE, "Tout effacer : oublie les changements pas encore appliqués", () -> Salle.tache("floor-effacer", ModeCases::effacer));
         revenir = icone(Icones.PIVOTER_INVERSE, "Remettre le floor d'avant le dernier « Appliquer » (l'appart se recharge)",
                 () -> Salle.tache("floor-revenir", ModeCases::revenir));
+        Button muraux = icone(Icones.MURS, "Remettre les mobis muraux comme avant le dernier changement de floor (même place à l'écran)",
+                () -> Salle.tache("floor-muraux", MurauxCommeAvant::remettre));
         Region sepH = new Region();
         sepH.setMinWidth(5);
-        HBox rangeeHisto = new HBox(3, annuler, retablir, effacer, sepH, revenir);
+        HBox rangeeHisto = new HBox(3, annuler, retablir, effacer, sepH, revenir, muraux);
         rangeeHisto.setAlignment(Pos.CENTER_LEFT);
 
         // --- murs et sol (derriere la roue)

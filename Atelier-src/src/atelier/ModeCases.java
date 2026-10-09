@@ -50,7 +50,6 @@ final class ModeCases {
     /** Taille maxi d'un plan Habbo (cases). */
     static final int MAX = 64;
     /** Cases fantomes au-dela du plan (a droite et en bas). */
-    private static final int MARGE = 4;
     private static final File FICHIER = new File(Capture.maisonReelle(), ".atelier-case.txt");
 
     private static volatile boolean actif = false, occupe = false;
@@ -371,8 +370,8 @@ final class ModeCases {
     /** Logique pure de planEtMarques ; coin = premier coin d'un rectangle (marque « c »), ou null. */
     static String planEtMarques(FloorModele b, FloorModele t, int hauteurFantome, int[] coin) {
         if (b == null || t == null) return "";
-        int w = Math.min(MAX, Math.max(b.largeur, t.largeur) + MARGE);
-        int l = Math.min(MAX, Math.max(b.longueur, t.longueur) + MARGE);
+        // toutes les cases possibles des le debut, jusqu'a la limite du jeu (MAX x MAX)
+        int w = MAX, l = MAX;
         StringBuilder plan = new StringBuilder(), marques = new StringBuilder();
         for (int y = 0; y < l; y++) {
             if (y > 0) { plan.append('/'); marques.append('/'); }

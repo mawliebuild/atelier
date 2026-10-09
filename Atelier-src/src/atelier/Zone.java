@@ -89,6 +89,7 @@ public final class Zone {
     }
 
     public static void definir(int ax, int ay, int bx, int by) {
+        effacerEmpreinte();
         x1 = ax; y1 = ay; x2 = bx; y2 = by;
         choixEnCours = false;
         premierCoin = null; premier = null;
@@ -97,6 +98,7 @@ public final class Zone {
     }
 
     public static void effacer() {
+        effacerEmpreinte();
         x1 = y1 = x2 = y2 = -1;
         choixEnCours = false;
         premierCoin = null; premier = null;
@@ -110,6 +112,7 @@ public final class Zone {
      * s'affiche pendant le choix (client modifie), pour viser les cases.
      */
     public static void demarrerChoix() {
+        effacerEmpreinte();
         choixEnCours = true;
         premierCoin = null; premier = null;
         long debut = System.currentTimeMillis();
@@ -118,7 +121,7 @@ public final class Zone {
         Salle.tache("zone-clics", () -> {
             GrilleVue.clicsAuSol(true);
             Salle.sommeil(120_000);
-            if (choixEnCours && choixDebut == debut) { choixEnCours = false; premierCoin = null; premier = null; eteindreGrille(); prevenir(); }
+            if (choixEnCours && choixDebut == debut) { effacerEmpreinte(); choixEnCours = false; premierCoin = null; premier = null; eteindreGrille(); prevenir(); }
         });
         if (!GrilleVue.voulue())
             Salle.tache("zone-grille", () -> {
@@ -126,6 +129,15 @@ public final class Zone {
                     grilleAuto = true;
             });
         prevenir();
+    }
+
+    /** L'empreinte (premier coin → case survolee) est-elle affichee par la zone ? */
+    private static volatile boolean empreinte = false;
+
+    private static void effacerEmpreinte() {
+        if (!empreinte) return;
+        empreinte = false;
+        Empreinte.effacer();
     }
 
     private static void eteindreGrille() {
@@ -160,6 +172,8 @@ public final class Zone {
         if (p == null) {
             premier = r;
             premierCoin = new HPoint(r[0], r[1]);
+            empreinte = true;
+            Empreinte.coin(r[0], r[1]);
             prevenir();
             return;
         }

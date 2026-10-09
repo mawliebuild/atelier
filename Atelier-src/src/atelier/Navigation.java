@@ -99,6 +99,10 @@ public class Navigation {
         m.defilement.setContent(m.sections);
         m.defilement.setFitToWidth(true);
         m.defilement.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+        // jamais de defilement en largeur, meme au pave tactile (barre cachee ne suffit pas)
+        m.defilement.hvalueProperty().addListener((o, a, b) -> {
+            if (b.doubleValue() != m.defilement.getHmin()) m.defilement.setHvalue(m.defilement.getHmin());
+        });
         m.defilement.getStyleClass().add("nav-defilement");
         m.defilement.setVisible(false);
         m.defilement.setManaged(false);

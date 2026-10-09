@@ -159,7 +159,6 @@ public class OutilCouleur {
     /** La derniere couleur voulue en direct ; un seul fil l'envoie, au plus toutes les 150 ms. */
     private volatile Color voulue = null;
     private volatile boolean envoiEnCours = false;
-    private static final long PAS_MS = 150;
 
     private void enDirect(Color c) {
         voulue = c;
@@ -171,9 +170,11 @@ public class OutilCouleur {
                 while (true) {
                     Color v = voulue;
                     if (v == null || v.equals(tentee)) break;
+                    Salle.espacer();                 // rythme commun des envois
+                    v = voulue;                      // la plus recente, apres l'attente
+                    if (v == null) break;
                     tentee = v;
                     if (!envoyer(v, false)) break;   // echec : dit une fois, on s'arrete
-                    try { Thread.sleep(PAS_MS); } catch (InterruptedException e) { break; }
                 }
             } finally {
                 envoiEnCours = false;

@@ -135,6 +135,19 @@ public final class Icones {
     /** Une pipette : prendre une hauteur. */
     public static final String PIPETTE    = "M19.5 4.5a2.1 2.1 0 0 0-3-3L14 4l3 3z M12 5l7 7 M15.5 8.5L6 18l-2.5 3 3-2.5 9.5-9.5";
 
+    /** Un dossier (Galerie : ranger les photos). */
+    public static final String DOSSIER    = "M3 6h6l2 2.5h10V19H3z";
+    /** Un dossier et un plus : nouveau dossier. */
+    public static final String DOSSIER_NOUVEAU = "M3 6h6l2 2.5h10V19H3z M12 11v6 M9 14h6";
+
+    // --- ajouts (Patrimoine : recherche de mobis) ---
+    /** Une loupe sur une maison : chercher dans les apparts. */
+    public static final String RECHERCHE  = "M3 11l7-5.5 7 5.5 M5 10v8h5 M16.5 13a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7z M19 19l2.5 2.5";
+    /** Deux fleches qui s'echangent : troc. */
+    public static final String TROC       = "M4 8h14 M14 4l4 4-4 4 M20 16H6 M10 12l-4 4 4 4";
+    /** Une croix (grille de 24) : retirer d'une liste. */
+    public static final String RETIRER    = "M7 7l10 10 M17 7L7 17";
+
     private Icones() { }
 
     /**

@@ -37,7 +37,9 @@ import java.util.concurrent.ConcurrentHashMap;
  *     RoomEntryInfo qui repond dans les 400 ms (le jeu ne recharge pas la salle) ;
  *   - a la connexion, charge la furnidata de l'hotel (game-xx, Furnidata.pour) ;
  *   - demanderInventaire : les FurniList de la reponse ne vont pas au jeu, qui
- *     ne les a pas demandees ;
+ *     ne les a pas demandees (30 s au plus, serie entiere) ; si le jeu demande
+ *     lui-meme l'inventaire, la serie suivante lui revient toujours ; jamais
+ *     de demande pendant qu'un inventaire arrive (inventaireEnChargement) ;
  *   - demanderCatalogue : index du catalogue BC, puis ses pages une a une
  *     (180 ms d'ecart, plus 22 ms) quand le cache sur disque ne suffit pas ;
  *   - « :abort » (ou « :a ») tape dans le chat arrete la pose en cours et ne
@@ -80,6 +82,19 @@ public final class Moteur extends ExtensionForm {
     private volatile long salleDemandeeLe = 0;
     private volatile boolean inventaireEnAttente;
     private volatile long inventaireDemandeLe = 0;
+    /** Le jeu a demande l'inventaire lui-meme (heure ; 0 : non) : la prochaine serie est la sienne. */
+    private volatile long jeuDemandeLe = 0;
+    /** La serie de FurniList en cours est cachee au jeu (decide au morceau 0, pour toute la serie). */
+    private volatile boolean serieCachee;
+    /** Au-dela, notre demande d'inventaire est oubliee : jamais de blocage long. */
+    static final long ATTENTE_INVENTAIRE_MS = 30_000;
+    /** Une serie de FurniList passe (morceau 0 vu, pas encore le dernier). */
+    private volatile boolean serieEnFlux;
+    private volatile long dernierMorceauLe = 0;
+    /** L'en-tete des FurniList, vu passer (-1 : pas encore). */
+    private volatile int enteteFurniList = -1;
+    /** Sans morceau depuis ce temps, une serie en flux est consideree perdue. */
+    static final long SERIE_MUETTE_MS = 5_000;
     private volatile boolean collecteEnCours;
     private volatile DalleMagique dalleReglee = DalleMagique.DEUX;
 
@@ -100,6 +115,8 @@ public final class Moteur extends ExtensionForm {
         CatalogueBc.ecritureCache = true;          // plus d'autre moteur pour ecrire le cache
         catalogue = new CatalogueBc(c, () -> furnidata);
         reglageWired = new ReglageWiredPose(c, salle, droits);
+        // entree sure dans un appart : les effets de variable inconnus du jeu ne lui parviennent pas
+        EntreeSure.brancher(c);
 
         HMessage.Direction C = HMessage.Direction.TOCLIENT, S = HMessage.Direction.TOSERVER;
         // la salle demandee par nous : le jeu ne la recharge pas
@@ -109,8 +126,10 @@ public final class Moteur extends ExtensionForm {
                 salleDemandeeLe = 0;
             }
         });
-        // l'inventaire demande par nous : les morceaux ne vont pas au jeu
-        c.intercept(S, "RequestFurniInventory", m -> inventaireEnAttente = false);   // le jeu le veut aussi
+        // l'inventaire demande par nous : les morceaux ne vont pas au jeu ; mais
+        // quand le jeu le demande lui-meme (echange, inventaire rouvert), la
+        // serie suivante lui revient toujours, entiere.
+        c.intercept(S, "RequestFurniInventory", this::surDemandeDuJeu);
         c.intercept(C, "FurniList", this::surMorceauInventaire);
         // le catalogue BC : ses pages, une fois l'index recu
         c.intercept(C, "CatalogIndex", m -> Salle.tache("catalogue-bc-collecte", this::collecter));
@@ -144,6 +163,10 @@ public final class Moteur extends ExtensionForm {
         PoseCopie.arreter();
         furnidata = null;
         inventaireEnAttente = false;
+        serieCachee = false;
+        serieEnFlux = false;
+        enteteFurniList = -1;
+        jeuDemandeLe = 0;
         EtatSalle s = salle;
         if (s != null) s.reset();
         Inventaire i = inventaire;
@@ -228,14 +251,51 @@ public final class Moteur extends ExtensionForm {
         sendToServer(new HPacket("GetHeightMap", HMessage.Direction.TOSERVER));
     }
 
-    /** Demande tout l'inventaire (RequestFurniInventory) ; la reponse ne va pas au jeu. */
-    void demanderInventaire() {
+    /**
+     * Demande tout l'inventaire (RequestFurniInventory) ; la reponse ne va pas au jeu.
+     * Jamais pendant qu'un inventaire arrive (celui du jeu ou le notre), ni
+     * quand le jeu vient de demander le sien ou que notre demande attend encore
+     * sa reponse : une seconde serie de 25 000 mobis occupait la connexion pour
+     * rien. La serie en cours remplit de toute facon la brique Inventaire.
+     * @return vrai si la demande est partie
+     */
+    boolean demanderInventaire() {
+        long now = System.currentTimeMillis();
+        if (inventaireEnChargement()) return false;
+        if (inventaireEnAttente && now - inventaireDemandeLe < ATTENTE_INVENTAIRE_MS) return false;
         Inventaire i = inventaire;
         if (i != null) i.vider();
         inventaireEnAttente = true;
-        inventaireDemandeLe = System.currentTimeMillis();
+        inventaireDemandeLe = now;
         Salle.espacer();
         sendToServer(new HPacket("RequestFurniInventory", HMessage.Direction.TOSERVER));
+        return true;
+    }
+
+    /**
+     * Vrai pendant qu'un inventaire arrive : une serie de FurniList passe, ou
+     * le jeu a demande le sien et la reponse n'a pas encore commence.
+     */
+    boolean inventaireEnChargement() {
+        long now = System.currentTimeMillis();
+        if (serieEnFlux && now - dernierMorceauLe < SERIE_MUETTE_MS) return true;
+        long j = jeuDemandeLe;
+        return j > 0 && now - j < ATTENTE_INVENTAIRE_MS;
+    }
+
+    /**
+     * L'en-tete des FurniList : celui vu passer, sinon celui que la connexion
+     * associe au nom ; -1 si inconnu.
+     */
+    int enteteInventaire() {
+        int e = enteteFurniList;
+        if (e >= 0) return e;
+        try {
+            gearth.services.packet_info.PacketInfoManager pim = getPacketInfoManager();
+            gearth.services.packet_info.PacketInfo pi = pim == null ? null
+                    : pim.getPacketInfoFromName(HMessage.Direction.TOCLIENT, "FurniList");
+            return pi == null ? -1 : pi.getHeaderId();
+        } catch (Throwable t) { return -1; }
     }
 
     /** Demande l'index du catalogue BC ; ses pages suivent (collecter). */
@@ -244,14 +304,44 @@ public final class Moteur extends ExtensionForm {
         sendToServer(new HPacket("GetCatalogIndex", HMessage.Direction.TOSERVER, CatalogueBc.BC));
     }
 
+    /** RequestFurniInventory venant du jeu : sa reponse lui revient (notre brique Inventaire la lit quand meme). */
+    private void surDemandeDuJeu(HMessage m) {
+        long now = System.currentTimeMillis();
+        // Nos propres envois ne repassent normalement pas ici ; par prudence,
+        // une demande a l'instant meme de la notre est la notre.
+        if (inventaireEnAttente && now - inventaireDemandeLe < 150) return;
+        jeuDemandeLe = now;
+    }
+
+    /**
+     * Un morceau de FurniList (int total, int index, ...). Decision au morceau 0,
+     * gardee pour toute la serie : jamais une serie coupee en deux pour le jeu.
+     * Cachee seulement si l'Atelier l'a demandee il y a moins de 30 s et que
+     * le jeu n'attend pas la sienne. Lecture sur place, sans copie.
+     */
     private void surMorceauInventaire(HMessage m) {
-        if (!inventaireEnAttente) return;
-        if (System.currentTimeMillis() - inventaireDemandeLe > 120_000) { inventaireEnAttente = false; return; }
-        m.setBlocked(true);
         HPacket p = m.getPacket();
         if (p.getBytesLength() < 14) return;
         int total = p.readInteger(6), index = p.readInteger(10);
-        if (index >= total - 1) inventaireEnAttente = false;
+        enteteFurniList = p.headerId();
+        dernierMorceauLe = System.currentTimeMillis();
+        serieEnFlux = index < total - 1;
+        if (index == 0) {
+            long now = System.currentTimeMillis();
+            boolean nous = inventaireEnAttente && now - inventaireDemandeLe < ATTENTE_INVENTAIRE_MS;
+            if (jeuDemandeLe > 0 && now - jeuDemandeLe < ATTENTE_INVENTAIRE_MS) {
+                jeuDemandeLe = 0;
+                serieCachee = false;                  // celle du jeu (ou la notre, que le jeu prend a sa place)
+            } else {
+                jeuDemandeLe = 0;
+                serieCachee = nous;
+                if (nous) inventaireEnAttente = false;
+            }
+            if (!nous) inventaireEnAttente = false;   // demande trop vieille : oubliee
+        }
+        if (!serieCachee) return;
+        m.setBlocked(true);
+        if (index >= total - 1) serieCachee = false;
     }
 
     /**

@@ -150,6 +150,7 @@ public final class WiredGraphe extends Pane {
             case SELECTEUR:        return Color.web("#8e6ad8");
             case SELECTEUR_FILTRE: return Color.web("#b39ddb");
             case CONDITION:        return Color.web("#3fa34d");
+            case CONDITION_ADDON:  return Color.web("#6cc477");   // « au moins une condition » : avec les conditions
             case EFFET:            return Color.web("#2f7fd0");
             case EFFET_SIGNAL:     return Color.web("#e07020");
             case EFFET_NEGATIF:    return Color.web("#c03030");

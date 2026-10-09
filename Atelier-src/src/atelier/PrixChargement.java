@@ -174,6 +174,7 @@ final class PrixChargement {
         List<HInventoryItem> inv = OngletInventaire.dernierInventaire();
         // Pas d'inventaire : pas connectee (ou pas encore) ; le jeu ne repondrait pas.
         if (gp == null || inv == null) { if (fin != null) fin.accept(0); return; }
+        if (Marche.muet()) { if (fin != null) fin.accept(0); return; }       // le marche ne repond jamais : plus de demande
         List<String> aDemander = new ArrayList<>();
         for (String k : clesVendables(inv)) {
             boolean mur = k.startsWith("2:");
@@ -219,8 +220,9 @@ final class PrixChargement {
                 Marche.sauver();
                 jeuEnCours = false;
                 jeuFiniLe = System.currentTimeMillis();
-                Journal.debug("prix du marché du jeu : " + recus + " reçus, " + muets + " sans réponse, sur "
-                        + aDemander.size() + " en " + ((jeuFiniLe - t0) / 1000) + " s.");
+                if (recus > 0)                                // les tours sans reponse ne sont pas repetes
+                    Journal.debug("prix du marché du jeu : " + recus + " reçus, " + muets + " sans réponse, sur "
+                            + aDemander.size() + " en " + ((jeuFiniLe - t0) / 1000) + " s.");
                 notifier();
                 if (fin != null) try { fin.accept(recus); } catch (Throwable ignored) { }
             }

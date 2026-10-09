@@ -310,7 +310,7 @@ public final class WiredAnalyse {
                 r.add(new Probleme(Gravite.ERREUR, p.x, p.y,
                         "Pile avec effet(s) mais sans déclencheur : elle ne se lancera jamais."));
             } else if (!dec && !queVariables) {
-                boolean condOuSel = p.a(Wired.Rang.CONDITION, Wired.Rang.SELECTEUR, Wired.Rang.SELECTEUR_FILTRE);
+                boolean condOuSel = p.a(Wired.Rang.CONDITION, Wired.Rang.CONDITION_ADDON, Wired.Rang.SELECTEUR, Wired.Rang.SELECTEUR_FILTRE);
                 if (condOuSel)
                     r.add(new Probleme(Gravite.ATTENTION, p.x, p.y,
                             "Condition ou sélecteur hors d'une pile avec déclencheur : sans effet."));

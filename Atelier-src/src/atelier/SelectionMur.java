@@ -28,6 +28,8 @@ public final class SelectionMur {
         public String nom = "?";
         public int typeId = -1;
         public String etat = "0";
+        /** Dernier envoi de l'Atelier pour ce mur (ms) : sa position locale est alors plus fraiche que la salle. */
+        volatile long bougeA = 0L;
         Mur(int id, String position) { this.id = id; this.position = position; }
     }
 
@@ -59,6 +61,114 @@ public final class SelectionMur {
 
     public static Mur courant() { return courant; }
 
+    // ------------------------------------------------- selection multiple
+
+    /**
+     * Les muraux choisis ensemble (Deplacer un mur), dans l'ordre des clics.
+     * Le dernier clic reste aussi courant() pour les autres outils muraux.
+     */
+    private static final java.util.LinkedHashMap<Integer, Mur> liste = new java.util.LinkedHashMap<>();
+    /** La salle des muraux de la liste : en changer vide la liste. */
+    private static volatile int salleListe = -1;
+
+    /** Copie des muraux choisis (fil quelconque). */
+    public static List<Mur> liste() {
+        synchronized (liste) { return new ArrayList<>(liste.values()); }
+    }
+
+    /** Ids des muraux choisis (fil quelconque). */
+    public static List<Integer> ids() {
+        synchronized (liste) { return new ArrayList<>(liste.keySet()); }
+    }
+
+    public static boolean contient(int id) {
+        synchronized (liste) { return liste.containsKey(id); }
+    }
+
+    public static int nombre() {
+        synchronized (liste) { return liste.size(); }
+    }
+
+    public static int salleListe() { return salleListe; }
+
+    /** Ajoute ce mural, ou le retire s'il y est deja. @return true s'il est maintenant choisi */
+    public static boolean basculer(Mur m) {
+        if (m == null) return false;
+        boolean dedans;
+        synchronized (liste) {
+            if (liste.remove(m.id) != null) dedans = false;
+            else { liste.put(m.id, m); dedans = true; salleListe = Salle.salleId(); }
+        }
+        prevenir();
+        return dedans;
+    }
+
+    /** Ajoute ces muraux (ceux deja choisis restent). */
+    public static void ajouter(java.util.Collection<Mur> l) {
+        if (l == null || l.isEmpty()) return;
+        synchronized (liste) {
+            for (Mur m : l) if (m != null) liste.putIfAbsent(m.id, m);
+            salleListe = Salle.salleId();
+        }
+        prevenir();
+    }
+
+    public static void retirer(java.util.Collection<Integer> ids) {
+        if (ids == null || ids.isEmpty()) return;
+        synchronized (liste) { for (Integer i : ids) liste.remove(i); }
+        prevenir();
+    }
+
+    public static void vider() {
+        synchronized (liste) {
+            if (liste.isEmpty()) return;
+            liste.clear();
+        }
+        prevenir();
+    }
+
+    /**
+     * Logique pure : deux muraux sont-ils « du meme type » ? Meme typeId ;
+     * pour les posters (une seule classe pour tous), meme numero de poster
+     * (l'etat du mobi).
+     */
+    static boolean memeType(int typeA, String etatA, int typeB, String etatB, String classe) {
+        if (typeA != typeB) return false;
+        if (classe != null && classe.toLowerCase(java.util.Locale.ROOT).startsWith("poster"))
+            return java.util.Objects.equals(etatA == null ? "" : etatA.trim(), etatB == null ? "" : etatB.trim());
+        return true;
+    }
+
+    /** Tous les muraux de la salle du meme type que m (m compris). */
+    public static List<Mur> memeTypeDansLaSalle(Mur m) {
+        List<Mur> r = new ArrayList<>();
+        if (m == null || m.typeId < 0) { if (m != null) r.add(m); return r; }
+        String classe = Salle.classe(m.typeId, true);
+        for (HWallItem w : Salle.murs()) {
+            if (!memeType(m.typeId, m.etat, w.getTypeId(), w.getState(), classe)) continue;
+            if (w.getId() == m.id) { r.add(m); continue; }
+            r.add(depuis(w, m.nom));
+        }
+        if (r.stream().noneMatch(x -> x.id == m.id)) r.add(0, m);
+        return r;
+    }
+
+    /** Un Mur lu dans la salle. */
+    static Mur depuis(HWallItem w, String nom) {
+        Mur x = new Mur(w.getId(), normaliser(w.getLocation()));
+        x.typeId = w.getTypeId();
+        x.etat = w.getState();
+        x.nom = nom != null ? nom : Salle.nom(w.getTypeId(), true);
+        return x;
+    }
+
+    /** Ces ids viennent d'etre deplaces par l'Atelier : leurs paquets ne comptent pas comme des clics. */
+    public static void ignorerEnvoi(int id, long ms) {
+        ignores.put(id, System.currentTimeMillis() + ms);
+    }
+
+    private static final java.util.Map<Integer, Long> ignores = new java.util.concurrent.ConcurrentHashMap<>();
+
     public static boolean modeClic() { return modeClic; }
     public static void modeClic(boolean actif) { modeClic = actif; }
 
@@ -78,6 +188,28 @@ public final class SelectionMur {
     public static void majPosition(String position) {
         Mur m = courant;
         if (m != null) { m.position = normaliser(position); prevenir(); }
+    }
+
+    /** Met a jour la position de ce mural (choisi parmi plusieurs) apres un envoi de l'Atelier. */
+    public static void majPosition(Mur m, String position) {
+        if (m == null) return;
+        m.position = normaliser(position);
+        m.bougeA = System.currentTimeMillis();
+        prevenir();
+    }
+
+    /**
+     * Position la plus juste de ce mural : la sienne s'il vient d'etre deplace
+     * par l'Atelier (le serveur n'a peut-etre pas encore confirme), sinon celle
+     * de la salle (un deplacement fait dans le jeu compte). null : plus dans la salle.
+     */
+    static String positionActuelle(Mur m, long fraicheurMs) {
+        HWallItem w = Salle.mur(m.id);
+        if (w == null) return null;
+        if (System.currentTimeMillis() - m.bougeA < fraicheurMs) return m.position;
+        String p = normaliser(w.getLocation());
+        if (!p.isEmpty()) m.position = p;
+        return m.position;
     }
 
     /** getLocation() peut porter un suffixe " a=<altitude>" que MoveWallItem n'attend pas. */
@@ -130,10 +262,6 @@ public final class SelectionMur {
                         try { java.util.List<HWallItem> w = s.getWallItems(); murs = (w == null) ? -1 : w.size(); }
                         catch (Throwable ignored) { }
                     }
-                    Journal.debug("flux : " + sortants.get() + " envoyes, "
-                            + entrants.get() + " recus   |   dans une salle : " + dans
-                            + "   murs connus : " + murs
-                            + "   mur selectionne : " + (courant == null ? "aucun" : courant.nom));
                 } catch (Throwable ignored) { }
             }
         }, "atelier-resume");
@@ -222,6 +350,25 @@ public final class SelectionMur {
     private static volatile boolean compareAffichee = false;
 
     private static void retenir(Moteur gp, int id, String loc) {
+        long t = System.currentTimeMillis();
+        Long fin = ignores.get(id);
+        if (fin != null) {
+            if (t < fin) return;              // notre propre envoi, pas un clic
+            ignores.remove(id);
+        }
+        // Un meme geste peut produire plusieurs paquets (double-clic, prise puis
+        // depot) : dans la fenetre du double-clic, c'est le meme clic. On garde
+        // le meme objet, pour que les outils qui basculent au clic ne basculent
+        // pas deux fois.
+        Mur c = courant;
+        if (c != null && c.id == id && id == dernierId && t - dernierClic < FENETRE_DOUBLE_CLIC) {
+            dernierClic = t;
+            c.position = normaliser(loc);
+            prevenir();
+            return;
+        }
+        dernierId = id;
+        dernierClic = t;
         Mur m = new Mur(id, normaliser(loc));
         try {
             EtatSalle s = gp.getFloorState();
