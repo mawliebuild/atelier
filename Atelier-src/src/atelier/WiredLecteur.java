@@ -539,21 +539,14 @@ public final class WiredLecteur {
 
     /**
      * WiredAllVariablesDiffs : (int, boolean, int n, n x String supprimes,
-     * int m, m x (int, HWiredVariable)). Lecture recopiee de l'exporteur.
+     * int m, m x (int, HWiredVariable)), lue par PoseOutils (ancien et nouveau format).
      */
     private static void recevoirVariables(HPacket p, boolean pourMoi) {
-        p.resetReadIndex();
-        p.readInteger();
-        boolean dernier = p.readBoolean();
-        int n = p.readInteger();
-        for (int i = 0; i < n && i < 100000; i++) p.readString();
-        int k = p.readInteger();
+        PoseOutils.ListeVariables l = PoseOutils.lireListeVariables(p);
+        boolean dernier = l.dernier();
         Map<String, String> lues = new HashMap<>();
-        for (int i = 0; i < k && i < 100000; i++) {
-            p.readInteger();
-            PoseOutils.Variable v = PoseOutils.lireVariable(p);
+        for (PoseOutils.Variable v : l.variables())
             if (v.id() != null) lues.put(v.id(), v.nom() == null ? "" : v.nom());
-        }
         OutilMiroir.Altitude.depuisListe(lues);
         if (!pourMoi) return;
         variablesRecues.putAll(lues);

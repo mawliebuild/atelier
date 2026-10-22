@@ -5,11 +5,13 @@ import gearth.extensions.parsers.stuffdata.IStuffData;
 
 import javax.imageio.IIOImage;
 import javax.imageio.ImageIO;
+import javax.imageio.ImageReader;
 import javax.imageio.ImageTypeSpecifier;
 import javax.imageio.ImageWriteParam;
 import javax.imageio.ImageWriter;
 import javax.imageio.metadata.IIOMetadata;
 import javax.imageio.metadata.IIOMetadataNode;
+import javax.imageio.stream.ImageInputStream;
 import javax.imageio.stream.ImageOutputStream;
 import java.awt.image.BufferedImage;
 import java.awt.image.IndexColorModel;
@@ -447,39 +449,158 @@ public final class Capture {
      * image seule.
      */
     public static void ecrireGif(List<BufferedImage> images, int delaiMs, File f) throws IOException {
+        int[] d = new int[images == null ? 0 : images.size()];
+        Arrays.fill(d, delaiMs);
+        ecrireGif(images, d, f);
+    }
+
+    /** Comme ecrireGif, avec la duree de chaque image (ms). */
+    public static void ecrireGif(List<BufferedImage> images, int[] delais, File f) throws IOException {
         if (images == null || images.isEmpty()) throw new IOException("aucune image");
         ImageWriter wr = ImageIO.getImageWritersByFormatName("gif").next();
         try (ImageOutputStream out = ImageIO.createImageOutputStream(f)) {
             wr.setOutput(out);
             wr.prepareWriteSequence(null);
             boolean anime = images.size() > 1;
-            for (int k = 0; k < images.size(); k++) {
-                BufferedImage ind = indexer(images.get(k));
-                ImageWriteParam param = wr.getDefaultWriteParam();
-                IIOMetadata md = wr.getDefaultImageMetadata(new ImageTypeSpecifier(ind), param);
-                String nom = md.getNativeMetadataFormatName();
-                IIOMetadataNode racine = (IIOMetadataNode) md.getAsTree(nom);
-
-                IIOMetadataNode gce = enfant(racine, "GraphicControlExtension");
-                gce.setAttribute("disposalMethod", anime ? "restoreToBackgroundColor" : "none");
-                gce.setAttribute("userInputFlag", "FALSE");
-                gce.setAttribute("transparentColorFlag", "TRUE");
-                gce.setAttribute("transparentColorIndex", "0");
-                gce.setAttribute("delayTime", String.valueOf(anime ? Math.max(2, delaiMs / 10) : 0));
-
-                if (anime && k == 0) {
-                    IIOMetadataNode apps = enfant(racine, "ApplicationExtensions");
-                    IIOMetadataNode app = new IIOMetadataNode("ApplicationExtension");
-                    app.setAttribute("applicationID", "NETSCAPE");
-                    app.setAttribute("authenticationCode", "2.0");
-                    app.setUserObject(new byte[]{1, 0, 0});          // boucle infinie
-                    apps.appendChild(app);
-                }
-                md.setFromTree(nom, racine);
-                wr.writeToSequence(new IIOImage(ind, null, md), param);
-            }
+            for (int k = 0; k < images.size(); k++)
+                imageGif(wr, images.get(k), delais[Math.min(k, delais.length - 1)], anime, k == 0);
             wr.endWriteSequence();
         } finally { wr.dispose(); }
+    }
+
+    /** Ajoute une image a la sequence GIF en cours d'ecriture. */
+    private static void imageGif(ImageWriter wr, BufferedImage img, int delaiMs, boolean anime, boolean premiere)
+            throws IOException {
+        BufferedImage ind = indexer(img);
+        ImageWriteParam param = wr.getDefaultWriteParam();
+        IIOMetadata md = wr.getDefaultImageMetadata(new ImageTypeSpecifier(ind), param);
+        String nom = md.getNativeMetadataFormatName();
+        IIOMetadataNode racine = (IIOMetadataNode) md.getAsTree(nom);
+
+        IIOMetadataNode gce = enfant(racine, "GraphicControlExtension");
+        gce.setAttribute("disposalMethod", anime ? "restoreToBackgroundColor" : "none");
+        gce.setAttribute("userInputFlag", "FALSE");
+        gce.setAttribute("transparentColorFlag", "TRUE");
+        gce.setAttribute("transparentColorIndex", "0");
+        gce.setAttribute("delayTime", String.valueOf(anime ? Math.max(2, delaiMs / 10) : 0));
+
+        if (anime && premiere) {
+            IIOMetadataNode apps = enfant(racine, "ApplicationExtensions");
+            IIOMetadataNode app = new IIOMetadataNode("ApplicationExtension");
+            app.setAttribute("applicationID", "NETSCAPE");
+            app.setAttribute("authenticationCode", "2.0");
+            app.setUserObject(new byte[]{1, 0, 0});          // boucle infinie
+            apps.appendChild(app);
+        }
+        md.setFromTree(nom, racine);
+        wr.writeToSequence(new IIOImage(ind, null, md), param);
+    }
+
+    /** Taille d'un GIF telle qu'on le voit (sa toile), sans decoder ses images. */
+    public static int[] tailleGif(File f) throws IOException {
+        ImageReader rd = ImageIO.getImageReadersByFormatName("gif").next();
+        try (ImageInputStream in = ImageIO.createImageInputStream(f)) {
+            if (in == null) throw new IOException("GIF illisible");
+            rd.setInput(in, false);
+            return toileGif(rd, rd.getNumImages(true));
+        } finally { rd.dispose(); }
+    }
+
+    private static int[] toileGif(ImageReader rd, int n) throws IOException {
+        int lw = 0, lh = 0;
+        IIOMetadata flux = rd.getStreamMetadata();
+        if (flux != null) {
+            org.w3c.dom.Node r = flux.getAsTree(flux.getNativeMetadataFormatName());
+            for (org.w3c.dom.Node c = r.getFirstChild(); c != null; c = c.getNextSibling())
+                if (c.getNodeName().equals("LogicalScreenDescriptor")) {
+                    lw = entier(c, "logicalScreenWidth", 0);
+                    lh = entier(c, "logicalScreenHeight", 0);
+                }
+        }
+        for (int i = 0; i < n; i++) {
+            int[] info = infoGif(rd, i);
+            lw = Math.max(lw, info[0] + rd.getWidth(i));
+            lh = Math.max(lh, info[1] + rd.getHeight(i));
+        }
+        return new int[]{lw, lh};
+    }
+
+    /** Image i d'un GIF : {x, y, duree ms, effacement (0 rien, 1 fond, 2 image precedente)}. */
+    private static int[] infoGif(ImageReader rd, int i) throws IOException {
+        int[] info = {0, 0, 100, 0};
+        IIOMetadata md = rd.getImageMetadata(i);
+        org.w3c.dom.Node r = md.getAsTree(md.getNativeMetadataFormatName());
+        for (org.w3c.dom.Node c = r.getFirstChild(); c != null; c = c.getNextSibling()) {
+            if (c.getNodeName().equals("ImageDescriptor")) {
+                info[0] = entier(c, "imageLeftPosition", 0);
+                info[1] = entier(c, "imageTopPosition", 0);
+            } else if (c.getNodeName().equals("GraphicControlExtension")) {
+                int d = entier(c, "delayTime", 10) * 10;
+                info[2] = d <= 10 ? 100 : d;             // comme les navigateurs : 0 ou 1 = 100 ms
+                String e = ((org.w3c.dom.Element) c).getAttribute("disposalMethod");
+                info[3] = "restoreToBackgroundColor".equals(e) ? 1 : "restoreToPrevious".equals(e) ? 2 : 0;
+            }
+        }
+        return info;
+    }
+
+    /**
+     * Recadre toutes les images d'un GIF anime a la meme zone (x, y, w, h, en
+     * pixels de sa toile), en gardant leurs durees. Chaque image du fichier
+     * peut n'etre qu'un morceau pose sur la precedente : elle est d'abord
+     * composee sur la toile entiere. Une image a la fois en memoire (un GIF de
+     * centaines de grandes images ne tiendrait pas). Rend le nombre d'images.
+     */
+    public static int recadrerGif(File src, int x, int y, int w, int h, File dest) throws IOException {
+        ImageReader rd = ImageIO.getImageReadersByFormatName("gif").next();
+        ImageWriter wr = ImageIO.getImageWritersByFormatName("gif").next();
+        try (ImageInputStream in = ImageIO.createImageInputStream(src);
+             ImageOutputStream out = ImageIO.createImageOutputStream(dest)) {
+            if (in == null) throw new IOException("GIF illisible");
+            rd.setInput(in, false);
+            int n = rd.getNumImages(true);
+            if (n <= 0) throw new IOException("GIF vide");
+            int[] t = toileGif(rd, n);
+            wr.setOutput(out);
+            wr.prepareWriteSequence(null);
+            BufferedImage toile = new BufferedImage(t[0], t[1], BufferedImage.TYPE_INT_ARGB);
+            for (int i = 0; i < n; i++) {
+                int[] info = infoGif(rd, i);
+                BufferedImage b = rd.read(i);
+                BufferedImage avant = info[3] == 2 ? copieArgb(toile) : null;
+                java.awt.Graphics2D g = toile.createGraphics();
+                g.drawImage(b, info[0], info[1], null);
+                g.dispose();
+                BufferedImage morceau = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
+                g = morceau.createGraphics();
+                g.drawImage(toile, -x, -y, null);
+                g.dispose();
+                imageGif(wr, morceau, info[2], n > 1, i == 0);
+                if (info[3] == 1) {
+                    g = toile.createGraphics();
+                    g.setComposite(java.awt.AlphaComposite.Clear);
+                    g.fillRect(info[0], info[1], b.getWidth(), b.getHeight());
+                    g.dispose();
+                } else if (avant != null) {
+                    toile = avant;
+                }
+            }
+            wr.endWriteSequence();
+            return n;
+        } finally { rd.dispose(); wr.dispose(); }
+    }
+
+    private static int entier(org.w3c.dom.Node n, String attribut, int defaut) {
+        try { return Integer.parseInt(((org.w3c.dom.Element) n).getAttribute(attribut)); }
+        catch (Throwable t) { return defaut; }
+    }
+
+    private static BufferedImage copieArgb(BufferedImage b) {
+        BufferedImage c = new BufferedImage(b.getWidth(), b.getHeight(), BufferedImage.TYPE_INT_ARGB);
+        java.awt.Graphics2D g = c.createGraphics();
+        g.drawImage(b, 0, 0, null);
+        g.dispose();
+        return c;
     }
 
     private static IIOMetadataNode enfant(IIOMetadataNode racine, String nom) {

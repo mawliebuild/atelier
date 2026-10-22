@@ -610,6 +610,7 @@ final class CalqueActions {
         if (!ecouteEtats) { ecouteEtats = true; Zone.ecouter(() -> Platform.runLater(this::suivreZoneEtats)); }
         zoneEtats = true;
         zoneRemplacer = false;                    // un seul choix de zone a la fois
+        zoneRamasser = false;
         deuxiemeEtats = false;
         Zone.demarrerChoix();
         InfoJeu.consigne("Choisis le premier point de la zone.");
@@ -640,7 +641,7 @@ final class CalqueActions {
     }
 
     private void fenetreEtats() {
-        CalqueFenetre f = ouvrir("Changer l'état d'une zone");
+        CalqueFenetre f = ouvrir("État et rotation d'une zone");
         Label quoi = Ui.valeur("");
         Runnable maj = () -> quoi.setText(Ui.accorder("Zone " + Zone.largeur() + " × " + Zone.longueur()
                 + " : " + mobisAEtat().size() + " mobi(s)."));
@@ -681,11 +682,29 @@ final class CalqueActions {
                 }
             });
         });
+        Button pivoter = CalqueFenetre.bouton("Pivoter", false, () -> { });
+        pivoter.setTooltip(CalqueFenetre.bulle("Chaque mobi de la zone tourne d'un quart de tour sur lui-même "
+                + "(même case, même hauteur). Re-clique pour continuer à tourner. Cmd+Z annule."));
+        pivoter.setOnAction(e -> {
+            if (envoi[0] || occupe()) { refus("Une action est déjà en cours."); return; }
+            List<Integer> ids = new ArrayList<>();
+            for (HFloorItem it : mobisAEtat()) if (!GroupeFantomes.estFantome(it.getId())) ids.add(it.getId());
+            if (ids.isEmpty()) { Journal.erreur("Aucun mobi dans la zone."); return; }
+            pivoter.setDisable(true);
+            changer.setDisable(true);
+            f.dire("Rotation…");
+            tache = Groupes.pivoterMobis(ids, true, progression(f, r -> {
+                pivoter.setDisable(false);
+                changer.setDisable(false);
+                maj.run();
+            }));
+        });
         Button autre = CalqueFenetre.bouton("Nouvelle zone", false, () -> { f.fermer(); etatsZone(); });
         f.contenu(Ui.bloc("Zone", quoi,
-                Ui.aide("Chaque clic sur « Changer l'état » fait comme un double-clic sur tous les mobis "
-                        + "de la zone (les wired et les dalles magiques ne sont pas touchés).")));
-        f.boutons(CalqueFenetre.bouton("Fermer", false, f::fermer), autre, changer);
+                Ui.aide("« Changer l'état » fait comme un double-clic sur tous les mobis de la zone ; "
+                        + "« Pivoter » les fait tourner chacun sur place. Les deux se combinent, dans l'ordre que tu veux "
+                        + "(les wired et les dalles magiques ne sont pas touchés).")));
+        f.boutons(CalqueFenetre.bouton("Fermer", false, f::fermer), autre, pivoter, changer);
         f.montrer();
     }
 
@@ -703,6 +722,7 @@ final class CalqueActions {
         if (!ecouteRemplacer) { ecouteRemplacer = true; Zone.ecouter(() -> Platform.runLater(this::suivreZoneRemplacer)); }
         zoneRemplacer = true;
         zoneEtats = false;
+        zoneRamasser = false;
         deuxiemeRemplacer = false;
         Zone.demarrerChoix();
         InfoJeu.consigne("Choisis le premier point de la zone.");
@@ -720,6 +740,92 @@ final class CalqueActions {
         zoneRemplacer = false;
         if (!Zone.definie()) return;
         RemplacerZone.fenetre(ouvrir("Remplacer dans la zone"), this::remplacerZone);
+    }
+
+    // ===================================================== ramasser dans une zone
+
+    private boolean zoneRamasser = false, deuxiemeRamasser = false, ecouteRamasser = false;
+
+    /** Un autre choix de zone commence (selection par zone du panneau) : on oublie les notres. */
+    void oublierChoixZone() { zoneEtats = false; zoneRemplacer = false; zoneRamasser = false; }
+
+    /**
+     * Tout ramasser dans une zone : deux cases dans le jeu (coin et coin
+     * oppose), puis tous les mobis de sol qui touchent la zone et les muraux
+     * accroches au-dessus de ses cases vont dans l'inventaire. Une seule
+     * action pour Ctrl+Z ; confirmation s'il y a des wired ou beaucoup de mobis.
+     */
+    void ramasserZone() {
+        if (occupe()) { refus("Une action est déjà en cours."); return; }
+        if (!ecouteRamasser) { ecouteRamasser = true; Zone.ecouter(() -> Platform.runLater(this::suivreZoneRamasser)); }
+        zoneRamasser = true;
+        zoneEtats = false;
+        zoneRemplacer = false;
+        deuxiemeRamasser = false;
+        Zone.demarrerChoix();
+        InfoJeu.consigne("Tout ramasser : clique le premier coin de la zone.");
+    }
+
+    private void suivreZoneRamasser() {
+        if (!zoneRamasser) return;
+        if (Zone.choixEnCours()) {
+            if (Zone.premierCoinChoisi() && !deuxiemeRamasser) {
+                deuxiemeRamasser = true;
+                InfoJeu.consigne("Clique le coin opposé de la zone.");
+            }
+            return;
+        }
+        zoneRamasser = false;
+        if (!Zone.definie()) return;
+        List<Integer> sols = new ArrayList<>(), murs = new ArrayList<>();
+        int wired = 0;
+        for (HFloorItem it : Zone.mobisTouches()) {
+            if (GroupeFantomes.estFantome(it.getId()) || GrilleCalcul.estFictif(it.getId())) continue;
+            sols.add(it.getId());
+            String c = Salle.classe(it.getTypeId(), false);
+            if (c != null && Wired.estWired(c)) wired++;
+        }
+        for (gearth.extensions.parsers.HWallItem w : Salle.murs()) {
+            if (GroupeFantomes.estFantome(w.getId())) continue;
+            int[] c = GroupeCalcul.caseMur(w.getLocation());
+            if (c != null && Zone.contient(c[0], c[1])) murs.add(w.getId());
+        }
+        String coins = "(" + Zone.minX() + "," + Zone.minY() + ") → (" + Zone.maxX() + "," + Zone.maxY() + ")";
+        if (sols.isEmpty() && murs.isEmpty()) { refus("Aucun mobi dans la zone " + coins + "."); return; }
+        String v = Groupes.refusVerrouMobis(sols, murs);
+        if (v != null) { InfoJeu.consigne(v); return; }
+        if (occupe()) { refus("Une action est déjà en cours."); return; }
+        int n = sols.size() + murs.size();
+        if (!GroupeModele.confirmationVoulue(n, wired)) {
+            tache = Groupes.ramasserMobis(sols, murs, progressionJeu());
+            return;
+        }
+        CalqueFenetre f = ouvrir("Tout ramasser dans la zone ?");
+        Label l = new Label(WindowsClavier.texte("Zone " + coins + " : " + GroupePressePapier.mobis(n) + (n > 1 ? " vont être ramassés" : " va être ramassé")
+                + (wired > 0 ? ", dont " + wired + " wired : leurs réglages seront perdus" : "")
+                + (n > 1 ? ". Cmd+Z les repose ensuite." : ". Cmd+Z le repose ensuite.")));
+        l.setWrapText(true);
+        l.setMaxWidth(280);
+        f.contenu(l);
+        Button annuler = CalqueFenetre.bouton("Annuler", false, f::fermer);
+        Button arreter = arreter();
+        Button ok = CalqueFenetre.bouton("Ramasser", true, () -> { });
+        ok.setOnAction(e -> {
+            ok.setDisable(true); annuler.setDisable(true);
+            arreter.setVisible(true);
+            f.dire("Ramassage…");
+            tache = Groupes.ramasserMobis(sols, murs, progression(f, r -> f.fermer()));
+        });
+        f.boutons(annuler, arreter, ok);
+        f.montrer();
+    }
+
+    /** Sans fenetre : l'avancement et le bilan vont dans le jeu. */
+    private static Groupes.Progression progressionJeu() {
+        return new Groupes.Progression() {
+            @Override public void progres(int fait, int total, String texte) { }
+            @Override public void fin(Groupes.Resultat r) { resultat(r); }
+        };
     }
 
     /** Copie tournee : la fenetre de copie, deja tournee et posee a cote (fantomes, puis Poser). */

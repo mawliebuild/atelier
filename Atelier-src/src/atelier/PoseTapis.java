@@ -245,6 +245,8 @@ final class PoseTapis {
         /** Dalles posees par l'etape 1 (ids). */
         final List<Integer> dalles = new ArrayList<>();
         int dallesPrevues, dallesRestees, dallesReglees, etatsFaux, dallesLaissees;
+        /** Dalles du tapis laissees puis retirees a la toute fin (collage d'appart : ramasserLaissees). */
+        int dallesRetirees;
         /** Actions passees apres reessai ; actions restees refusees apres leurs reessais (debug). */
         int apresReessai, refusApresReessai;
         /** Dalles ramassees en plus de celles du tapis (arrivees en retard, apres un refus apparent). */
@@ -303,7 +305,7 @@ final class PoseTapis {
             String t = PoseTapis.texte(participe, pieces.size(), reussis(), hauteursFausses(), nomsRefuses(),
                     introuvables(), parDalle(), arrete, dallesRestees);
             t = avecDirections(t, autresDirections(), participe);
-            return avecRaisons(avecManquants(avecPasAuBc(avecLaissees(t, dallesLaissees), nomsPasAuBc()), manquants()), raisons());
+            return avecRaisons(avecManquants(avecPasAuBc(avecRetirees(avecLaissees(t, dallesLaissees), dallesRetirees), nomsPasAuBc()), manquants()), raisons());
         }
 
         /** Raisons donnees par le serveur pour les mobis restes refuses -> nombre de mobis. */
@@ -327,7 +329,8 @@ final class PoseTapis {
                             + (monteesRefusees > 0 ? ", " + monteesRefusees + " refusé" + (monteesRefusees > 1 ? "s" : "")
                                     + " malgré la dalle montée" : "") : "") + ", "
                     + dallesReglees + " réglée(s) au sol" + (dalles.isEmpty() ? "" : dallesReglees == 0
-                            ? " (posées directement au niveau du sol : rien à régler)" : " (les autres déjà au niveau du sol)") + ", " + (dallesLaissees > 0 ? dallesLaissees + " laissée(s) en place" : (dalles.size() - dallesRestees) + " ramassée(s)")
+                            ? " (posées directement au niveau du sol : rien à régler)" : " (les autres déjà au niveau du sol)") + ", " + (dallesRetirees > 0 ? dallesRetirees + " retirée(s) à la fin" + (dallesLaissees > 0 ? ", " + dallesLaissees + " laissée(s) en place (ramassage arrêté)" : "")
+                            : dallesLaissees > 0 ? dallesLaissees + " laissée(s) en place" : (dalles.size() - dallesRestees) + " ramassée(s)")
                     + (dallesRestees > 0 ? ", " + dallesRestees + " restée(s) dans la salle" : "")
                     + (raisonDalles != null ? " (" + raisonDalles + ")" : "") + ".";
         }
@@ -361,6 +364,13 @@ final class PoseTapis {
         if (n <= 0) return t;
         String base = t.endsWith(".") ? t.substring(0, t.length() - 1) : t;
         return base + (n > 1 ? " ; " + n + " dalles magiques laissées sous les mobis." : " ; 1 dalle magique laissée sous les mobis.");
+    }
+
+    /** Ajoute au bilan les dalles du tapis retirees a la fin du collage (ramasserLaissees). */
+    static String avecRetirees(String t, int n) {
+        if (n <= 0) return t;
+        String base = t.endsWith(".") ? t.substring(0, t.length() - 1) : t;
+        return base + (n > 1 ? " ; " + n + " dalles magiques retirées." : " ; 1 dalle magique retirée.");
     }
 
     /** Meme bilan ; dallesRestees > 0 : les dalles du tapis pas ramassees sont dites (a ramasser a la main). */
@@ -714,6 +724,47 @@ final class PoseTapis {
             int n = 0;
             for (int id : b.dalles) if (la.contains(id)) n++;
             b.dallesRestees = la.isEmpty() ? b.dalles.size() : n;
+        }
+    }
+
+    /**
+     * Collage d'appart, TOUTE FIN (apres la verification, la reprise a la dalle
+     * et les reglages des wired) : ramasse les dalles du tapis laissees en place
+     * (GARDER_DALLES). Seulement b.dalles : posees par ce tapis, ou apparues
+     * pendant lui sans etre ni deja la avant (dallesAvant) ni des mobis de la
+     * copie ; une dalle de l'utilisatrice n'y est jamais. Meme ramassage que
+     * l'etape 4 (ramasserDalles : rythme des dalles, 2 passes, confirmation
+     * acceptee), hors historique (debut). Un mobi pose garde son altitude quand
+     * la dalle dessous part (comme apres l'etape 4 d'avant GARDER_DALLES).
+     * Salle quittee : rien. stop (Arreter pendant le ramassage) : les dalles pas
+     * encore ramassees restent comptees laissees. Hors fil JavaFX.
+     */
+    static void ramasserLaissees(Bilan b, JeuSalle jeu, BooleanSupplier stop, Suivi suivi) {
+        if (b == null || b.dallesLaissees <= 0 || b.sortie || jeu.sortie()) return;
+        List<Integer> ids = new ArrayList<>();
+        for (int id : b.dalles) if (encoreLa(id)) ids.add(id);
+        int parties = b.dallesLaissees - ids.size();      // deja plus la (ramassees a la main...)
+        if (ids.isEmpty()) { Journal.debug("tapis : plus aucune dalle laissée à retirer."); b.dallesLaissees = 0; return; }
+        BooleanSupplier s = () -> jeu.sortie() || (stop != null && stop.getAsBoolean());
+        jeu.debut();
+        try {
+            if (suivi != null) suivi.progres(0, ids.size(), "Retrait des dalles…");
+            int restent = ramasserDalles(ids, s, (f, n, passe) -> { if (suivi != null) suivi.progres(f, n, "Retrait des dalles…"); });
+            if (s.getAsBoolean()) { b.dallesLaissees = restent; }
+            else { b.dallesLaissees = 0; b.dallesRestees += restent; }
+            b.dallesRetirees = ids.size() - restent;
+            Journal.debug("tapis : " + b.dallesRetirees + " dalle(s) laissée(s) retirée(s) à la fin sur " + ids.size()
+                    + (parties > 0 ? " (" + parties + " déjà parties)" : "")
+                    + (restent > 0 ? ", " + restent + (b.dallesLaissees > 0 ? " laissée(s) (arrêt)" : " restée(s) dans la salle") : "") + ".");
+        } catch (Throwable t) {
+            Journal.debug("tapis : retrait des dalles laissées interrompu : " + t);
+            int la = 0;
+            for (int id : ids) if (encoreLa(id)) la++;
+            b.dallesRetirees = ids.size() - la;
+            b.dallesLaissees = 0;
+            b.dallesRestees += la;
+        } finally {
+            jeu.fin();
         }
     }
 

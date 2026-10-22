@@ -74,6 +74,34 @@ def _empreinte(f):
 
 CACHE = os.path.join(TRAVAIL, "origines", _empreinte(ORIGINE))
 
+# ------------------------------------------------------------------ noms obfusques
+# Ce fichier nomme les classes et membres obfusques de la version de reference
+# (renommage.REFERENCE). Habbo les renomme a chaque mise a jour : M() et C() donnent
+# leur nom dans la version ORIGINE (identiques si c'est la reference).
+import renommage
+_R = renommage.Renommage(ORIGINE, TRAVAIL, JAVA, MEMOIRE, FFDEC, _empreinte)
+FV_P = "com/sulake/habbo/inventory/furni/FurniView"
+FGV_P = "com/sulake/habbo/inventory/furni/FurniGridView"
+RSC_P = "com/sulake/room/renderer/\u00a7_-b2M\u00a7"
+S9_P = "com/sulake/room/renderer/utils/\u00a7_-s9\u00a7"
+X6_P = "com/sulake/core/window/components/\u00a7_-X6\u00a7"
+R1T_P = "\u00a7_-910\u00a7/\u00a7_-R1T\u00a7"
+S1R_P = "com/sulake/core/utils/images/\u00a7_-s1R\u00a7"
+CEH_P = "com/sulake/habbo/freeflowchat/data/ChatEventHandler"
+FVIS_P = "com/sulake/habbo/room/object/visualization/furniture/FurnitureVisualization"
+BV_P = "com/sulake/habbo/inventory/bots/BotsView"
+ISFV_P = "com/sulake/habbo/ui/widget/infostand/InfoStandFurniView"
+
+
+def M(chemin, ancien):
+    """Nom, dans ORIGINE, du membre « ancien » de la classe de reference « chemin »."""
+    return _R.membre(chemin, ancien)
+
+
+def C(chemin):
+    """Nom, dans ORIGINE, de la classe obfusquee de reference « chemin »."""
+    return _R.classe(chemin)
+
 
 def _ffdec(*a):
     subprocess.run([JAVA, MEMOIRE, "-jar", FFDEC] + list(a), capture_output=True, text=True, encoding="utf-8", errors="replace")
@@ -105,6 +133,19 @@ def corps(classe, methode):
                 if m:
                     return m.group(1)
     sys.exit("Methode introuvable : %s.%s" % (classe, methode))
+
+
+def cadre(u, locaux_origine, pile, locaux):
+    """Agrandit la pile et les registres d'une methode copiee : maxstack au moins « pile »
+    (une nouvelle version de Habbo peut deja en demander plus), localcount = « locaux ».
+    Les registres ajoutes commencent a « locaux_origine » : si la methode en a desormais
+    plus, nos registres ecraseraient les siens, on s'arrete."""
+    im = next(i for i, x in enumerate(u) if x.startswith("maxstack "))
+    il = next(i for i, x in enumerate(u) if x.startswith("localcount "))
+    if int(u[il].split()[1]) != locaux_origine:
+        sys.exit("Methode changee (%s au lieu de localcount %d)" % (u[il], locaux_origine))
+    u[im] = "maxstack %d" % max(pile, int(u[im].split()[1]))
+    u[il] = "localcount %d" % locaux
 
 
 def pcode_origine(classe, methode):
@@ -154,21 +195,28 @@ def fichier_binaire(symbole):
 ICONES = "icones" not in SANS          # 4 boutons-icones a la place du menu Tous/Sol/...
 CATEGORIES = "categories" not in SANS  # menus Categorie / Annee (filtres de l'Atelier)
 PAGINATION = "pagination" not in SANS  # ◀ Page [n] / N ▶
+HAUSSE_INVENTAIRE = 24                 # pixels ajoutes a la hauteur de la fenetre d'inventaire
 RECHERCHE = "recherche" not in SANS  # la recherche du haut trouve aussi categorie, ligne, annee, type
 CHAMP_RECHERCHE = False  # ancien champ a gauche de Categorie (retire : une seule recherche)
 GRILLE = "grille" not in SANS  # « Voir grille » : traits autour des cases, par-dessus les mobis
 SURLIGNAGE = "surlignage" not in SANS  # lueur sur les mobis selectionnes dans les calques
 BOTS = "bots" not in SANS  # onglet Bots : menu Type (casual / service / enregistreur)
 TROC = "troc" not in SANS  # bouton « Vendre au troc » sous « Vendre au marché » (fenetre de l'Atelier)
+INFOSTAND = "infostand" not in SANS  # fiche du mobi dans la salle : categorie, boutons selon les droits, Placer / Acheter
+ETATS = "etats" not in SANS  # fiche du mobi : fleches qui montrent ses etats en apercu
+MENUS_COURTS = "menus" not in SANS  # menus deroulants de l'Atelier : hauteur limitee, la liste defile
+ANIMAUX = "animaux" not in SANS  # menu « Tout type » de l'inventaire : entree « Animaux »
+ETATS_MAX = 20           # etats essayes au plus pour un mobi
+MENU_HAUTEUR_MAX = 244   # pixels : une douzaine de lignes, puis la liste defile
 
 # ------------------------------------------------------------------ references P-code (forme d'origine)
 FV = 'PrivateNamespace("com.sulake.habbo.inventory.furni:FurniView")'
 FGV = 'PrivateNamespace("com.sulake.habbo.inventory.furni:FurniGridView")'
 IW = 'Namespace("com.sulake.core.window:IWindow")'
 DD = 'Namespace("com.sulake.core.window.components:IDropMenuWindow")'
-Y1 = 'getlex QName(%s,"_-y1")' % FV
-W14 = 'getlex QName(%s,"_-w14")' % FV
-L1Y = 'getlex QName(%s,"_-L1Y")' % FV
+Y1 = 'getlex QName(%s,"%s")' % (FV, M(FV_P, "_-y1"))
+W14 = 'getlex QName(%s,"%s")' % (FV, M(FV_P, "_-w14"))
+L1Y = 'getlex QName(%s,"%s")' % (FV, M(FV_P, "_-L1Y"))
 FIND = 'callproperty QName(%s,"findChildByName"), 1' % IW
 NAME = 'getproperty QName(%s,"name")' % IW
 CAPTION_GET = 'getproperty QName(%s,"caption")' % IW
@@ -177,8 +225,8 @@ COLOR = 'setproperty QName(%s,"color")' % IW
 SEL_SET = 'setproperty QName(%s,"selection")' % DD
 SEL_GET = 'getproperty QName(%s,"selection")' % DD
 POP = 'callpropvoid QName(%s,"populate"), 1' % DD
-X6 = 'QName(PackageNamespace("com.sulake.core.window.components"),"_-X6")'
-R1T = 'QName(PackageNamespace("_-910"),"_-R1T")'
+X6 = 'QName(PackageNamespace("com.sulake.core.window.components"),"%s")' % C(X6_P)
+R1T = 'QName(PackageNamespace("%s"),"%s")' % (_R.paquet(R1T_P), C(R1T_P))
 TYPE = 'getproperty QName(PackageNamespace(""),"type")'
 KBD = 'QName(PackageNamespace("com.sulake.core.window.events"),"WindowKeyboardEvent")'
 JAUNE, BLANC = 15384347, 16777215
@@ -439,19 +487,33 @@ def mise_en_page():
         rep('<scrollable_itemgrid_vertical', debut_grille + '                    <scrollable_itemgrid_vertical')
     s = s[:debut] + seg + s[fin:]
     if CATEGORIES:
-        # « Catégorie : … » en petit en haut de l'aperçu (categorie_inventaire) : la liste sous
-        # l'aperçu (nom, description, boutons) ne grandit pas, le nom ne passe pas sur l'image
+        # « Catégorie : … » en petit, juste sous le nom du mobi, dans la liste sous l'aperçu
+        # (categorie_inventaire ; cachee quand il n'y a pas de categorie, la liste se resserre)
         ancre = '<widget x="5" y="0" width="170" height="130" params="2192" style="3" name="furni_preview_widget"'
         assert s.count(ancre) == 1, ancre
-        k = s.index('</widget>', s.index(ancre)) + len('</widget>')
-        s = s[:k] + ('\n                        <text x="8" y="2" width="160" height="14" params="16" style="3" '
-                     'name="atelier_categorie_mobi" caption="">\n'
-                     '                          <variables>\n'
-                     '                            <var key="auto_size" value="left" type="String"/>\n'
-                     '                            <var key="text_color" value="0x777777" type="hex"/>\n'
-                     '                            <var key="mouse_wheel_enabled" value="false" type="Boolean"/>\n'
-                     '                          </variables>\n'
-                     '                        </text>') + s[k:]
+        k = s.index('name="furni_name"', s.index(ancre))
+        k = s.index('</text>', k) + len('</text>')
+        s = s[:k] + ('\n                            <text x="0" y="17" width="190" height="15" params="16" style="3" '
+                     'name="atelier_categorie_mobi" caption="" visible="false" width_min="190" width_max="190">\n'
+                     '                              <variables>\n'
+                     '                                <var key="text_color" value="0x777777" type="hex"/>\n'
+                     '                                <var key="mouse_wheel_enabled" value="false" type="Boolean"/>\n'
+                     '                              </variables>\n'
+                     '                            </text>') + s[k:]
+    if CATEGORIES:
+        # fenetre un peu plus haute : la place prise par « Catégorie : … » est rendue a l'apercu
+        # (les conteneurs s'etirent avec la fenetre, la liste sous l'aperçu reste en bas)
+        a = '<layout name="inventory" width="490" height="342"'
+        assert s.count(a) == 1, a
+        s = s.replace(a, '<layout name="inventory" width="490" height="%d"' % (342 + HAUSSE_INVENTAIRE))
+        s, n = re.subn(r'(<frame x="0" y="0" width="490" )height="342"( [^>]*name="inventoryBase")',
+                       r'\g<1>height="%d"\g<2>' % (342 + HAUSSE_INVENTAIRE), s, count=1)
+        assert n == 1, "inventaire : hauteur de la fenetre non changee"
+        # a chaque ouverture ou changement d'onglet, le jeu remet la fenetre a sa hauteur minimale
+        # puis l'ajuste a son contenu (InventoryMainView.enableScaling) : avec 300, elle rapetissait
+        s, n = re.subn(r'(name="inventoryBase"[^>]*)height_min="300"', r'\g<1>height_min="%d"' % (342 + HAUSSE_INVENTAIRE),
+                       s, count=1)
+        assert n == 1, "inventaire : hauteur minimale de la fenetre non changee"
     if TROC:
         s = mise_en_page_troc(s, debut)
     if BOTS:
@@ -539,8 +601,8 @@ def nom_ligne(L, OUT, I, J, et):
 
 def categorie_inventaire():
     """
-    FurniView.updateActionView : sous le nom du mobi choisi dans l'inventaire, en tete de
-    dans l'etiquette « atelier_categorie_mobi » en haut de l'aperçu (mise_en_page), « Catégorie : <nom> »
+    FurniView.updateActionView : dans l'etiquette « atelier_categorie_mobi », sous le nom du
+    mobi choisi dans l'inventaire (mise_en_page), « Catégorie : <nom> »
     (collection de sa ligne, comme le menu Categorie). Videe en tete de methode, remplie juste
     apres l'ecriture de la description. Registres ajoutes : 22 a 26.
     """
@@ -564,19 +626,21 @@ def categorie_inventaire():
          'getlocal 23', 'iftrue atl_ci_l', 'pushstring ""', 'setlocal 23', 'atl_ci_l:',
          'getlocal 23', LOWER, 'coerce_s', 'setlocal 23']
     p += nom_ligne(23, 24, 25, 26, 'atl_ci')
-    p += ['getlex QName(%s,"_-y1")' % FVN, 'pushstring "atelier_categorie_mobi"',
+    p += ['getlex QName(%s,"%s")' % (FVN, M(FV_P, "_-y1")), 'pushstring "atelier_categorie_mobi"',
           'callproperty QName(%s,"findChildByName"), 1' % IW, 'coerce_a', 'setlocal 22',
           'getlocal 22', 'iffalse atl_ci_sortie',
           'getlocal 22', 'pushstring "Catégorie : "', 'getlocal 24', 'add',
           'setproperty QName(%s,"caption")' % IW,
+          'getlocal 22', 'pushtrue', 'setproperty QName(%s,"visible")' % IW,
           'atl_ci_sortie:']
     u = u[:k + 4] + p + u[k + 4:]
     # en tete : l'etiquette videe (rien de choisi, ou un mobi sans categorie connue)
-    vide = ['getlex QName(%s,"_-y1")' % FVN, 'iffalse atl_cv_fin',
-            'getlex QName(%s,"_-y1")' % FVN, 'pushstring "atelier_categorie_mobi"',
+    vide = ['getlex QName(%s,"%s")' % (FVN, M(FV_P, "_-y1")), 'iffalse atl_cv_fin',
+            'getlex QName(%s,"%s")' % (FVN, M(FV_P, "_-y1")), 'pushstring "atelier_categorie_mobi"',
             'callproperty QName(%s,"findChildByName"), 1' % IW, 'coerce_a', 'setlocal 22',
             'getlocal 22', 'iffalse atl_cv_fin',
             'getlocal 22', 'pushstring ""', 'setproperty QName(%s,"caption")' % IW,
+            'getlocal 22', 'pushfalse', 'setproperty QName(%s,"visible")' % IW,
             'atl_cv_fin:']
     d = u.index("pushscope")
     u = u[:d + 1] + vide + u[d + 1:]
@@ -736,7 +800,7 @@ def window_event_proc():
     if PAGINATION:
         for nom, delta, et in (("atelier_page_prec", -1, "atl_pp"), ("atelier_page_suiv", 1, "atl_ps")):
             p += ['getlocal 11', 'pushstring "%s"' % nom, 'ifne ' + et,
-                  L1Y, 'getproperty QName(%s,"_-B2M")' % FGV, 'convert_i',
+                  L1Y, 'getproperty QName(%s,"%s")' % (FGV, M(FGV_P, "_-B2M")), 'convert_i',
                   'pushbyte %d' % delta, 'add', 'convert_i', 'setlocal 12'] + aller_page() + [et + ':']
     p += ['jump atl_fin']
     # ---- clavier : Entree dans la case de page
@@ -836,7 +900,7 @@ def boutons_troc():
     u[im] = "maxstack %d" % max(int(u[im].split()[1]), 10)
     u[il] = "localcount %d" % (R + 2)
     T, S = R, R + 1
-    L = 'getlex QName(%s,"_-85")' % FV
+    L = 'getlex QName(%s,"%s")' % (FV, M(FV_P, "_-85"))
     ILW = 'Namespace("com.sulake.core.window.components:IItemListWindow")'
     def bloc(n):
         e = 'atl_tb%d' % n
@@ -899,7 +963,7 @@ def update_paging():
           'getlocal 7', 'iffalse atl_u1',
           'getlocal 7', 'pushstring "atelier_page_saisie"', FIND, 'coerce_a', 'setlocal 8',
           'getlocal 8', 'iffalse atl_u0',
-          'getlocal 8', 'getlex QName(%s,"_-B2M")' % FGV, 'pushbyte 1', 'add', 'convert_s', CAPTION_SET,
+          'getlocal 8', 'getlex QName(%s,"%s")' % (FGV, M(FGV_P, "_-B2M")), 'pushbyte 1', 'add', 'convert_s', CAPTION_SET,
           'atl_u0:',
           'getlocal 7', 'pushstring "atelier_page_total"', FIND, 'coerce_a', 'setlocal 8',
           'getlocal 8', 'iffalse atl_u1',
@@ -926,7 +990,7 @@ def capture_salle(CEH):
     FS = 'QName(PackageNamespace("flash.filesystem"),"FileStream")'
     return [
         'getlocal 6', 'pushstring "atelier:capture"', INDEXOF, 'pushbyte 0', 'ifne atl_pas_capture',
-        'getlex QName(%s,"_-017")' % CEH, 'getproperty QName(PackageNamespace(""),"roomEngine")', 'coerce_a', 'setlocal 7',
+        'getlex QName(%s,"%s")' % (CEH, M(CEH_P, "_-017")), 'getproperty QName(PackageNamespace(""),"roomEngine")', 'coerce_a', 'setlocal 7',
         'getlocal1', 'getproperty QName(PackageNamespace(""),"session")',
         'getproperty QName(Namespace("com.sulake.habbo.session:IRoomSession"),"roomId")', 'convert_i', 'setlocal 8',
         'pushbyte 0', 'setlocal 9',
@@ -940,7 +1004,7 @@ def capture_salle(CEH):
         'getlocal 10', 'callproperty QName(Namespace("com.sulake.room.renderer:IRoomRenderingCanvas"),"takeScreenShot"), 0',
         'coerce_a', 'setlocal 11',
         'getlocal 11', 'iffalse atl_cap_fin',
-        'getlex QName(PackageNamespace("com.sulake.core.utils.images"),"_-s1R")', 'getlocal 11',
+        'getlex QName(PackageNamespace("com.sulake.core.utils.images"),"%s")' % C(S1R_P), 'getlocal 11',
         'callproperty QName(%s,"encode"), 1' % PUB, 'coerce_a', 'setlocal 11',
         # dossier personnel (Mac et Windows) : File.userDirectory.resolvePath(...)
         'getlex ' + FILE, 'getproperty QName(%s,"userDirectory")' % PUB,
@@ -963,7 +1027,7 @@ def annuler_deplacement(CEH):
     fait le jeu quand on ferme l'inventaire (cancelRoomObjectInsert).
     """
     return ['getlocal 6', 'pushstring "atelier:annuler"', 'ifne atl_pas_annuler',
-            'getlex QName(%s,"_-017")' % CEH, 'getproperty QName(PackageNamespace(""),"roomEngine")',
+            'getlex QName(%s,"%s")' % (CEH, M(CEH_P, "_-017")), 'getproperty QName(PackageNamespace(""),"roomEngine")',
             'callpropvoid QName(Namespace("com.sulake.habbo.room:IRoomEngine"),"cancelRoomObjectInsert"), 0',
             'returnvoid', 'atl_pas_annuler:']
 
@@ -971,7 +1035,7 @@ def annuler_deplacement(CEH):
 def trouver_canevas(CEH, n):
     """Registres 7 moteur, 8 salle, 10 canevas de la salle (sinon saute a atl_<n>_fin)."""
     return [
-        'getlex QName(%s,"_-017")' % CEH, 'getproperty QName(PackageNamespace(""),"roomEngine")', 'coerce_a', 'setlocal 7',
+        'getlex QName(%s,"%s")' % (CEH, M(CEH_P, "_-017")), 'getproperty QName(PackageNamespace(""),"roomEngine")', 'coerce_a', 'setlocal 7',
         'getlocal1', 'getproperty QName(PackageNamespace(""),"session")',
         'getproperty QName(Namespace("com.sulake.habbo.session:IRoomSession"),"roomId")', 'convert_i', 'setlocal 8',
         'pushbyte 0', 'setlocal 9',
@@ -1041,7 +1105,7 @@ def calque_salle(CEH):
 def rendu_calque(RSC, GEOM, DISP, V3):
     """Rendu : la photo « atelier_calque » suit la vue (registres 28 calque, 29 echelle, 30 point)."""
     PUB = 'PackageNamespace("")'
-    c = ['getlex QName(%s,"_-Tr")' % RSC, 'pushstring "atelier_calque"',
+    c = ['getlex QName(%s,"%s")' % (RSC, M(RSC_P, "_-Tr")), 'pushstring "atelier_calque"',
          'callproperty QName(%s,"getChildByName"), 1' % PUB, 'coerce_a', 'setlocal 28',
          'getlocal 28', 'iffalse atl_cqr_fin',
          'getlocal 28', 'getproperty QName(%s,"visible")' % PUB, 'iffalse atl_cqr_fin',
@@ -1051,7 +1115,7 @@ def rendu_calque(RSC, GEOM, DISP, V3):
          GEOM, 'findpropstrict ' + V3, 'pushbyte 0', 'pushbyte 0', 'pushbyte 0', 'constructprop %s, 3' % V3,
          'callproperty QName(%s,"getScreenPoint"), 1' % PUB, 'coerce_a', 'setlocal 30',
          'getlocal 30', 'iffalse atl_cqr_fin']
-    for k, ech, moitie, d in (("x", "scaleX", "_-Yd", "atl_dx"), ("y", "scaleY", "_-E1E", "atl_dy")):
+    for k, ech, moitie, d in (("x", "scaleX", M(RSC_P, "_-Yd"), "atl_dx"), ("y", "scaleY", M(RSC_P, "_-E1E"), "atl_dy")):
         c += ['getlocal 28',
               DISP, 'getproperty QName(%s,"%s")' % (PUB, k),
               DISP, 'getproperty QName(%s,"%s")' % (PUB, ech),
@@ -1152,16 +1216,15 @@ def rendu_grille():
     V3 = 'QName(PackageNamespace("com.sulake.room.utils"),"Vector3d")'
     GEOM = 'getlex QName(%s,"_geometry")' % RSC
     DISP = 'getlex QName(%s,"_display")' % RSC
-    u = list(pcode_origine("com.sulake.room.renderer.§_-b2M§", "render"))
-    im, il = u.index("maxstack 7"), u.index("localcount 11")
-    u[im] = "maxstack 16"; u[il] = "localcount 31"
+    u = list(pcode_origine(RSC_C, "render"))
+    cadre(u, 11, 16, 31)
     c = rendu_calque(RSC, GEOM, DISP, V3)
-    c += ['getlex QName(%s,"_-Tr")' % RSC, 'pushstring "atelier_grille"',
+    c += ['getlex QName(%s,"%s")' % (RSC, M(RSC_P, "_-Tr")), 'pushstring "atelier_grille"',
          'callproperty QName(%s,"getChildByName"), 1' % PUB, 'coerce_a', 'setlocal 11',
          'getlocal 11', 'iffalse atl_g_fin']
     # Le jeu place chaque sprite a « point ecran + int(largeur/2) » (et la
     # moitie de la hauteur) dans le calque des mobis : la grille aussi.
-    for k, ech, moitie in (("x", "scaleX", "_-Yd"), ("y", "scaleY", "_-E1E")):
+    for k, ech, moitie in (("x", "scaleX", M(RSC_P, "_-Yd")), ("y", "scaleY", M(RSC_P, "_-E1E"))):
         c += ['getlocal 11', DISP, 'getproperty QName(%s,"%s")' % (PUB, k),
               DISP, 'getproperty QName(%s,"%s")' % (PUB, ech),
               'getlex QName(%s,"%s")' % (RSC, moitie), 'pushbyte 2', 'divide', 'convert_i', 'multiply', 'add',
@@ -1428,7 +1491,7 @@ def opacite_salle(CEH):
     ROMC = 'Namespace("com.sulake.room.object:IRoomObjectModelController")'
     ALPHA = 'pushstring "furniture_alpha_multiplier"'
     return ['getlocal 6', 'pushstring "atelier:opacite="', INDEXOF, 'pushbyte 0', 'ifne atl_pas_op',
-            'getlex QName(%s,"_-017")' % CEH, 'getproperty QName(%s,"roomEngine")' % PUB, 'coerce_a', 'setlocal 7',
+            'getlex QName(%s,"%s")' % (CEH, M(CEH_P, "_-017")), 'getproperty QName(%s,"roomEngine")' % PUB, 'coerce_a', 'setlocal 7',
             'getlocal1', 'getproperty QName(%s,"session")' % PUB,
             'getproperty QName(Namespace("com.sulake.habbo.session:IRoomSession"),"roomId")', 'convert_i', 'setlocal 8',
             'getlocal 6', 'pushbyte 16', 'callproperty QName(%s,"substr"), 1' % AS3,
@@ -1503,11 +1566,11 @@ def clic_cases():
     im = next(i for i, x in enumerate(u) if x.startswith("maxstack "))
     il = next(i for i, x in enumerate(u) if x.startswith("localcount "))
     u[im] = "maxstack %d" % max(20, int(u[im].split()[1]))
-    u[il] = "localcount %d" % max(38, int(u[il].split()[1]))
+    u[il] = "localcount %d" % max(44, int(u[il].split()[1]))
     SHAPE = 'QName(PackageNamespace("flash.display"),"Shape")'
     def vec(a, b, c):
         return ['findpropstrict ' + V3] + a + b + c + ['constructprop %s, 3' % V3]
-    p = ['getlex QName(%s,"_-Tr")' % RSC, 'pushstring "atelier_grille"',
+    p = ['getlex QName(%s,"%s")' % (RSC, M(RSC_P, "_-Tr")), 'pushstring "atelier_grille"',
          'callproperty QName(%s,"getChildByName"), 1' % PUB, 'coerce_a', 'setlocal 19',
          'getlocal 19', 'iffalse atl_k_non']
     # double-clic : les dalles magiques le laissent passer au mobi vise (un clic simple les selectionne)
@@ -1520,8 +1583,8 @@ def clic_cases():
          'getlocal3', 'pushstring "mouseMove"', 'ifne atl_k_non']
     # survol : la case sous la souris (atl_hx, atl_hy), redessinee si elle change
     p += ['findpropstrict ' + PT,
-          'getlocal1', 'getlex QName(%s,"_-Yd")' % RSC, 'pushbyte 2', 'divide', 'convert_i', 'subtract',
-          'getlocal2', 'getlex QName(%s,"_-E1E")' % RSC, 'pushbyte 2', 'divide', 'convert_i', 'subtract',
+          'getlocal1', 'getlex QName(%s,"%s")' % (RSC, M(RSC_P, "_-Yd")), 'pushbyte 2', 'divide', 'convert_i', 'subtract',
+          'getlocal2', 'getlex QName(%s,"%s")' % (RSC, M(RSC_P, "_-E1E")), 'pushbyte 2', 'divide', 'convert_i', 'subtract',
           'constructprop %s, 2' % PT, 'coerce_a', 'setlocal 20',
           'getlex QName(%s,"_geometry")' % RSC, 'getlocal 20']
     p += vec(['pushbyte 0'], ['pushbyte 0'], ['getlocal 19', 'getproperty QName(%s,"atl_h")' % PUB, 'convert_d'])
@@ -1571,8 +1634,8 @@ def clic_cases():
     p += ['jump atl_k_non']
     p += ['atl_k_clic:',
          'findpropstrict ' + PT,
-         'getlocal1', 'getlex QName(%s,"_-Yd")' % RSC, 'pushbyte 2', 'divide', 'convert_i', 'subtract',
-         'getlocal2', 'getlex QName(%s,"_-E1E")' % RSC, 'pushbyte 2', 'divide', 'convert_i', 'subtract',
+         'getlocal1', 'getlex QName(%s,"%s")' % (RSC, M(RSC_P, "_-Yd")), 'pushbyte 2', 'divide', 'convert_i', 'subtract',
+         'getlocal2', 'getlex QName(%s,"%s")' % (RSC, M(RSC_P, "_-E1E")), 'pushbyte 2', 'divide', 'convert_i', 'subtract',
          'constructprop %s, 2' % PT, 'coerce_a', 'setlocal 20',
          'getlex QName(%s,"_geometry")' % RSC, 'getlocal 20']
     p += vec(['pushbyte 0'], ['pushbyte 0'], ['getlocal 19', 'getproperty QName(%s,"atl_h")' % PUB, 'convert_d'])
@@ -1611,17 +1674,21 @@ def double_clic_dalles(PUB):
     (collage, pose) comptent tout de suite, sans attendre « atelier:dalles=1 ».
     Puis grille.atl_dc (lu par clic_sol) dit si les dalles laissent passer ce
     double-clic : oui seulement si, sous la souris, autre chose qu'une dalle,
-    le sol, un mur, le curseur de case ou la fleche de selection repond
-    (mobi pose dessus, avatar...) ; une dalle
-    double-cliquee seule garde son double-clic. Hors double-clic : atl_dc faux.
-    Registres : 19 grille, 34 indice, 35 objet / sprite, 36 liste, 37 texte.
+    le sol, un mur, le curseur de case ou la fleche de selection repond,
+    ET que sa case est dans l'emprise d'une dalle (mobi pose dessus, avatar
+    dessus...). Un mobi DERRIERE la dalle (case hors de toute dalle) ne compte
+    pas : un double-clic sur les bords ou le milieu de la dalle l'ouvre, comme
+    dans le jeu d'origine. Hors double-clic : atl_dc faux.
+    Registres : 19 grille, 34 indice, 35 objet / sprite, 36 liste, 37 texte,
+    38 objet vise, 39 indice des dalles, 40 sa position, 41 dalle,
+    42 position de la dalle, 43 cote de la dalle.
     """
-    DEF = 'ProtectedNamespace("com.sulake.room.renderer:_-b2M")'
+    DEF = 'ProtectedNamespace("com.sulake.room.renderer:%s")' % C(RSC_P)
     CONT = 'getlex QName(PrivateNamespace("com.sulake.room.renderer:RoomSpriteCanvas"),"_container")'
     IC = 'Namespace("com.sulake.room.renderer:IRoomSpriteCanvasContainer")'
     RO = 'Namespace("com.sulake.room.object:IRoomObject")'
     DC = 'setproperty QName(%s,"atl_dc")' % PUB
-    return ['getlocal 19', 'pushfalse', DC,
+    p = ['getlocal 19', 'pushfalse', DC,
             'getlocal3', 'pushstring "doubleClick"', 'ifne atl_dd_fin',
             # 1. dalles magiques du canevas, en direct
             'pushstring ","', 'coerce_s', 'setlocal 36',
@@ -1659,14 +1726,38 @@ def double_clic_dalles(PUB):
             'pushstring ","', 'add', INDEXOF, 'pushbyte 0', 'ifge atl_dd_sn',
             # le curseur de case et la fleche de selection ne comptent pas comme un mobi pose
             CONT, 'getlocal 35', 'getproperty QName(%s,"identifier")' % PUB,
-            'callproperty QName(%s,"getRoomObject"), 1' % IC, 'coerce_a', 'setlocal 37',
-            'getlocal 37', 'iffalse atl_dd_sn',
-            'getlocal 37', 'callproperty QName(%s,"getType"), 0' % RO, 'coerce_s', 'setlocal 37',
+            'callproperty QName(%s,"getRoomObject"), 1' % IC, 'coerce_a', 'setlocal 38',
+            'getlocal 38', 'iffalse atl_dd_sn',
+            'getlocal 38', 'callproperty QName(%s,"getType"), 0' % RO, 'coerce_s', 'setlocal 37',
             'getlocal 37', 'pushstring "tile_cursor"', 'ifeq atl_dd_sn',
             'getlocal 37', 'pushstring "selection_arrow"', 'ifeq atl_dd_sn',
-            'getlocal 19', 'pushtrue', DC, 'jump atl_dd_fin',
-            'atl_dd_sn:', 'declocal_i 34', 'jump atl_dd_s',
-            'atl_dd_fin:']
+            'getlocal 38', 'callproperty QName(%s,"getLocation"), 0' % RO, 'coerce_a', 'setlocal 40',
+            'getlocal 40', 'iffalse atl_dd_sn',
+            # 3. sa case est-elle sur une dalle ? (sinon il est derriere : la dalle garde le double-clic)
+            'pushbyte 0', 'setlocal 39',
+            'atl_dd_r:', 'label',
+            'getlocal 39', CONT, 'callproperty QName(%s,"getRoomObjectCount"), 0' % IC, 'ifge atl_dd_sn',
+            CONT, 'getlocal 39', 'callproperty QName(%s,"getRoomObjectWithIndex"), 1' % IC, 'coerce_a', 'setlocal 41',
+            'getlocal 41', 'iffalse atl_dd_rn',
+            'getlocal 41', 'callproperty QName(%s,"getType"), 0' % RO, 'coerce_s', 'setlocal 37',
+            'getlocal 37', 'iffalse atl_dd_rn',
+            'getlocal 37', 'pushstring "tile_stackmagic"', INDEXOF, 'pushbyte 0', 'ifne atl_dd_rn',
+            'getlocal 41', 'callproperty QName(%s,"getLocation"), 0' % RO, 'coerce_a', 'setlocal 42',
+            'getlocal 42', 'iffalse atl_dd_rn']
+    # cote de la dalle d'apres son type (1x1, 1x2 compte 2, 2x2, 4x4, 6x6, 8x8)
+    p += ['pushbyte 1', 'convert_d', 'setlocal 43']
+    for motif, cote in (("stackmagic1", 2), ("stackmagic2", 2), ("4x4", 4), ("6x6", 6), ("8x8", 8)):
+        p += ['getlocal 37', 'pushstring "%s"' % motif, INDEXOF, 'pushbyte 0', 'iflt atl_dd_c%d_%s' % (cote, motif[-1]),
+              'pushbyte %d' % cote, 'convert_d', 'setlocal 43', 'atl_dd_c%d_%s:' % (cote, motif[-1])]
+    for axe in ("x", "y"):
+        a = 'getproperty QName(%s,"%s")' % (PUB, axe)
+        p += ['getlocal 40', a, 'getlocal 42', a, 'iflt atl_dd_rn',
+              'getlocal 40', a, 'getlocal 42', a, 'getlocal 43', 'add', 'ifge atl_dd_rn']
+    p += ['getlocal 19', 'pushtrue', DC, 'jump atl_dd_fin',
+          'atl_dd_rn:', 'inclocal_i 39', 'jump atl_dd_r',
+          'atl_dd_sn:', 'declocal_i 34', 'jump atl_dd_s',
+          'atl_dd_fin:']
+    return p
 
 
 def empreinte_survol(PUB, RSC, V3, PT, MATH, SHAPE, vec):
@@ -1681,8 +1772,8 @@ def empreinte_survol(PUB, RSC, V3, PT, MATH, SHAPE, vec):
     p = g('atl_e') + ['iffalse atl_e_non',
          'getlocal3', 'pushstring "mouseMove"', 'ifne atl_e_non',
          'findpropstrict ' + PT,
-         'getlocal1', 'getlex QName(%s,"_-Yd")' % RSC, 'pushbyte 2', 'divide', 'convert_i', 'subtract',
-         'getlocal2', 'getlex QName(%s,"_-E1E")' % RSC, 'pushbyte 2', 'divide', 'convert_i', 'subtract',
+         'getlocal1', 'getlex QName(%s,"%s")' % (RSC, M(RSC_P, "_-Yd")), 'pushbyte 2', 'divide', 'convert_i', 'subtract',
+         'getlocal2', 'getlex QName(%s,"%s")' % (RSC, M(RSC_P, "_-E1E")), 'pushbyte 2', 'divide', 'convert_i', 'subtract',
          'constructprop %s, 2' % PT, 'coerce_a', 'setlocal 20',
          'getlex QName(%s,"_geometry")' % RSC, 'getlocal 20']
     p += vec(['pushbyte 0'], ['pushbyte 0'], g('atl_eh') + ['convert_d'])
@@ -1904,7 +1995,7 @@ def double_clic_immediat():
     il = next(i for i, x in enumerate(u) if x.startswith("localcount "))
     u[im] = "maxstack %d" % max(20, int(u[im].split()[1]))
     u[il] = "localcount %d" % max(17, int(u[il].split()[1]))
-    p = ['getlex QName(%s,"_-Tr")' % RSC, 'pushstring "atelier_grille"',
+    p = ['getlex QName(%s,"%s")' % (RSC, M(RSC_P, "_-Tr")), 'pushstring "atelier_grille"',
          'callproperty QName(%s,"getChildByName"), 1' % PUB, 'coerce_a', 'setlocal 16',
          'getlocal 16', 'iffalse atl_dk_non',
          'getlocal 16', 'getlocal3', 'convert_b', 'setproperty QName(%s,"atl_dc")' % PUB,
@@ -1936,8 +2027,7 @@ def chat_salle():
     GLOW = 'QName(PackageNamespace("flash.filters"),"GlowFilter")'
     FILTRES = 'setproperty QName(PackageNamespace(""),"filters")'
     c = list(pcode_origine("com.sulake.habbo.freeflowchat.data.ChatEventHandler", "onRoomChat"))
-    im, il = c.index("maxstack 6"), c.index("localcount 6")
-    c[im] = "maxstack 40"; c[il] = "localcount 17"
+    cadre(c, 6, 40, 17)
     p = ['getlocal1', 'getproperty QName(PackageNamespace(""),"text")', 'coerce_s', 'setlocal 6']
     p += capture_salle(CEH)
     p += annuler_deplacement(CEH)
@@ -1951,7 +2041,7 @@ def chat_salle():
         p += empreinte_salle(CEH)
         p += opacite_salle(CEH)
     p += ['getlocal 6', 'pushstring "atelier:surligner="', INDEXOF, 'pushbyte 0', 'ifne atl_normal',
-         'getlex QName(%s,"_-017")' % CEH, 'getproperty QName(PackageNamespace(""),"roomEngine")', 'coerce_a', 'setlocal 7',
+         'getlex QName(%s,"%s")' % (CEH, M(CEH_P, "_-017")), 'getproperty QName(PackageNamespace(""),"roomEngine")', 'coerce_a', 'setlocal 7',
          'getlocal1', 'getproperty QName(PackageNamespace(""),"session")',
          'getproperty QName(Namespace("com.sulake.habbo.session:IRoomSession"),"roomId")', 'convert_i', 'setlocal 8']
     # 0. le style choisi dans l'Atelier (atelier:style=, range sur la grille) :
@@ -2087,8 +2177,7 @@ def filtres_couche():
     FVN = 'PrivateNamespace("com.sulake.habbo.room.object.visualization.furniture:FurnitureVisualization")'
     GLOWQ = 'QName(PackageNamespace("flash.filters"),"GlowFilter")'
     u = list(pcode_origine("com.sulake.habbo.room.object.visualization.furniture.FurnitureVisualization", "updateSpriteFilters"))
-    im, il = u.index("maxstack 4"), u.index("localcount 6")
-    u[im] = "maxstack 12"; u[il] = "localcount 8"
+    cadre(u, 6, 12, 8)
     p = ['getlex QName(%s,"_filters")' % FVN, 'coerce_a', 'setlocal 6',
          'getlocal 6', 'iffalse atl_v_fin',
          'getlocal 6', LENGTH, 'pushbyte 1', 'iflt atl_v_fin',
@@ -2156,9 +2245,8 @@ def pass_filter():
     RX = 'QName(PackageNamespace(""),"RegExp")'
     TEST = 'callproperty QName(%s,"test"), 1' % AS3
     u = list(pcode_origine("com.sulake.habbo.inventory.furni.FurniGridView", "passFilter"))
-    im, il = u.index("maxstack 2"), u.index("localcount 5")
-    u[im] = "maxstack 12"; u[il] = "localcount 13"
-    E26 = 'getlex QName(%s,"_-E26")' % FGV
+    cadre(u, 5, 12, 13)
+    E26 = 'getlex QName(%s,"%s")' % (FGV, M(FGV_P, "_-E26"))
     p = ['getlex QName(%s,"_pages")' % FGV, 'coerce_a', 'setlocal 5',
          'getlocal 5', 'iffalse atl_pf_fin',
          'getlocal 5', 'getproperty QName(%s,"parent")' % IW, 'coerce_a', 'setlocal 5',
@@ -2249,10 +2337,9 @@ def contour():
     PT = 'QName(PackageNamespace("flash.geom"),"Point")'
     def P(n): return 'QName(PackageNamespace(""),"%s")' % n
     def S(n): return 'QName(%s,"%s")' % (SPR, n)
-    OMBRE = 'getlex QName(%s,"_-7i")' % FVR
+    OMBRE = 'getlex QName(%s,"%s")' % (FVR, M(FVIS_P, "_-7i"))
     u = list(pcode_origine("com.sulake.habbo.room.object.visualization.furniture.FurnitureVisualization", "updateSprites"))
-    im, il = u.index("maxstack 3"), u.index("localcount 6")
-    u[im] = "maxstack 30"; u[il] = "localcount 22"
+    cadre(u, 6, 30, 22)
     CT = 'QName(PackageNamespace("flash.geom"),"ColorTransform")'
     MARGE = 12          # place autour du mobi pour un contour epais (jusqu'a 10 px)
     c = ['getlex QName(%s,"_filters")' % FVP, 'coerce_a', 'setlocal 6',
@@ -2290,7 +2377,7 @@ def contour():
          'jump atl_c_test',
          'atl_c_boucle:', 'label',
          'getlocal 11', OMBRE, 'ifeq atl_c_suiv',
-         'getlocal 11', 'getlex QName(%s,"_-gT")' % FVP, 'ifeq atl_c_suiv',
+         'getlocal 11', 'getlex QName(%s,"%s")' % (FVP, M(FVIS_P, "_-gT")), 'ifeq atl_c_suiv',
          'findpropstrict ' + P("getSprite"), 'getlocal 11', 'callproperty %s, 1' % P("getSprite"), 'coerce_a', 'setlocal 12',
          'getlocal 12', 'iffalse atl_c_suiv',
          'getlocal 12', 'getproperty ' + S("visible"), 'iffalse atl_c_suiv',
@@ -2383,8 +2470,7 @@ def annees_inventaire():
     IFD = 'Namespace("com.sulake.habbo.session.furniture:IFurnitureData")'
     RX = 'QName(PackageNamespace(""),"RegExp")'
     u = list(pcode_origine("com.sulake.habbo.inventory.furni.FurniView", "setViewToState"))
-    im, il = u.index("maxstack 2"), u.index("localcount 2")
-    u[im] = "maxstack 16"; u[il] = "localcount 24"
+    cadre(u, 2, 16, 24)
     c = ['getlocal1', 'pushbyte 3', 'ifne atl_a_fin',
          Y1, 'pushstring "atelier_annee"', FIND, 'getlex ' + X6, 'astypelate', 'coerce ' + X6, 'coerce_a', 'setlocal 2',
          'getlocal 2', 'iffalse atl_a_fin',
@@ -2602,8 +2688,8 @@ def bots_filtre():
     assert u[7] == "maxstack 1" and u[8] == "localcount 3", (u[7], u[8])
     u[7] = "maxstack 12"; u[8] = "localcount 13"
     u[10] = "maxscopedepth 1"
-    Y = 'getlex QName(%s,"_-y1")' % BV
-    G = 'getlex QName(%s,"_-L1Y")' % BV
+    Y = 'getlex QName(%s,"%s")' % (BV, M(BV_P, "_-y1"))
+    G = 'getlex QName(%s,"%s")' % (BV, M(BV_P, "_-L1Y"))
     GI = 'getlex QName(%s,"_gridItems")' % BV
     c = ['getlocal0', 'pushscope',
          'getlocal1', 'iffalse atl_b_go',
@@ -2670,10 +2756,9 @@ def bots_filtre():
 def bots_init():
     """BotsView.init : remplit le menu Type (« Tous les types » choisi)."""
     u = list(pcode_origine("com.sulake.habbo.inventory.bots.BotsView", "init"))
-    im, il = u.index("maxstack 3"), u.index("localcount 3")
-    u[im] = "maxstack 10"; u[il] = "localcount 4"
+    cadre(u, 3, 10, 4)
     fin = len(u) - 1 - u[::-1].index("returnvoid")
-    aj = ['getlex QName(%s,"_-y1")' % BV, 'pushstring "atelier_bot_type"', FIND, 'getlex ' + X6, 'astypelate',
+    aj = ['getlex QName(%s,"%s")' % (BV, M(BV_P, "_-y1")), 'pushstring "atelier_bot_type"', FIND, 'getlex ' + X6, 'astypelate',
           'coerce_a', 'setlocal3', 'getlocal3', 'iffalse atl_bi', 'getlocal3']
     aj += ['pushstring "%s"' % v for v in BOTS_TYPES]
     aj += ['newarray %d' % len(BOTS_TYPES), POP, 'getlocal3', 'pushbyte 0', SEL_SET, 'atl_bi:']
@@ -2692,6 +2777,446 @@ def bots_update_grid():
     u = u[:fin] + ['getlocal0', 'pushnull', 'pushnull',
                    'callpropvoid QName(%s,"windowEventHandler"), 2' % BV] + u[fin:]
     chemin = os.path.join(TRAVAIL, "bots-ug.pcode")
+    open(chemin, "w", encoding="utf-8").write("\n".join(u))
+    return chemin
+
+
+# ================================================================== type « Animaux »
+ANIMAUX_ID = "atelier_animaux"
+ANIMAUX_MOTIF = FAMILLES[CATS.index("Animaux") - 1]     # « ^pet.*|^horse.*|^petfood.* »
+
+
+def animaux_ids():
+    """FurniView.getTypeFilterIds : « atelier_animaux » juste apres « pet_food » (Tous / Sol)."""
+    u = list(pcode_origine("com.sulake.habbo.inventory.furni.FurniView", "getTypeFilterIds"))
+    k = u.index('pushstring "pet_food"')
+    n = next(i for i in range(k, len(u)) if u[i].startswith("newarray "))
+    u[n] = "newarray %d" % (int(u[n].split()[1]) + 1)
+    u.insert(k + 1, 'pushstring "%s"' % ANIMAUX_ID)
+    im = next(i for i, x in enumerate(u) if x.startswith("maxstack "))
+    u[im] = "maxstack %d" % (int(u[im].split()[1]) + 6)
+    chemin = os.path.join(TRAVAIL, "type-ids.pcode")
+    open(chemin, "w", encoding="utf-8").write("\n".join(u))
+    return chemin
+
+
+def animaux_libelle():
+    """FurniView.getTypeFilterLabel : « Animaux » pour notre id (pas de cle de traduction)."""
+    u = list(pcode_origine("com.sulake.habbo.inventory.furni.FurniView", "getTypeFilterLabel"))
+    im = next(i for i, x in enumerate(u) if x.startswith("maxstack "))
+    u[im] = "maxstack %d" % max(int(u[im].split()[1]), 8)
+    i = u.index("pushscope")
+    u = u[:i + 1] + ['getlocal1', 'pushstring "%s"' % ANIMAUX_ID, 'ifne atl_tl_non',
+                     'pushstring "Animaux"', 'returnvalue', 'atl_tl_non:'] + u[i + 1:]
+    chemin = os.path.join(TRAVAIL, "type-libelle.pcode")
+    open(chemin, "w", encoding="utf-8").write("\n".join(u))
+    return chemin
+
+
+def animaux_filtre():
+    """
+    FurniGridView.passTypeFilter : type « Animaux » choisi -> la ligne ou le nom de
+    classe du mobi suit le motif de la famille Animaux (comme le menu Categorie) ;
+    il couvre aussi ce que le jeu range en « pet_food » (ligne pet_food, classe petfood*).
+    Registres ajoutes : 3 donnees du mobi, 4 motif.
+    """
+    IFD = 'Namespace("com.sulake.habbo.session.furniture:IFurnitureData")'
+    RX = 'QName(PackageNamespace(""),"RegExp")'
+    TEST = 'callproperty QName(%s,"test"), 1' % AS3
+    u = list(pcode_origine(FGV_C, "passTypeFilter"))
+    cadre(u, 3, 48, 5)
+    p = ['getlex QName(%s,"%s")' % (FGV, M(FGV_P, "_-621")), 'pushstring "%s"' % ANIMAUX_ID, 'ifne atl_an_non',
+         'getlocal1', 'getproperty QName(PackageNamespace(""),"furniData")', 'coerce_a', 'setlocal 3',
+         'getlocal 3', 'iffalse atl_an_faux',
+         'findpropstrict ' + RX, 'pushstring "%s"' % ANIMAUX_MOTIF, 'pushstring "i"', 'constructprop %s, 2' % RX,
+         'coerce_a', 'setlocal 4',
+         'getlocal 4', 'getlocal 3', 'getproperty QName(%s,"furniLine")' % IFD, 'coerce_s', TEST, 'iftrue atl_an_vrai',
+         'getlocal 4', 'getlocal 3', 'getproperty QName(%s,"className")' % IFD, 'coerce_s', TEST, 'iftrue atl_an_vrai',
+         'atl_an_faux:', 'pushfalse', 'returnvalue',
+         'atl_an_vrai:', 'pushtrue', 'returnvalue',
+         'atl_an_non:']
+    i = u.index("pushscope")
+    u = u[:i + 1] + p + u[i + 1:]
+    chemin = os.path.join(TRAVAIL, "type-filtre.pcode")
+    open(chemin, "w", encoding="utf-8").write("\n".join(u))
+    return chemin
+
+
+# ================================================================== menus deroulants courts
+def menus_courts():
+    """
+    DropMenuController.populateExpandedMenu : la liste ouverte d'un menu de l'Atelier
+    (nom « atelier_... » : Categorie, Annee, Type de bot) ne depasse pas
+    MENU_HAUTEUR_MAX ; au-dela, elle defile (molette), comme quand le jeu la
+    coupe au bord de l'ecran. Les menus du jeu ne changent pas.
+    """
+    DMC = "com.sulake.core.window.components.DropMenuController"
+    u = list(pcode_origine(DMC, "populateExpandedMenu"))
+    im = next(i for i, x in enumerate(u) if x.startswith("maxstack "))
+    u[im] = "maxstack %d" % max(int(u[im].split()[1]), 28)
+    HP = 'QName(PackageNamespace(""),"height")'
+    def atelier(et):
+        return ['getlocal0', 'getproperty QName(PackageNamespace(""),"name")', 'coerce_s',
+                'pushstring "atelier_"', INDEXOF, 'pushbyte 0', 'ifne ' + et]
+    # 1. hauteur du menu ouvert bornee, avant sa mise en place sur l'ecran
+    k = next(i for i in range(len(u) - 1) if u[i] == 'setproperty ' + HP and 'fitToDesktop' in u[i + 1])
+    a = atelier('atl_dm_a') + ['getlocal2', 'getproperty ' + HP, 'pushshort %d' % MENU_HAUTEUR_MAX, 'ifle atl_dm_a',
+                               'getlocal2', 'pushshort %d' % MENU_HAUTEUR_MAX, 'setproperty ' + HP, 'atl_dm_a:']
+    u = u[:k + 1] + a + u[k + 1:]
+    # 2. la liste (registre 7) prend la hauteur du menu, pas celle de tout son contenu
+    k = next(i for i in range(len(u) - 1) if u[i] == 'setproperty QName(%s,"height")' % IW
+             and u[i - 1].startswith('callproperty QName(PackageNamespace(""),"max")'))
+    assert any(x == 'getlocal 7' for x in u[k - 8:k]), "populateExpandedMenu : liste attendue au registre 7"
+    b = atelier('atl_dm_b') + ['getlocal 7', 'getlocal2', 'getproperty ' + HP, 'pushbyte 4', 'subtract',
+                               'setproperty QName(%s,"height")' % IW, 'atl_dm_b:']
+    u = u[:k + 1] + b + u[k + 1:]
+    chemin = os.path.join(TRAVAIL, "menus-courts.pcode")
+    open(chemin, "w", encoding="utf-8").write("\n".join(u))
+    return chemin
+
+
+# ================================================================== fiche du mobi (infostand)
+ISFV_C = "com.sulake.habbo.ui.widget.infostand.InfoStandFurniView"
+ISFV_PRIV = 'PrivateNamespace("com.sulake.habbo.ui.widget.infostand:InfoStandFurniView")'
+ISFV_PROT = 'ProtectedNamespace("com.sulake.habbo.ui.widget.infostand:InfoStandFurniView")'
+FLECHES_ETAT = (("atelier_etat_prec", -1, "gauche", "%C3%89tat%20pr%C3%A9c%C3%A9dent"),
+                ("atelier_etat_suiv", 1, "droite", "%C3%89tat%20suivant"))
+
+
+def mise_en_page_infostand():
+    """
+    Fiche du mobi (furni_view) : « Catégorie : … » en petit, en gris, sous le nom
+    (cachee sans donnees de mobi) ; fleches ◀ ▶ de part et d'autre de l'image
+    (cachees si le mobi n'a qu'un etat) et deux champs caches : nombre d'etats et
+    etat montre (lus par le clic, voir clic_etat).
+    """
+    s = open(fichier_binaire("furni_view_xml"), encoding="utf-8").read()
+    if INFOSTAND:
+        a = 'name="name_text"'
+        assert s.count(a) == 1, a
+        k = s.index('</text>', s.index(a)) + len('</text>')
+        s = s[:k] + ('\n                <text x="0" y="17" width="170" height="12" params="16" style="0" '
+                     'name="atelier_categorie_mobi" caption="" visible="false">\n'
+                     '                  <variables>\n'
+                     '                    <var key="antialias_type" value="advanced" type="String"/>\n'
+                     '                    <var key="text_color" value="0xaaaaaa" type="hex"/>\n'
+                     '                    <var key="mouse_wheel_enabled" value="false" type="Boolean"/>\n'
+                     '                    <var key="word_wrap" value="false" type="Boolean"/>\n'
+                     '                  </variables>\n'
+                     '                </text>') + s[k:]
+    if ETATS:
+        a = 'name="image_container"'
+        assert s.count(a) == 1, a
+        debut = s.index(a)
+        # fin du conteneur de l'image : son </children> (les conteneurs internes sont fermes avant)
+        prof, k = 0, s.index('<children>', debut) + len('<children>')
+        while True:
+            o, f = s.find('<children>', k), s.find('</children>', k)
+            if o != -1 and o < f:
+                prof += 1; k = o + len('<children>')
+            elif prof:
+                prof -= 1; k = f + len('</children>')
+            else:
+                break
+        # params 3089 : clic, et centre verticalement quand la hauteur de l'image change
+        fl = ''
+        for (nom, _, icone, aide), x in zip(FLECHES_ETAT, (0, 140)):
+            fl += ('                    <region x="%d" y="58" width="10" height="13" params="3089" style="0" name="%s" treshold="0" visible="false">\n'
+                   '                      <children>\n'
+                   '                        <static_bitmap x="%d" y="0" width="8" height="13" params="16" style="3">\n'
+                   '                          <variables><var key="asset_uri" value="%s" type="String"/></variables>\n'
+                   '                        </static_bitmap>\n'
+                   '                      </children>\n'
+                   '                      <variables>\n'
+                   '                        <var key="tool_tip_caption" value="%s" type="String"/>\n'
+                   '                        <var key="interactive_cursor_disabled" value="false" type="Boolean"/>\n'
+                   '                      </variables>\n'
+                   '                    </region>\n') % (x, nom, 0 if x == 0 else 2, ICONE[icone], aide)
+        for nom in ("atelier_etat_n", "atelier_etat_k"):
+            fl += '                    <text x="0" y="0" width="1" height="1" params="16" style="0" name="%s" caption="0" visible="false"/>\n' % nom
+        s = s[:f] + fl + '                  ' + s[f:]
+    xml.dom.minidom.parseString(s.encode("utf-8"))
+    chemin = os.path.join(TRAVAIL, "furni_view_xml.bin")
+    open(chemin, "w", encoding="utf-8").write(s)
+    return chemin
+
+
+def _isfv():
+    """Raccourcis P-code de InfoStandFurniView (membres obfusques traduits)."""
+    AF = 'getlex QName(%s,"%s")' % (ISFV_PROT, M(ISFV_P, "_-Af"))
+    BORD = 'getlex QName(%s,"%s")' % (ISFV_PROT, M(ISFV_P, "_-o1h"))
+    return AF, BORD
+
+
+def image_etat(R, dest, etat, echelle):
+    """
+    Registre dest <- image du mobi (registre R["O"], objet de la salle) dans l'etat
+    « etat » (instructions), a l'echelle « echelle » (instructions) : comme l'image de
+    la fiche (direction 180), mais d'un objet temporaire, sans toucher au mobi pose.
+    Registres R : RE moteur, TY type, CO couleur, EX extras, O objet.
+    """
+    V3 = 'QName(PackageNamespace("com.sulake.room.utils"),"Vector3d")'
+    return (['getlocal %d' % R["RE"], 'getlocal %d' % R["TY"], 'getlocal %d' % R["CO"],
+             'findpropstrict ' + V3, 'pushshort 180', 'constructprop %s, 1' % V3]
+            + list(echelle) + ['pushnull', 'pushbyte 0', 'getlocal %d' % R["EX"], 'pushnull']
+            + list(etat) + ['pushbyte -1', 'pushnull',
+               'getlocal %d' % R["O"], 'callproperty QName(Namespace("com.sulake.room.object:IRoomObject"),"getId"), 0',
+               'callproperty QName(Namespace("com.sulake.habbo.room:IRoomEngine"),"getGenericRoomObjectImage"), 12',
+               'getproperty QName(PackageNamespace(""),"data")', 'coerce_a', 'setlocal %d' % dest])
+
+
+def objet_fiche(R, AF, sortie):
+    """Registres R : O objet de la salle du mobi de la fiche, RE moteur, TY, CO, EX (sinon saute a sortie)."""
+    RO = 'Namespace("com.sulake.room.object:IRoomObject")'
+    ROM = 'Namespace("com.sulake.room.object:IRoomObjectModel")'
+    return [AF, 'iffalse ' + sortie,
+            AF, 'getproperty QName(PackageNamespace(""),"furniData")', 'iffalse ' + sortie,
+            'findpropstrict QName(%s,"getRoomObject")' % ISFV_PRIV,
+            AF, 'getproperty QName(PackageNamespace(""),"furniData")', 'getproperty QName(PackageNamespace(""),"id")',
+            'callproperty QName(%s,"getRoomObject"), 1' % ISFV_PRIV, 'coerce_a', 'setlocal %d' % R["O"],
+            'getlocal %d' % R["O"], 'iffalse ' + sortie,
+            'getlocal %d' % R["O"], 'callproperty QName(%s,"getModel"), 0' % RO, 'iffalse ' + sortie,
+            AF, 'getproperty QName(PackageNamespace(""),"handler")', 'getproperty QName(PackageNamespace(""),"container")',
+            'getproperty QName(Namespace("com.sulake.habbo.ui:IRoomWidgetHandlerContainer"),"roomEngine")',
+            'coerce_a', 'setlocal %d' % R["RE"],
+            'getlocal %d' % R["RE"], 'iffalse ' + sortie,
+            'getlocal %d' % R["O"], 'callproperty QName(%s,"getType"), 0' % RO, 'coerce_s', 'setlocal %d' % R["TY"],
+            'getlocal %d' % R["O"], 'callproperty QName(%s,"getModel"), 0' % RO,
+            'pushstring "furniture_color"', 'callproperty QName(%s,"getNumber"), 1' % ROM, 'convert_s', 'setlocal %d' % R["CO"],
+            'getlocal %d' % R["O"], 'callproperty QName(%s,"getModel"), 0' % RO,
+            'pushstring "furniture_extras"', 'callproperty QName(%s,"getString"), 1' % ROM, 'coerce_s', 'setlocal %d' % R["EX"]]
+
+
+def trop_grande(reg, saut):
+    """Saute a « saut » si l'image du registre est absente ou trop grande pour la fiche (comme le jeu)."""
+    return ['getlocal %d' % reg, 'iffalse ' + saut,
+            'getlocal %d' % reg, 'getproperty QName(PackageNamespace(""),"width")', 'pushshort 140', 'ifgt ' + saut,
+            'getlocal %d' % reg, 'getproperty QName(PackageNamespace(""),"height")', 'pushshort 200', 'ifgt ' + saut]
+
+
+def fiche_mobi():
+    """
+    InfoStandFurniView.update (juste avant updateCustomVarsWindow / updateWindow) :
+    1. « Catégorie : <collection> » sous le nom (comme l'inventaire, categorie_inventaire) ;
+    2. sans droits dans la salle (ni controleur, ni proprietaire, ni staff, ni mode
+       « deplacement libre »), ou en mode test : Deplacer, Tourner, Prendre caches,
+       Utiliser aussi sauf pour un mobi utilisable par tous (usagePolicy 2) ;
+    3. « Placer plus » (Builders Club) montre : « Acheter » cache ;
+    4. etats du mobi : image de chaque etat 1, 2... comparee a l'etat 0 ; le premier
+       identique (ou absent) clot la liste. Plus d'un etat : fleches montrees, nombre
+       d'etats et etat reel ranges dans les champs caches.
+    """
+    AF, BORD = _isfv()
+    K2U = 'getlex QName(%s,"%s")' % (ISFV_PROT, M(ISFV_P, "_-K2u"))
+    IFD = 'Namespace("com.sulake.habbo.session.furniture:IFurnitureData")'
+    SB = 'QName(%s,"showButton")' % ISFV_PROT
+    ILW = 'Namespace("com.sulake.core.window.components:IItemListWindow")'
+    u = list(pcode_origine(ISFV_C, "update"))
+    im = next(i for i, x in enumerate(u) if x.startswith("maxstack "))
+    il = next(i for i, x in enumerate(u) if x.startswith("localcount "))
+    b = int(u[il].split()[1])
+    noms = ["T", "F", "L", "OUT", "I", "J", "D", "V", "O", "RE", "TY", "CO", "EX", "B0", "B", "N", "SC", "RR", "S0"]
+    R = {n: b + k for k, n in enumerate(noms)}
+    u[im] = "maxstack %d" % max(int(u[im].split()[1]), 40)
+    u[il] = "localcount %d" % (b + len(noms))
+    def trouve(nom, reg, saut):
+        return [BORD, 'pushstring "%s"' % nom, FIND, 'coerce_a', 'setlocal %d' % reg, 'getlocal %d' % reg, 'iffalse ' + saut]
+    p = []
+    if INFOSTAND:
+        # 1. categorie
+        p += trouve("atelier_categorie_mobi", R["T"], 'atl_is_c_fin')
+        p += ['getlocal %d' % R["T"], 'pushfalse', 'setproperty QName(%s,"visible")' % IW,
+              AF, 'iffalse atl_is_c_fin',
+              AF, 'getproperty QName(PackageNamespace(""),"furniData")', 'iffalse atl_is_c_fin',
+              'findpropstrict QName(%s,"getFurnitureData")' % ISFV_PRIV,
+              AF, 'getproperty QName(PackageNamespace(""),"furniData")',
+              'callproperty QName(%s,"getFurnitureData"), 1' % ISFV_PRIV, 'coerce_a', 'setlocal %d' % R["F"],
+              'getlocal %d' % R["F"], 'iffalse atl_is_c_fin',
+              'getlocal %d' % R["F"], 'getproperty QName(%s,"furniLine")' % IFD, 'coerce_s', 'setlocal %d' % R["L"],
+              'getlocal %d' % R["L"], 'iftrue atl_is_c_l', 'pushstring ""', 'setlocal %d' % R["L"], 'atl_is_c_l:',
+              'getlocal %d' % R["L"], LOWER, 'coerce_s', 'setlocal %d' % R["L"]]
+        p += nom_ligne(R["L"], R["OUT"], R["I"], R["J"], 'atl_is_cn')
+        p += ['getlocal %d' % R["T"], 'pushstring "Catégorie : "', 'getlocal %d' % R["OUT"], 'add', CAPTION_SET,
+              'getlocal %d' % R["T"], 'pushtrue', 'setproperty QName(%s,"visible")' % IW,
+              'atl_is_c_fin:']
+        # 2. droits
+        p += ['pushfalse', 'setlocal %d' % R["D"],
+              'getlocal1', 'getproperty QName(PackageNamespace(""),"roomControllerLevel")', 'pushbyte 1', 'ifge atl_is_d_oui',
+              'getlocal1', 'getproperty QName(PackageNamespace(""),"isRoomOwner")', 'iftrue atl_is_d_oui',
+              'getlocal1', 'getproperty QName(PackageNamespace(""),"isAnyRoomController")', 'iftrue atl_is_d_oui',
+              'jump atl_is_d_t',
+              'atl_is_d_oui:', 'pushtrue', 'setlocal %d' % R["D"],
+              'atl_is_d_t:',
+              AF, 'getproperty QName(PackageNamespace(""),"handler")', 'getproperty QName(PackageNamespace(""),"container")',
+              'getproperty QName(Namespace("com.sulake.habbo.ui:IRoomWidgetHandlerContainer"),"roomSession")',
+              'coerce_a', 'setlocal %d' % R["T"],
+              'getlocal %d' % R["T"], 'iffalse atl_is_d_l',
+              'getlocal %d' % R["T"], 'getproperty QName(Namespace("com.sulake.habbo.session:IRoomSession"),"playTestMode")',
+              'iffalse atl_is_d_l',
+              'pushfalse', 'setlocal %d' % R["D"],
+              'atl_is_d_l:',
+              AF, 'getproperty QName(PackageNamespace(""),"handler")', 'getproperty QName(PackageNamespace(""),"container")',
+              'getproperty QName(Namespace("com.sulake.habbo.ui:IRoomWidgetHandlerContainer"),"roomEngine")',
+              'coerce_a', 'setlocal %d' % R["T"],
+              'getlocal %d' % R["T"], 'iffalse atl_is_d_f',
+              'getlocal %d' % R["T"], 'getproperty QName(Namespace("com.sulake.habbo.room:IRoomEngine"),"activeRoomHasFreeFurniMovementsMode")',
+              'iffalse atl_is_d_f',
+              'pushtrue', 'setlocal %d' % R["D"],
+              'atl_is_d_f:',
+              'getlocal %d' % R["D"], 'iftrue atl_is_d_fin']
+        for nom in ("move", "rotate", "pickup"):
+            p += ['findpropstrict ' + SB, 'pushstring "%s"' % nom, 'pushfalse', 'callpropvoid %s, 2' % SB]
+        p += ['getlocal1', 'getproperty QName(PackageNamespace(""),"usagePolicy")', 'pushbyte 2', 'ifeq atl_is_d_u',
+              'findpropstrict ' + SB, 'pushstring "use"', 'pushfalse', 'callpropvoid %s, 2' % SB,
+              'atl_is_d_u:',
+              # la barre de boutons : montree seulement s'il lui reste un bouton visible
+              K2U, 'iffalse atl_is_d_fin',
+              'pushfalse', 'setlocal %d' % R["V"], 'pushbyte 0', 'setlocal %d' % R["I"],
+              'atl_is_d_b:', 'label',
+              'getlocal %d' % R["I"], K2U, 'getproperty QName(%s,"numListItems")' % ILW, 'ifge atl_is_d_v',
+              K2U, 'getlocal %d' % R["I"], 'callproperty QName(%s,"getListItemAt"), 1' % ILW, 'coerce_a', 'setlocal %d' % R["T"],
+              'getlocal %d' % R["T"], 'iffalse atl_is_d_n',
+              'getlocal %d' % R["T"], 'getproperty QName(%s,"visible")' % IW, 'iffalse atl_is_d_n',
+              'pushtrue', 'setlocal %d' % R["V"],
+              'atl_is_d_n:', 'inclocal_i %d' % R["I"], 'jump atl_is_d_b',
+              'atl_is_d_v:',
+              K2U, 'getlocal %d' % R["V"], 'setproperty QName(%s,"visible")' % IW,
+              'atl_is_d_fin:']
+        # 3. Placer plus (BC) ou Acheter, pas les deux
+        p += trouve("bc_place_button", R["T"], 'atl_is_p_fin')
+        p += ['getlocal %d' % R["T"], 'getproperty QName(%s,"visible")' % IW, 'iffalse atl_is_p_fin']
+        p += trouve("catalog_button", R["T"], 'atl_is_p_fin')
+        p += ['getlocal %d' % R["T"], 'pushfalse', 'setproperty QName(%s,"visible")' % IW]
+        p += trouve("purchase_buttons", R["T"], 'atl_is_p_fin')
+        p += ['getlocal %d' % R["T"], 'getlex QName(PackageNamespace("com.sulake.core.window.components"),"IItemListWindow")',
+              'istypelate', 'iffalse atl_is_p_fin',
+              'getlocal %d' % R["T"], 'callpropvoid QName(%s,"arrangeListItems"), 0' % ILW,
+              'atl_is_p_fin:']
+    if ETATS:
+        # 4. etats : fleches cachees d'abord (autre mobi, objet introuvable...)
+        for nom, _, _, _ in FLECHES_ETAT:
+            et = 'atl_is_e_h' + nom[-1]
+            p += trouve(nom, R["T"], et) + ['getlocal %d' % R["T"], 'pushfalse', 'setproperty QName(%s,"visible")' % IW, et + ':']
+        p += objet_fiche(R, AF, 'atl_is_e_fin')
+        p += ['pushbyte 64', 'setlocal %d' % R["SC"]]
+        p += image_etat(R, R["B0"], ['pushbyte 0'], ['getlocal %d' % R["SC"]])
+        p += trop_grande(R["B0"], 'atl_is_e_g') + ['jump atl_is_e_ok',
+              'atl_is_e_g:',
+              'getlocal %d' % R["B0"], 'iffalse atl_is_e_g2',
+              'getlocal %d' % R["B0"], 'callpropvoid QName(PackageNamespace(""),"dispose"), 0',
+              'atl_is_e_g2:', 'pushbyte 1', 'setlocal %d' % R["SC"]]
+        p += image_etat(R, R["B0"], ['pushbyte 0'], ['getlocal %d' % R["SC"]])
+        p += ['atl_is_e_ok:',
+              'getlocal %d' % R["B0"], 'iffalse atl_is_e_fin',
+              'pushbyte 1', 'setlocal %d' % R["N"],
+              'atl_is_e_b:', 'label',
+              'getlocal %d' % R["N"], 'pushbyte %d' % ETATS_MAX, 'ifge atl_is_e_x']
+        p += image_etat(R, R["B"], ['getlocal %d' % R["N"]], ['getlocal %d' % R["SC"]])
+        p += ['getlocal %d' % R["B"], 'iffalse atl_is_e_x',
+              'getlocal %d' % R["B0"], 'getlocal %d' % R["B"], 'callproperty QName(PackageNamespace(""),"compare"), 1',
+              'coerce_a', 'setlocal %d' % R["RR"],
+              'getlocal %d' % R["B"], 'callpropvoid QName(PackageNamespace(""),"dispose"), 0',
+              # compare : 0 = images identiques ; une image de differences (ou -3 / -4) sinon
+              'getlocal %d' % R["RR"], 'pushbyte 0', 'ifeq atl_is_e_x',
+              'inclocal_i %d' % R["N"], 'jump atl_is_e_b',
+              'atl_is_e_x:',
+              'getlocal %d' % R["B0"], 'callpropvoid QName(PackageNamespace(""),"dispose"), 0',
+              # etat reel du mobi : montre en premier ; s'il est au-dela, la liste va jusqu'a lui
+              'getlocal %d' % R["O"], 'pushbyte 0', 'callproperty QName(Namespace("com.sulake.room.object:IRoomObject"),"getState"), 1',
+              'convert_i', 'setlocal %d' % R["S0"],
+              'getlocal %d' % R["S0"], 'pushbyte 0', 'ifge atl_is_e_s0', 'pushbyte 0', 'setlocal %d' % R["S0"], 'atl_is_e_s0:',
+              'getlocal %d' % R["S0"], 'getlocal %d' % R["N"], 'iflt atl_is_e_s1',
+              'getlocal %d' % R["S0"], 'increment_i', 'setlocal %d' % R["N"], 'atl_is_e_s1:']
+        for nom, reg in (("atelier_etat_n", "N"), ("atelier_etat_k", "S0")):
+            et = 'atl_is_e_r' + nom[-1]
+            p += trouve(nom, R["T"], et) + ['getlocal %d' % R["T"], 'getlocal %d' % R[reg], 'convert_s', CAPTION_SET, et + ':']
+        for nom, _, _, _ in FLECHES_ETAT:
+            et = 'atl_is_e_v' + nom[-1]
+            p += trouve(nom, R["T"], et) + ['getlocal %d' % R["T"], 'getlocal %d' % R["N"], 'pushbyte 1', 'greaterthan',
+                                            'setproperty QName(%s,"visible")' % IW, et + ':']
+        p += ['atl_is_e_fin:']
+    k = u.index('findpropstrict QName(%s,"updateCustomVarsWindow")' % ISFV_PRIV)
+    u = u[:k] + p + u[k:]
+    chemin = os.path.join(TRAVAIL, "fiche-update.pcode")
+    open(chemin, "w", encoding="utf-8").write("\n".join(u))
+    return chemin
+
+
+def fiche_fleches():
+    """InfoStandFurniView.createWindow (fin) : les fleches d'etat appellent onButtonClicked."""
+    AF, BORD = _isfv()
+    u = list(pcode_origine(ISFV_C, "createWindow"))
+    im = next(i for i, x in enumerate(u) if x.startswith("maxstack "))
+    il = next(i for i, x in enumerate(u) if x.startswith("localcount "))
+    b = int(u[il].split()[1])
+    u[im] = "maxstack %d" % max(int(u[im].split()[1]), 12)
+    u[il] = "localcount %d" % (b + 1)
+    p = [BORD, 'iffalse atl_cw_fin']
+    for nom, _, _, _ in FLECHES_ETAT:
+        et = 'atl_cw_' + nom[-1]
+        p += [BORD, 'pushstring "%s"' % nom, FIND, 'coerce_a', 'setlocal %d' % b,
+              'getlocal %d' % b, 'iffalse ' + et,
+              'getlocal %d' % b, 'pushstring "WME_CLICK"', 'getlex QName(%s,"onButtonClicked")' % ISFV_PROT,
+              'callpropvoid QName(%s,"addEventListener"), 2' % IW, et + ':']
+    p += ['atl_cw_fin:']
+    k = len(u) - 1 - u[::-1].index("returnvoid")
+    u = u[:k] + p + u[k:]
+    chemin = os.path.join(TRAVAIL, "fiche-create.pcode")
+    open(chemin, "w", encoding="utf-8").write("\n".join(u))
+    return chemin
+
+
+def clic_etat():
+    """
+    InfoStandFurniView.onButtonClicked (debut) : clic sur ◀ / ▶ -> etat precedent /
+    suivant (en boucle), dont l'image remplace celle de la fiche (setImage). Apercu
+    seulement : le mobi pose et le serveur ne sont pas touches.
+    """
+    AF, BORD = _isfv()
+    u = list(pcode_origine(ISFV_C, "onButtonClicked"))
+    im = next(i for i, x in enumerate(u) if x.startswith("maxstack "))
+    il = next(i for i, x in enumerate(u) if x.startswith("localcount "))
+    b = int(u[il].split()[1])
+    noms = ["W", "D", "T", "N", "K", "O", "RE", "TY", "CO", "EX", "B"]
+    R = {n: b + k for k, n in enumerate(noms)}
+    u[im] = "maxstack %d" % max(int(u[im].split()[1]), 30)
+    u[il] = "localcount %d" % (b + len(noms))
+    PI = 'QName(PackageNamespace(""),"parseInt")'
+    p = ['getlocal1', 'getproperty QName(PackageNamespace(""),"target")', 'coerce_a', 'setlocal %d' % R["W"],
+         'getlocal %d' % R["W"], 'iffalse atl_ce_non',
+         'pushbyte 0', 'setlocal %d' % R["D"]]
+    for nom, d, _, _ in FLECHES_ETAT:
+        et = 'atl_ce_' + nom[-1]
+        p += ['getlocal %d' % R["W"], NAME, 'pushstring "%s"' % nom, 'ifne ' + et,
+              'pushbyte %d' % d, 'setlocal %d' % R["D"], et + ':']
+    p += ['getlocal %d' % R["D"], 'pushbyte 0', 'ifeq atl_ce_non',
+          BORD, 'iffalse atl_ce_fin']
+    for nom, reg in (("atelier_etat_n", "N"), ("atelier_etat_k", "K")):
+        p += [BORD, 'pushstring "%s"' % nom, FIND, 'coerce_a', 'setlocal %d' % R["T"],
+              'getlocal %d' % R["T"], 'iffalse atl_ce_fin',
+              'findpropstrict ' + PI, 'getlocal %d' % R["T"], CAPTION_GET, 'callproperty %s, 1' % PI,
+              'convert_i', 'setlocal %d' % R[reg]]
+    p += ['getlocal %d' % R["N"], 'pushbyte 1', 'ifle atl_ce_fin',
+          # k = (k + d + n) % n ; le champ « k » garde l'etat montre
+          'getlocal %d' % R["K"], 'getlocal %d' % R["D"], 'add', 'getlocal %d' % R["N"], 'add', 'getlocal %d' % R["N"],
+          'modulo', 'convert_i', 'setlocal %d' % R["K"],
+          'getlocal %d' % R["T"], 'getlocal %d' % R["K"], 'convert_s', CAPTION_SET]
+    p += objet_fiche(R, AF, 'atl_ce_fin')
+    p += image_etat(R, R["B"], ['getlocal %d' % R["K"]], ['pushbyte 64'])
+    p += trop_grande(R["B"], 'atl_ce_g') + ['jump atl_ce_ok', 'atl_ce_g:',
+          'getlocal %d' % R["B"], 'iffalse atl_ce_g2',
+          'getlocal %d' % R["B"], 'callpropvoid QName(PackageNamespace(""),"dispose"), 0', 'atl_ce_g2:']
+    p += image_etat(R, R["B"], ['getlocal %d' % R["K"]], ['pushbyte 1'])
+    p += ['atl_ce_ok:',
+          'getlocal %d' % R["B"], 'iffalse atl_ce_fin',
+          'findpropstrict QName(%s,"setImage")' % ISFV_PRIV, 'getlocal %d' % R["B"], 'pushstring "image"',
+          'callpropvoid QName(%s,"setImage"), 2' % ISFV_PRIV,
+          'getlocal %d' % R["B"], 'callpropvoid QName(PackageNamespace(""),"dispose"), 0',
+          'atl_ce_fin:', 'returnvoid',
+          'atl_ce_non:']
+    i = u.index("pushscope")
+    u = u[:i + 1] + p + u[i + 1:]
+    chemin = os.path.join(TRAVAIL, "fiche-clic.pcode")
     open(chemin, "w", encoding="utf-8").write("\n".join(u))
     return chemin
 
@@ -2724,8 +3249,8 @@ def verifier_pile(chemin):
 # ================================================================== assemblage
 FGV_C = "com.sulake.habbo.inventory.furni.FurniGridView"
 CEH_C = "com.sulake.habbo.freeflowchat.data.ChatEventHandler"
-RSC_C = "com.sulake.room.renderer.§_-b2M§"
-S9_C = "com.sulake.room.renderer.utils.§_-s9§"
+RSC_C = _R.chemin(RSC_P)
+S9_C = _R.chemin(S9_P)
 FVIS_C = "com.sulake.habbo.room.object.visualization.furniture.FurnitureVisualization"
 ROVF_C = "com.sulake.habbo.room.object.RoomObjectVisualizationFactory"
 
@@ -2766,7 +3291,20 @@ def main():
         rempl += [bv, bots_update_grid(), corps(bv, "updateGrid")]
         hc = "com.sulake.habbo.catalog.HabboCatalog"
         rempl += [hc, catalogue_bots(), corps(hc, "onCatalogPage")]
-    if ICONES or PAGINATION:
+    if INFOSTAND or ETATS:
+        rempl += [ident("furni_view_xml"), mise_en_page_infostand()]
+        rempl += [ISFV_C, fiche_mobi(), corps(ISFV_C, "update")]
+    if ETATS:
+        rempl += [ISFV_C, fiche_fleches(), corps(ISFV_C, "createWindow")]
+        rempl += [ISFV_C, clic_etat(), corps(ISFV_C, "onButtonClicked")]
+    if ANIMAUX:
+        rempl += [fv, animaux_ids(), corps(fv, "getTypeFilterIds")]
+        rempl += [fv, animaux_libelle(), corps(fv, "getTypeFilterLabel")]
+        rempl += [FGV_C, animaux_filtre(), corps(FGV_C, "passTypeFilter")]
+    if MENUS_COURTS:
+        dmc ="com.sulake.core.window.components.DropMenuController"
+        rempl += [dmc, menus_courts(), corps(dmc, "populateExpandedMenu")]
+    if ICONES or PAGINATION or ETATS:
         for ident_mac, (dessin, _) in IMAGES.items():
             rempl += [ident(SYMBOLE_IMAGE[ident_mac]), os.path.join(ICI, "dessins", dessin), "lossless2"]
     for k in range(len(rempl)):

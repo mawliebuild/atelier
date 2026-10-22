@@ -181,7 +181,16 @@ public class OngletApparts {
         Button effacerRecherche = Icones.seul(Icones.VIDER, "Effacer la recherche");
         effacerRecherche.setOnAction(e -> rechercheSalle.clear());
         effacerRecherche.visibleProperty().bind(rechercheSalle.textProperty().isNotEmpty());
-        HBox barreMobis = new HBox(8, Icones.petit(Icones.LOUPE), rechercheSalle, effacerRecherche, copier);
+        // Remplacer mes mobis par ceux d'une zone (BC ou d'une autre personne) : RemplacerParZone
+        Button remplacerMiens = Icones.sur(new Button("Remplacer mes mobis…"), Icones.DEPLACER);
+        remplacerMiens.setMinWidth(Region.USE_PREF_SIZE);
+        remplacerMiens.setTooltip(Ui.bulle("Choisis une zone par deux clics dans le jeu : les mobis du Builders Club "
+                + "ou d'une autre personne posés dedans prennent exactement la place des tiens du même type "
+                + "(case, hauteur, rotation, état). Les tiens retournent dans ton inventaire."));
+        remplacerMiens.setOnAction(e -> RemplacerParZone.lancer(remplacerMiens.getScene() == null
+                || remplacerMiens.getScene().getStylesheets().isEmpty() ? null
+                : remplacerMiens.getScene().getStylesheets().get(0)));
+        HBox barreMobis = new HBox(8, Icones.petit(Icones.LOUPE), rechercheSalle, effacerRecherche, remplacerMiens, copier);
         barreMobis.setAlignment(Pos.CENTER_LEFT);
         HBox.setHgrow(rechercheSalle, Priority.ALWAYS);
 
@@ -1324,6 +1333,10 @@ public class OngletApparts {
                             rw[1] = ReglagesWired.appliquer(cfg, repris, racine);
                         }
                     }
+                    // tout a la fin : les dalles magiques posees par CE collage sont retirees
+                    // (jamais celles deja dans l'appart) ; un nouvel Arreter pendant le retrait l'interrompt
+                    int arrets0 = arretsCollage;
+                    PoseTapis.ramasserLaissees(tb[0], jeu, () -> arretsCollage != arrets0, suivi);
                 } finally {
                     Historique.grouper(false);
                     Platform.runLater(() -> collageEnCours.set(false));
@@ -1387,6 +1400,8 @@ public class OngletApparts {
 
     /** Demande d'arret du collage en cours (pose hybride) : plus rien ne part ensuite. */
     private volatile boolean collageArrete = false;
+    /** Nombre de demandes d'arret (un Arreter pendant le retrait final des dalles l'interrompt). */
+    private volatile int arretsCollage = 0;
     /** Un collage tourne : « Arrêter le collage » remplace « Coller ici ». Fil JavaFX. */
     private final javafx.beans.property.BooleanProperty collageEnCours = new javafx.beans.property.SimpleBooleanProperty(false);
     private Button boutonArreter;
@@ -1395,6 +1410,7 @@ public class OngletApparts {
     void arreterCollage() {
         Journal.debug("collage : arrêt demandé (bouton « Arrêter le collage »).");
         collageArrete = true;
+        arretsCollage++;
         PoseCopie.arreter();
     }
 

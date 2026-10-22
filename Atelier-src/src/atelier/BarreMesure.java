@@ -177,6 +177,7 @@ public class BarreMesure implements Ancrage.Ancrable {
         mesure = !mesure;
         premier = null;
         mesures++;
+        GrilleVue.attente("mesure", mesure);         // grille et clics a travers les mobis pendant la mesure
         brancher();
         Salle.tache("mesure-dalles", BarreMesure::retirerDalles);
         InfoJeu.consigne(mesure ? "Mesure : clique la première case." : "Mesure annulée.");
@@ -227,6 +228,7 @@ public class BarreMesure implements Ancrage.Ancrable {
         }
         mesure = false;
         premier = null;
+        GrilleVue.attente("mesure", false);
         String r = resultat(a[0], a[1], x, y);
         int tour = ++mesures;
         Salle.tache("mesure-dalles", () -> {
@@ -323,7 +325,7 @@ public class BarreMesure implements Ancrage.Ancrable {
                         planVu = p;
                         Platform.runLater(() -> {
                             if (dedans) { brancher(); majCases(); stage.sizeToScene(); stage.show(); placer(); }
-                            else { mesure = false; premier = null; regleInactive(); stage.hide(); }
+                            else { mesure = false; premier = null; GrilleVue.attente("mesure", false); regleInactive(); stage.hide(); }
                         });
                     }
                 } catch (Throwable ignored) { }

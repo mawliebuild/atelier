@@ -17,9 +17,9 @@ for os in Mac Windows; do
   [ -d "$A/messages" ] && cp -R "$A/messages" "$R/Atelier/"
   # Les modifs du jeu se construisent sur chaque ordinateur, a partir de SON client Habbo :
   # aucun fichier de Habbo dans le paquet, et chaque nouvelle version est prise en charge.
-  cp "$S/construire.py" "$S/modifier-jeu.py" "$R/Atelier-swf/"
+  cp "$S/construire.py" "$S/renommage.py" "$S/modifier-jeu.py" "$R/Atelier-swf/"
   cp -R "$S/ffdec" "$S/dessins" "$R/Atelier-swf/"
-  cp "$S/donnees/collections_fr.json" "$R/Atelier-swf/donnees/"
+  cp "$S/donnees/collections_fr.json" "$S/donnees/reference-noms.json" "$R/Atelier-swf/donnees/"
   if [ "$os" = Mac ]; then
     cp "$A/G-MemZ" "$R/Atelier/"
     cp -R "$S"/jre/mac/* "$R/Atelier/java/"

@@ -105,10 +105,12 @@ public final class ClientModifie {
 
     public static File appJeu() {
         File v = new File(dossierLauncher(), "downloads/air/" + VERSION_PREVUE);
-        if (!WINDOWS) return new File(v, "Habbo.app");
-        // Windows : les numeros de version ne suivent pas ceux du Mac. modifier-jeu.py
-        // adapte chaque client installe ; on lit le plus recent qui a un HabboAir.swf.
-        return appJeuWindows(new File(dossierLauncher(), "downloads/air").listFiles(File::isDirectory), v);
+        // Le Launcher change de dossier a chaque mise a jour (16, ..., 34) et efface
+        // l'ancien ; modifier-jeu.py adapte chaque client installe : on lit le plus
+        // recent qui a un HabboAir.swf (Mac comme Windows).
+        File[] l = new File(dossierLauncher(), "downloads/air").listFiles(File::isDirectory);
+        if (!WINDOWS) return new File(appJeuWindows(l, v), "Habbo.app");
+        return appJeuWindows(l, v);
     }
 
     /** Logique pure : le dossier de version au plus grand numero qui contient le client, sinon v. */

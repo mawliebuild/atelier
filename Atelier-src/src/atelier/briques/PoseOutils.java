@@ -328,32 +328,59 @@ final class PoseOutils {
      * long : la liste est vide en reponse a une demande complete).
      */
     static ListeVariables lireListeVariables(HPacket p) {
-        p.resetReadIndex();
-        p.readInteger();
-        boolean dernier = p.readBoolean();
-        int n = p.readInteger();
-        List<String> retirees = new ArrayList<>();
-        for (int i = 0; i < n && i < 100_000; i++) retirees.add(p.readString());
-        int m = p.readInteger();
-        List<Variable> l = new ArrayList<>();
-        for (int i = 0; i < m && i < 100_000; i++) {
+        return selonFormat(p, neuf -> {
+            p.resetReadIndex();
             p.readInteger();
-            l.add(lireVariable(p));
-        }
-        return new ListeVariables(dernier, retirees, l);
+            boolean dernier = p.readBoolean();
+            int n = p.readInteger();
+            List<String> retirees = new ArrayList<>();
+            for (int i = 0; i < n && i < 100_000; i++) retirees.add(p.readString());
+            int m = p.readInteger();
+            List<Variable> l = new ArrayList<>();
+            for (int i = 0; i < m && i < 100_000; i++) {
+                p.readInteger();
+                l.add(lireVariable(p, neuf));
+            }
+            return new ListeVariables(dernier, retirees, l);
+        });
     }
 
-    /** HWiredVariable : id, type interne, nom, disponibilite, genre, 8 booleens, table facultative. */
-    static Variable lireVariable(HPacket p) {
+    /**
+     * Format de HWiredVariable. Depuis la version du jeu d'octobre 2026 : 9 booleens
+     * au lieu de 8, et apres la table de valeurs, un booleen suivi d'un texte facultatif.
+     * Le format qui marche est retenu ; l'autre sert de repli (client pas encore a jour).
+     */
+    private static volatile boolean formatNeuf = true;
+
+    /** Lit tout le paquet avec le format retenu ; s'il ne tombe pas juste, avec l'autre. */
+    static <T> T selonFormat(HPacket p, java.util.function.Function<Boolean, T> lecture) {
+        boolean f = formatNeuf;
+        try {
+            T r = lecture.apply(f);
+            if (p.getReadIndex() == p.getBytesLength()) return r;
+        } catch (RuntimeException ignored) { }
+        T r = lecture.apply(!f);
+        if (p.getReadIndex() != p.getBytesLength())
+            throw new IllegalStateException("variables wired : format inconnu");
+        formatNeuf = !f;
+        Journal.debug("Variables wired : format " + (formatNeuf ? "à 9 booléens" : "à 8 booléens") + " retenu.");
+        return r;
+    }
+
+    /** HWiredVariable : id, type interne, nom, disponibilite, genre, 8 ou 9 booleens, table facultative. */
+    static Variable lireVariable(HPacket p) { return lireVariable(p, formatNeuf); }
+
+    static Variable lireVariable(HPacket p, boolean neuf) {
         String id = p.readString();
         int interne = p.readInteger();
         String nom = p.readString();
         int dispo = p.readInteger();
         int genre = p.readInteger();
-        for (int i = 0; i < 8; i++) p.readBoolean();
+        for (int i = 0; i < (neuf ? 9 : 8); i++) p.readBoolean();
         if (p.readBoolean()) {
             int k = p.readInteger();
             for (int i = 0; i < k; i++) { p.readInteger(); p.readString(); }
+            if (neuf && p.readBoolean()) p.readString();
         }
         return new Variable(id, interne, nom, dispo, genre);
     }
@@ -376,25 +403,18 @@ final class PoseOutils {
     record Porteurs(String variable, String nom, Map<Integer, Integer> valeurs) { }
 
     static Porteurs lirePorteurs(HPacket p) {
-        p.resetReadIndex();
-        p.readInteger();
-        String id = p.readString();
-        p.readInteger();
-        String nom = p.readString();
-        p.readInteger();
-        p.readInteger();
-        for (int i = 0; i < 8; i++) p.readBoolean();
-        if (p.readBoolean()) {
-            int k = p.readInteger();
-            for (int i = 0; i < k; i++) { p.readInteger(); p.readString(); }
-        }
-        int n = p.readInteger();
-        Map<Integer, Integer> v = new LinkedHashMap<>();
-        for (int i = 0; i < n && i < 100_000; i++) {
-            int objet = p.readInteger();
-            v.put(objet, p.readInteger());
-        }
-        return new Porteurs(id, nom, v);
+        return selonFormat(p, neuf -> {
+            p.resetReadIndex();
+            p.readInteger();
+            Variable var = lireVariable(p, neuf);
+            int n = p.readInteger();
+            Map<Integer, Integer> v = new LinkedHashMap<>();
+            for (int i = 0; i < n && i < 100_000; i++) {
+                int objet = p.readInteger();
+                v.put(objet, p.readInteger());
+            }
+            return new Porteurs(var.id(), var.nom(), v);
+        });
     }
 
     // ================================================================ ce que dit le serveur

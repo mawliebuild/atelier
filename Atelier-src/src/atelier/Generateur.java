@@ -791,7 +791,17 @@ public final class Generateur {
             finally { Empreinte.effacer(); }
         }
 
+        private static final java.util.concurrent.atomic.AtomicInteger attentes = new java.util.concurrent.atomic.AtomicInteger();
+
         static HPoint attendreClic(long delaiMs) {
+            // grille et clics a travers les mobis pendant l'attente (GrilleVue.attente)
+            String cle = "clic-" + attentes.incrementAndGet();
+            GrilleVue.attente(cle, true);
+            try { return attendreUnClic(delaiMs); }
+            finally { GrilleVue.attente(cle, false); }
+        }
+
+        private static HPoint attendreUnClic(long delaiMs) {
             brancher();
             java.util.concurrent.CompletableFuture<HPoint> f = new java.util.concurrent.CompletableFuture<>();
             java.util.concurrent.CompletableFuture<HPoint> ancienne = attente;

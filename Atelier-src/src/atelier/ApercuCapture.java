@@ -49,9 +49,20 @@ final class ApercuCapture {
     private final java.util.List<Capture.Planche> planches;
     private final Capture.Reglages r;
     private final Capture.Format format;
-    private final int delai;
     private final StackPane fond = new StackPane();
+    private final ImageView vue = new ImageView();
     private javafx.animation.Timeline anim;
+    private static final java.util.prefs.Preferences PREFS = java.util.prefs.Preferences.userRoot().node("atelier");
+    /** Les images capturees, detourees, sans fond ni recadrage. */
+    private java.util.List<BufferedImage> base;
+    /** Reglages de l'apercu : zone gardee (null = tout), nombre d'images gardees, duree d'une image (ms). */
+    private int[] coupe;
+    private int gardees, delai;
+    private boolean recadrage = false;
+    private final Label dimLbl = Ui.discret("");
+    private final Label info = Ui.discret("");
+    private final Recadreur recadreur = new Recadreur(this::majDimensions);
+    private Button valider;
 
     private ApercuCapture(String css, java.util.List<Capture.Planche> planches, Capture.Reglages r,
                           Capture.Format format, int delaiMs) {
@@ -66,25 +77,13 @@ final class ApercuCapture {
         // --- images detourees (meme decoupe pour toutes), posees sur le fond colore
         Capture.Reglages sans = copie(r);
         sans.fond = -1;
-        java.util.List<BufferedImage> imgs = images(sans);
-        BufferedImage img0 = imgs.get(0);
-        ImageView vue = new ImageView(versFx(img0));
+        base = images(sans);
+        gardees = base.size();
+        fond.getChildren().addAll(vue, recadreur);
         vue.setPreserveRatio(true);
-        double k = Math.min(1, Math.min(LARGEUR_MAX / img0.getWidth(), HAUTEUR_MAX / img0.getHeight()));
-        vue.setFitWidth(img0.getWidth() * k);
-        vue.setFitHeight(img0.getHeight() * k);
-        fond.getChildren().add(vue);
-        fond.setMaxSize(vue.getFitWidth(), vue.getFitHeight());
-        if (imgs.size() > 1) {
-            java.util.List<WritableImage> fx = new java.util.ArrayList<>();
-            for (BufferedImage b : imgs) fx.add(versFx(b));
-            int[] i = {0};
-            anim = new javafx.animation.Timeline(new javafx.animation.KeyFrame(
-                    javafx.util.Duration.millis(Math.max(50, delaiMs)), e -> vue.setImage(fx.get(i[0] = (i[0] + 1) % fx.size()))));
-            anim.setCycleCount(javafx.animation.Animation.INDEFINITE);
-            anim.play();
-            stage.setOnHidden(e -> anim.stop());
-        }
+        recadreur.setVisible(false);
+        stage.setOnHidden(e -> { if (anim != null) anim.stop(); });
+        afficher();
 
         // --- choix du fond
         Capture.Toner toner = null;
@@ -146,13 +145,73 @@ final class ApercuCapture {
             });
         });
 
-        Label info = Ui.discret(format.name() + (imgs.size() > 1 ? " animé · " + imgs.size() + " images" : "")
-                + " · " + img0.getWidth() + " × " + img0.getHeight() + " px");
-        VBox corps = new VBox(10,
-                fond,
-                info,
-                Ui.bloc("Fond autour de l'appart", Ui.ligne(decor, transparent, autre, palette)),
-                PhotoAppart.boutonsBas(fermer, galerie, enregistrer));
+        // --- recadrage : un bouton pour y entrer ; Valider / Annuler et les dimensions pendant
+        Button recadrer = new Button("Recadrer");
+        recadrer.setTooltip(Ui.bulle("Choisir la zone de la photo à garder. Pour un GIF, toutes ses images sont recadrées."));
+        Button toutReprendre = new Button("Annuler le recadrage");
+        toutReprendre.setTooltip(Ui.bulle("Revenir à la photo entière."));
+        valider = new Button("Valider");
+        valider.setTooltip(Ui.bulle("Garder la zone choisie (Entrée)."));
+        Button annulerCadre = new Button("Annuler");
+        annulerCadre.setTooltip(Ui.bulle("Quitter le recadrage sans rien changer (Échap)."));
+        dimLbl.setWrapText(true);
+        dimLbl.setMinWidth(0);
+        HBox ligneCadre = new HBox(8);
+        ligneCadre.setAlignment(Pos.CENTER_LEFT);
+        Runnable majCadre = () -> {
+            if (recadrage) ligneCadre.getChildren().setAll(valider, annulerCadre, dimLbl);
+            else if (coupe != null) ligneCadre.getChildren().setAll(recadrer, toutReprendre);
+            else ligneCadre.getChildren().setAll(recadrer);
+            enregistrer.setDisable(recadrage);
+            galerie.setDisable(recadrage);
+            enregistrer.setDefaultButton(!recadrage);
+            valider.setDefaultButton(recadrage);
+        };
+        recadrer.setOnAction(e -> { recadrage = true; afficher(); majCadre.run(); });
+        annulerCadre.setOnAction(e -> { recadrage = false; afficher(); majCadre.run(); });
+        toutReprendre.setOnAction(e -> { coupe = null; afficher(); majCadre.run(); });
+        valider.setOnAction(e -> {
+            if (!recadreur.aCadre()) return;
+            if (!recadreur.toutLImage()) coupe = recadreur.zone();
+            recadrage = false;
+            afficher();
+            majCadre.run();
+        });
+        majCadre.run();
+
+        java.util.List<javafx.scene.Node> blocs = new java.util.ArrayList<>(java.util.List.of(fond, info, ligneCadre));
+
+        // --- GIF : duree d'une image et nombre d'images gardees, en temps reel
+        if (base.size() > 1) {
+            Spinner<Integer> duree = new Spinner<>(50, 5000, Math.max(50, Math.min(5000, delai)), 50);
+            duree.setEditable(true);
+            duree.setPrefWidth(95);
+            duree.valueProperty().addListener((o, x, v) -> {
+                if (v == null) return;
+                delai = v;
+                PREFS.putInt("photo.gif.delai", v);
+                afficher();
+            });
+            Spinner<Integer> nombre = new Spinner<>(2, base.size(), base.size(), 1);
+            nombre.setEditable(true);
+            nombre.setPrefWidth(95);
+            nombre.valueProperty().addListener((o, x, v) -> {
+                if (v == null) return;
+                gardees = v;
+                afficher();
+            });
+            GridPane grille = new GridPane();
+            grille.setHgap(10);
+            grille.setVgap(6);
+            grille.addRow(0, new Label("Durée d'une image (ms)"), duree);
+            grille.addRow(1, new Label("Images gardées"), nombre);
+            blocs.add(Ui.bloc("Animation", grille,
+                    Ui.aide("Moins d'images gardées : elles sont prises à intervalles réguliers parmi les "
+                            + base.size() + " capturées, comme des photos plus espacées.")));
+        }
+        blocs.add(Ui.bloc("Fond autour de l'appart", Ui.ligne(decor, transparent, autre, palette)));
+        blocs.add(PhotoAppart.boutonsBas(fermer, galerie, enregistrer));
+        VBox corps = new VBox(10, blocs.toArray(new javafx.scene.Node[0]));
         corps.setStyle("-fx-padding: 12 14 14 14;");   // la feuille (.fenetre-corps) l'emporte sur setPadding
         corps.setAlignment(Pos.TOP_CENTER);
         corps.getStyleClass().add("fenetre-corps");
@@ -160,7 +219,11 @@ final class ApercuCapture {
         Scene sc = new Scene(PhotoAppart.habiller(stage, "Photo de l'appart", corps));
         sc.setFill(Color.TRANSPARENT);
         if (css != null) sc.getStylesheets().add(css);
-        sc.setOnKeyPressed(e -> { if (e.getCode() == javafx.scene.input.KeyCode.ESCAPE) stage.close(); });
+        sc.setOnKeyPressed(e -> {
+            if (e.getCode() != javafx.scene.input.KeyCode.ESCAPE) return;
+            if (recadrage) annulerCadre.fire();
+            else stage.close();
+        });
         stage.setScene(sc);
         FenetresVolantes.suivre(stage);
         stage.show();
@@ -174,6 +237,69 @@ final class ApercuCapture {
             if (!l.isEmpty()) return l;
         }
         return java.util.List.of(Capture.cadrer(planches.get(planches.size() - 1), rr));
+    }
+
+    /** Les indices des images gardees : gardees, a intervalles reguliers parmi n. */
+    private static int[] indices(int n, int gardees) {
+        int k = Math.max(1, Math.min(n, gardees));
+        int[] t = new int[k];
+        for (int i = 0; i < k; i++) t[i] = k == 1 ? n - 1 : (int) Math.round(i * (n - 1) / (double) (k - 1));
+        return t;
+    }
+
+    /** Les images telles qu'elles seront enregistrees : gardees, puis recadrees (si recadre vaut vrai). */
+    private java.util.List<BufferedImage> finales(java.util.List<BufferedImage> toutes, boolean recadre) {
+        java.util.List<BufferedImage> l = new java.util.ArrayList<>();
+        int[] idx = toutes.size() > 1 ? indices(toutes.size(), gardees) : new int[]{toutes.size() - 1};
+        for (int i : idx) l.add(recadre && coupe != null ? couper(toutes.get(i), coupe) : toutes.get(i));
+        return l;
+    }
+
+    private static BufferedImage couper(BufferedImage b, int[] z) {
+        int x = Math.min(z[0], b.getWidth() - 1), y = Math.min(z[1], b.getHeight() - 1);
+        int w = Math.max(1, Math.min(z[2], b.getWidth() - x)), h = Math.max(1, Math.min(z[3], b.getHeight() - y));
+        BufferedImage o = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
+        java.awt.Graphics2D g = o.createGraphics();
+        g.drawImage(b, -x, -y, null);
+        g.dispose();
+        return o;
+    }
+
+    /**
+     * Met l'apercu a jour : images gardees, recadrees (sauf pendant le
+     * recadrage, ou on voit la photo entiere sous le cadre), a la vitesse choisie.
+     */
+    private void afficher() {
+        if (anim != null) anim.stop();
+        java.util.List<BufferedImage> l = finales(base, !recadrage);
+        java.util.List<WritableImage> fx = new java.util.ArrayList<>();
+        for (BufferedImage b : l) fx.add(versFx(b));
+        BufferedImage img0 = l.get(0);
+        double k = Math.min(1, Math.min(LARGEUR_MAX / img0.getWidth(), HAUTEUR_MAX / img0.getHeight()));
+        double w = img0.getWidth() * k, h = img0.getHeight() * k;
+        vue.setImage(fx.get(0));
+        vue.setFitWidth(w);
+        vue.setFitHeight(h);
+        fond.setMaxSize(w, h);
+        recadreur.setVisible(recadrage);
+        if (recadrage) recadreur.image(w, h, img0.getWidth(), img0.getHeight());
+        if (fx.size() > 1) {
+            int[] i = {0};
+            anim = new javafx.animation.Timeline(new javafx.animation.KeyFrame(
+                    javafx.util.Duration.millis(Math.max(50, delai)), e -> vue.setImage(fx.get(i[0] = (i[0] + 1) % fx.size()))));
+            anim.setCycleCount(javafx.animation.Animation.INDEFINITE);
+            anim.play();
+        }
+        BufferedImage fin = coupe != null && !recadrage ? l.get(0) : img0;
+        info.setText(format.name() + (fx.size() > 1 ? " animé · " + Ui.accorder(fx.size() + " image(s)") : "")
+                + " · " + fin.getWidth() + " × " + fin.getHeight() + " px");
+        if (stage.getScene() != null) stage.sizeToScene();
+    }
+
+    private void majDimensions() {
+        int[] z = recadreur.zone();
+        dimLbl.setText(z == null ? "Trace un rectangle sur la photo." : "Zone gardée : " + z[2] + " × " + z[3] + " px");
+        if (valider != null) valider.setDisable(z == null);
     }
 
     /** Fenetre d'enregistrement du systeme, ouverte dans Telechargements, nom propose. */
@@ -221,7 +347,7 @@ final class ApercuCapture {
             Capture.Reglages rr = copie(r);
             rr.fond = fondRgb;
             rr.garderFond = false;
-            java.util.List<BufferedImage> imgs = images(rr);
+            java.util.List<BufferedImage> imgs = finales(images(rr), true);
             switch (format) {
                 case PNG -> Capture.ecrirePng(imgs.get(imgs.size() - 1), sortie);
                 case JPG -> Capture.ecrireJpg(imgs.get(imgs.size() - 1), fondRgb < 0 ? 0xFFFFFF : fondRgb, sortie);

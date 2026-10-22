@@ -30,8 +30,6 @@ public final class Zone {
     private static volatile int[] premier;
     /** Dernier clic sur un mobi : le deplacement d'avatar qui le suit parfois ne compte pas. */
     private static volatile long clicMobiA = 0;
-    /** La grille a ete allumee pour le choix : on l'eteint apres. */
-    private static volatile boolean grilleAuto = false;
     private static volatile long choixDebut = 0;
     private static final List<Runnable> ecouteurs = new CopyOnWriteArrayList<>();
 
@@ -109,7 +107,8 @@ public final class Zone {
     /**
      * Les deux prochains clics dans le jeu donnent les coins : une case du sol,
      * ou un mobi (alors tout son encombrement compte). La grille du jeu
-     * s'affiche pendant le choix (client modifie), pour viser les cases.
+     * s'affiche pendant le choix et les clics traversent les mobis (client
+     * modifie, GrilleVue.attente), pour viser les cases.
      */
     public static void demarrerChoix() {
         effacerEmpreinte();
@@ -117,17 +116,12 @@ public final class Zone {
         premierCoin = null; premier = null;
         long debut = System.currentTimeMillis();
         choixDebut = debut;
-        // les mobis laissent passer les clics jusqu'au second coin (2 minutes au plus)
-        Salle.tache("zone-clics", () -> {
-            GrilleVue.clicsAuSol(true);
+        // grille et clics a travers les mobis jusqu'au second coin (2 minutes au plus)
+        GrilleVue.attente("zone", true);
+        Salle.tache("zone-delai", () -> {
             Salle.sommeil(120_000);
             if (choixEnCours && choixDebut == debut) { effacerEmpreinte(); choixEnCours = false; premierCoin = null; premier = null; eteindreGrille(); prevenir(); }
         });
-        if (!GrilleVue.voulue())
-            Salle.tache("zone-grille", () -> {
-                if (choixEnCours && !GrilleVue.voulue() && ClientModifie.saitGrille() && GrilleVue.montrer(true))
-                    grilleAuto = true;
-            });
         prevenir();
     }
 
@@ -140,11 +134,9 @@ public final class Zone {
         Empreinte.effacer();
     }
 
+    /** Fin du choix (fait, annule, delai passe) : grille et clics comme avant. */
     private static void eteindreGrille() {
-        Salle.tache("zone-clics", () -> GrilleVue.clicsAuSol(false));
-        if (!grilleAuto) return;
-        grilleAuto = false;
-        Salle.tache("zone-grille", () -> GrilleVue.montrer(false));
+        GrilleVue.attente("zone", false);
     }
 
     public static boolean choixEnCours() { return choixEnCours; }

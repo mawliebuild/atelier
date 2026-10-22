@@ -1063,6 +1063,28 @@ public final class Groupes {
     }
 
     /**
+     * Ramasse VRAIMENT ces mobis (tout ramasser dans une zone) : une seule
+     * action pour Ctrl+Z. Les calques verrouilles refusent (refusVerrouMobis).
+     */
+    public static Tache ramasserMobis(Collection<Integer> sols, Collection<Integer> murs, Progression p) {
+        List<Integer> s = new ArrayList<>(sols), m = new ArrayList<>(murs);
+        String v = refusVerrouMobis(s, m);
+        if (v != null) { Tache t = new Tache("ramasser", p); t.finir(Resultat.refus(v)); return t; }
+        return lancer("ramasser", null, true, p, t -> GroupeActions.ramasserIds(t, s, m));
+    }
+
+    /**
+     * Pivote chaque mobi de sol sur lui-meme, d'un quart de tour (zone :
+     * fenetre « Changer l'etat ou pivoter »). Une seule action pour Cmd+Z.
+     */
+    public static Tache pivoterMobis(Collection<Integer> sols, boolean horaire, Progression p) {
+        List<Integer> s = new ArrayList<>(sols);
+        String v = refusVerrouMobis(s, List.of());
+        if (v != null) { Tache t = new Tache("pivoter", p); t.finir(Resultat.refus(v)); return t; }
+        return lancer("pivoter", null, true, p, t -> GroupeActions.pivoterIds(t, s, horaire));
+    }
+
+    /**
      * Colle (Ctrl+V) une copie de ces mobis, posee sur place dans un nouveau
      * calque numerote, comme Dupliquer. Les ids viennent d'une copie (Ctrl+C) :
      * le calque d'origine peut avoir change ou disparu depuis.

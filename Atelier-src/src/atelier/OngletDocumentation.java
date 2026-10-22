@@ -115,13 +115,14 @@ public final class OngletDocumentation {
         c(galerie, "Molette | Pincer", "Zoomer dans la photo.");
         c(galerie, "Glisser", "Se déplacer dans la photo.");
         c(galerie, "Double-clic", "Passer de « ajustée » à 100 %.");
-        c(galerie, "Clic droit", "Ouvrir, taguer, déplacer, supprimer une photo, ou l'utiliser comme photo de référence sur la salle.");
+        c(galerie, "Clic droit", "Ouvrir, taguer, déplacer, supprimer une photo, l'enregistrer sur l'ordi, ou l'utiliser comme photo de référence sur la salle.");
         c(galerie, "Glisser", "Une photo sur une autre : changer l'ordre ; des images depuis " + (MAC ? "le Finder" : "l'Explorateur") + " : les ajouter.");
         // Mac : Cmd+Ctrl+Maj+4 copie une zone ; Windows : Win+Maj+S (Outil Capture d'écran) aussi.
         c(galerie, MAC ? "CMD+CTRL+SHIFT+4" : "Win+SHIFT+S", "Capture d'écran copiée, puis « Coller une image » pour l'ajouter.");
         c(galerie, "Double-clic", "Sur la barre de la visionneuse : la replier.");
         // Entree et Echap : memes touches sur Mac (Retour) et Windows ; actives seulement dans la visionneuse
         c(galerie, "Glisser | Entrée | Échap", "Visionneuse, bouton Recadrer : tracer la zone à garder, la déplacer ou la redimensionner par ses coins et ses bords ; Entrée valide, Échap annule. « Annuler le recadrage » remet l'original tant que la visionneuse reste ouverte.");
+        c(galerie, "Glisser | Entrée | Échap", "Aperçu après une photo de l'appart, bouton Recadrer : tracer la zone à garder (un GIF est recadré en entier) ; Entrée valide, Échap annule.");
         c(galerie, "Clic | Entrée", "Sur un dossier : l'ouvrir. Le chemin en haut (Galerie › …) permet de remonter.");
         c(galerie, "F2", "Sur un dossier : le renommer.");
         c(galerie, "Suppr", "Sur un dossier vide : le supprimer (un dossier avec des photos n'est jamais supprimé).");

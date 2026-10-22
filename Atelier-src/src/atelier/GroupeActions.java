@@ -332,7 +332,7 @@ final class GroupeActions {
         String msg = ok + "/" + voulu.size() + " mobi(s) à la nouvelle hauteur"
                 + (rates > 0 ? ", " + rates + " pas changé(s)." : ".")
                 + (ids.get(1).isEmpty() ? "" : " Muraux laissés tels quels.")
-                + " Ctrl+Z pour annuler.";
+                + " Cmd+Z pour annuler.";
         return new Groupes.Resultat(rates == 0 && !arrete, arrete, voulu.size(), ok, rates, msg, null);
     }
 
@@ -438,6 +438,15 @@ final class GroupeActions {
         return r;
     }
 
+    /** Chaque mobi de sol tourne sur lui-meme (meme case, meme hauteur), par le tapis de dalles. */
+    static Groupes.Resultat pivoterIds(Groupes.Tache t, Collection<Integer> sols, boolean horaire) {
+        int salle = Groupes.salleCourante();
+        List<GroupeCalcul.Element> els = elements(sols, List.of());
+        List<GroupeCalcul.Cible> cibles = GroupeCalcul.pivot(els, horaire, false, Salle::hauteurSol, null);
+        if (cibles.isEmpty()) return Groupes.Resultat.refus("Aucun mobi de sol à pivoter dans la zone.");
+        return bougerTapis(t, salle, cibles, true, "pivoté", null, b -> suitePivot(b, 0));
+    }
+
     /**
      * Deplacement avec pivot (mode Deplacer : fleches + pivoter) : chaque mobi
      * de sol part directement a sa case et sa rotation finales, par le tapis
@@ -536,12 +545,12 @@ final class GroupeActions {
         return new Groupes.Resultat(restes == 0 && !arrete, arrete, liste.size(), faits, restes, msg, null);
     }
 
-    /** « 12 mobis ramassés. Ctrl+Z pour les reposer. » (logique pure). */
+    /** « 12 mobis ramassés. Cmd+Z pour les reposer. » (logique pure). */
     static String messageRamassage(int faits, int voulus, int restes, boolean arrete) {
         String m = (arrete ? "Arrêté. " : "") + (faits == voulus ? (faits > 1 ? faits + " mobis ramassés" : faits + " mobi ramassé")
                 : faits + "/" + voulus + " mobi(s) ramassé(s)")
                 + (restes > 0 && !arrete ? ", " + restes + " refusé(s) par le jeu (droits ? mobi verrouillé ?)" : "") + ".";
-        if (faits > 0) m += faits > 1 ? " Ctrl+Z pour les reposer." : " Ctrl+Z pour le reposer.";
+        if (faits > 0) m += faits > 1 ? " Cmd+Z pour les reposer." : " Cmd+Z pour le reposer.";
         return m;
     }
 

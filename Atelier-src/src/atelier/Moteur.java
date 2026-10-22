@@ -136,6 +136,9 @@ public final class Moteur extends ExtensionForm {
         // pendant une pose : « :abort » l'arrete, les avertissements BC restent caches
         c.intercept(S, "Chat", this::surChat);
         c.intercept(C, "BuildersClubPlacementWarning", m -> { if (PoseCopie.occupee()) m.setBlocked(true); });
+        // diagnostic : delai entre un geste d'echange (Trading...) et la reponse du serveur
+        c.interceptTout(S, m -> suivreEchange(m, true));
+        c.interceptTout(C, m -> suivreEchange(m, false));
 
         onConnect((hote, port, a, b, client) -> {
             String h = hoteDuJeu(hote);
@@ -455,5 +458,99 @@ public final class Moteur extends ExtensionForm {
         // sous sudo, l'ancien moteur le rangeait chez root (user.home = /var/root)
         File root = new File(System.getProperty("user.home"), "Library/Application Support/G-Presets/Cache/cache.json");
         return root.isFile() ? root : reel;
+    }
+
+    // ================================================================ diagnostic de lenteur
+
+    /**
+     * Chaque ecouteur de paquet est chronometre : le proxy tient un verrou
+     * commun aux deux sens pendant qu'il tourne, un ecouteur lent fige donc le
+     * jeu (chat, echange, inventaire). Au-dela de LENT_NS, une ligne de debug,
+     * au plus une par ecouteur toutes les 5 s.
+     */
+    private static final long LENT_NS = 30_000_000L;
+    private final Map<String, Long> lentSignaleLe = new ConcurrentHashMap<>();
+
+    @Override
+    public void intercept(HMessage.Direction d, MessageListener l) {
+        super.intercept(d, chrono(d, "tous les paquets", l));
+    }
+
+    @Override
+    public void intercept(HMessage.Direction d, String nom, MessageListener l) {
+        super.intercept(d, nom, chrono(d, nom, l));
+    }
+
+    @Override
+    public void intercept(HMessage.Direction d, int entete, MessageListener l) {
+        super.intercept(d, entete, chrono(d, "#" + entete, l));
+    }
+
+    private MessageListener chrono(HMessage.Direction d, String nom, MessageListener l) {
+        if (l == null) return null;
+        String origine = origine();
+        return m -> {
+            long t = System.nanoTime();
+            try { l.act(m); }
+            finally {
+                long ns = System.nanoTime() - t;
+                if (ns > LENT_NS) lent(d, nom, origine, m, ns);
+            }
+        };
+    }
+
+    private void lent(HMessage.Direction d, String nom, String origine, HMessage m, long ns) {
+        String cle = nom + "|" + origine;
+        long now = System.currentTimeMillis();
+        Long avant = lentSignaleLe.get(cle);
+        if (avant != null && now - avant < 5000) return;
+        lentSignaleLe.put(cle, now);
+        String paquet = nom;
+        if (nom.equals("tous les paquets")) {
+            try { paquet = "tous les paquets, ici " + nomDe(d, m.getPacket().headerId()); } catch (Throwable ignored) { }
+        }
+        Journal.debug("lenteur : écouteur de " + paquet + " (" + (d == HMessage.Direction.TOSERVER ? "vers le serveur" : "vers le jeu")
+                + ") : " + ns / 1_000_000 + " ms, dans " + origine + ".");
+    }
+
+    /** La classe et la ligne qui ont branche l'ecouteur (hors Moteur et Canal). */
+    private static String origine() {
+        for (StackTraceElement e : new Throwable().getStackTrace()) {
+            String c = e.getClassName();
+            if (c.startsWith("gearth.") || c.equals(Moteur.class.getName()) || c.startsWith("atelier.briques.Canal")) continue;
+            return c.replaceFirst("^atelier\\.", "") + ":" + e.getLineNumber();
+        }
+        return "?";
+    }
+
+    private final Map<Integer, String> nomsServeur = new ConcurrentHashMap<>(), nomsJeu = new ConcurrentHashMap<>();
+
+    private String nomDe(HMessage.Direction d, int entete) {
+        Map<Integer, String> cache = d == HMessage.Direction.TOSERVER ? nomsServeur : nomsJeu;
+        String n = cache.get(entete);
+        if (n != null) return n;
+        try {
+            gearth.services.packet_info.PacketInfo i = getPacketInfoManager().getPacketInfoFromHeaderId(d, entete);
+            if (i == null || i.getName() == null) return "#" + entete;   // pas encore connu : pas de cache
+            n = i.getName();
+        } catch (Throwable t) { return "#" + entete; }
+        cache.put(entete, n);
+        return n;
+    }
+
+    /** Dernier geste d'echange envoye (nom, heure) ; null apres sa reponse. */
+    private volatile String echangeEnvoye;
+    private volatile long echangeEnvoyeLe;
+
+    /** Fil des paquets : seulement un nom en cache compare ; une ligne de debug par geste d'echange. */
+    private void suivreEchange(HMessage m, boolean versServeur) {
+        String n = nomDe(versServeur ? HMessage.Direction.TOSERVER : HMessage.Direction.TOCLIENT, m.getPacket().headerId());
+        if (!n.startsWith("Trad")) return;
+        long now = System.currentTimeMillis();
+        if (versServeur) { echangeEnvoye = n; echangeEnvoyeLe = now; return; }
+        String e = echangeEnvoye;
+        if (e == null) return;
+        echangeEnvoye = null;
+        Journal.debug("échange : " + e + " -> " + n + " en " + (now - echangeEnvoyeLe) + " ms (serveur et Atelier compris).");
     }
 }

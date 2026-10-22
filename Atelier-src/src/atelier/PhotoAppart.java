@@ -71,15 +71,14 @@ final class PhotoAppart {
         // --- GIF
         Spinner<Integer> nb = spinner(2, 30, PREFS.getInt("photo.gif.nb", 8), 1);
         Spinner<Integer> intervalle = spinner(200, 10_000, PREFS.getInt("photo.gif.intervalle", 1000), 100);
-        Spinner<Integer> delai = spinner(50, 5000, PREFS.getInt("photo.gif.delai", 400), 50);
         GridPane grille = new GridPane();
         grille.setHgap(10); grille.setVgap(6);
         grille.addRow(0, new Label("Nombre d'images"), nb);
         grille.addRow(1, new Label("Entre deux photos (ms)"), intervalle);
-        grille.addRow(2, new Label("Durée d'une image (ms)"), delai);
         VBox blocGif = Ui.bloc("Animation GIF", grille,
                 Ui.aide("L'Atelier prend plusieurs photos d'affilée et les assemble : idéal pour les mobis "
-                        + "animés, les wired ou une fête."));
+                        + "animés, les wired ou une fête. La vitesse, le nombre d'images gardées et le cadre "
+                        + "se règlent ensuite, sur l'aperçu."));
         blocGif.managedProperty().bind(blocGif.visibleProperty());
 
         Runnable majFormat = () -> {
@@ -109,11 +108,10 @@ final class PhotoAppart {
         prendre.setOnAction(e -> {
             Capture.Format f = (Capture.Format) g.getSelectedToggle().getUserData();
             int n = f == Capture.Format.GIF ? val(nb, 8) : 1;
-            int iv = val(intervalle, 1000), d = val(delai, 400);
+            int iv = val(intervalle, 1000), d = PREFS.getInt("photo.gif.delai", 400);
             PREFS.put("photo.format", f.name());
             PREFS.putInt("photo.gif.nb", val(nb, 8));
             PREFS.putInt("photo.gif.intervalle", iv);
-            PREFS.putInt("photo.gif.delai", d);
             stage.close();
             prendre(css, f, n, iv, d);
         });

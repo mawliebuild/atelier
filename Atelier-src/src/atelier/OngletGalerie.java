@@ -752,6 +752,42 @@ public class OngletGalerie {
     }
 
     /** Un nom de fichier libre dans le dossier d (« nom (2).png »...). */
+    /**
+     * Copie de la photo (GIF compris, tel quel) la ou on veut sur l'ordi : la
+     * fenetre du systeme s'ouvre dans Telechargements, avec le nom de la photo.
+     */
+    static void enregistrerSurOrdi(File f, javafx.stage.Window parent) {
+        if (f == null || !f.isFile()) { Journal.erreur("Cette photo n'existe plus sur le disque."); return; }
+        FileChooser fc = new FileChooser();
+        fc.setTitle("Enregistrer sur l'ordi");
+        File tel = new File(Capture.maisonReelle(), "Downloads");
+        if (tel.isDirectory()) fc.setInitialDirectory(tel);
+        fc.setInitialFileName(f.getName());
+        String ext = f.getName().replaceFirst("^.*\\.", "").toLowerCase(java.util.Locale.ROOT);
+        fc.getExtensionFilters().add(new FileChooser.ExtensionFilter("Image " + ext.toUpperCase(java.util.Locale.ROOT), "*." + ext));
+        // la fenetre du systeme doit passer devant une fenetre toujours au premier plan
+        javafx.stage.Stage st = parent instanceof javafx.stage.Stage ? (javafx.stage.Stage) parent : null;
+        boolean dessus = st != null && st.isAlwaysOnTop();
+        if (dessus) st.setAlwaysOnTop(false);
+        File dest;
+        try { dest = fc.showSaveDialog(parent); }
+        finally { if (dessus) st.setAlwaysOnTop(true); }
+        if (dest == null) return;
+        if (!dest.getName().toLowerCase(java.util.Locale.ROOT).endsWith("." + ext))
+            dest = new File(dest.getParentFile(), dest.getName() + "." + ext);
+        if (dest.getAbsoluteFile().equals(f.getAbsoluteFile())) return;
+        File cible = dest;
+        Salle.tache("galerie-ordi", () -> {
+            try {
+                Files.copy(f.toPath(), cible.toPath(), StandardCopyOption.REPLACE_EXISTING);
+                Capture.rendre(cible);
+                Journal.succes("Photo enregistrée sur l'ordi : " + cible.getName() + ".");
+            } catch (Throwable t) {
+                Journal.erreur("La photo n'a pas pu être enregistrée sur l'ordi", t);
+            }
+        });
+    }
+
     private static File libre(File d, String nom) {
         File f = new File(d, nom);
         String base = nom.contains(".") ? nom.substring(0, nom.lastIndexOf('.')) : nom;
@@ -1552,7 +1588,9 @@ public class OngletGalerie {
         suppr.setOnAction(e -> supprimer(f));
         MenuItem calque = new MenuItem("Utiliser comme photo de référence");
         calque.setOnAction(e -> CalquePhoto.utiliser(f, css, b.getScene() == null ? null : b.getScene().getWindow()));
-        ContextMenu cm = new ContextMenu(ouvrir, tagsItem, versDossier, calque);
+        MenuItem surOrdi = new MenuItem("Enregistrer sur l'ordi…");
+        surOrdi.setOnAction(e -> enregistrerSurOrdi(f, b.getScene() == null ? null : b.getScene().getWindow()));
+        ContextMenu cm = new ContextMenu(ouvrir, tagsItem, versDossier, calque, surOrdi);
         if (sonDossier != null && !sonDossier.equals(courant)) {
             MenuItem voir = new MenuItem("Ouvrir son dossier");
             voir.setOnAction(e -> naviguer(sonDossier));
@@ -1815,7 +1853,7 @@ public class OngletGalerie {
 
             // recadrage : un bouton pour y entrer ; Valider / Annuler et les dimensions pendant
             recadrer = boutonMain("Recadrer", "Choisir une zone de la photo à garder. Le fichier est remplacé, "
-                    + "sous le même nom : ses tags et sa place dans la galerie restent.");
+                    + "sous le même nom : ses tags et sa place dans la galerie restent. Un GIF animé est recadré en entier, toutes ses images.");
             recadrer.setOnAction(e -> entrerRecadrage());
             defaire = boutonMain("Annuler le recadrage", "Remettre la photo telle qu'elle était à l'ouverture. "
                     + "Possible seulement tant que la visionneuse reste ouverte : une fois fermée, le recadrage est définitif.");
@@ -1829,7 +1867,10 @@ public class OngletGalerie {
             HBox choix = new HBox(6, valider, annuler);
             choix.setAlignment(Pos.CENTER_LEFT);
             this.choix = choix;
-            HBox action = new HBox(6, recadrer);
+            surOrdi = boutonMain("Enregistrer sur l'ordi…", "Enregistrer une copie de la photo où tu veux sur l'ordi "
+                    + "(Téléchargements proposé). Un GIF reste animé.");
+            surOrdi.setOnAction(e -> enregistrerSurOrdi(fichier, stage));
+            HBox action = new HBox(6, recadrer, surOrdi);
             action.setAlignment(Pos.CENTER_LEFT);
             this.action = action;
 
@@ -1992,7 +2033,7 @@ public class OngletGalerie {
         private File fichier;
         private final Label titre = new Label();
         private final Label dimLbl = new Label();
-        private Button recadrer, defaire, valider;
+        private Button recadrer, defaire, valider, surOrdi;
         private HBox zoomBox, transp, choix, action;
         private FlowPane outils;
         private boolean recadrage = false, occupe = false;
@@ -2189,8 +2230,8 @@ public class OngletGalerie {
 
         /** « Annuler le recadrage » n'apparait que si un original est garde. */
         private void majAction() {
-            if (original != null) action.getChildren().setAll(recadrer, defaire);
-            else action.getChildren().setAll(recadrer);
+            if (original != null) action.getChildren().setAll(recadrer, defaire, surOrdi);
+            else action.getChildren().setAll(recadrer, surOrdi);
             defaire.setDisable(false);
         }
 
@@ -2202,8 +2243,8 @@ public class OngletGalerie {
 
         /**
          * Remplace le fichier par la zone choisie, au meme format et sous le
-         * meme nom (tags et ordre restent valables). Un GIF : sa premiere
-         * image seulement, en PNG (« nom.png »), tags et ordre suivent.
+         * meme nom (tags et ordre restent valables). Un GIF anime : toutes ses
+         * images sont recadrees, il reste anime, avec les memes durees.
          * La photo est relue sur le disque en pleine taille (celle affichee
          * peut etre reduite a la taille de l'ecran).
          */
@@ -2224,30 +2265,36 @@ public class OngletGalerie {
             Thread t = new Thread(() -> {
                 try {
                     byte[] avant = premier ? Files.readAllBytes(src.toPath()) : null;
-                    java.awt.image.BufferedImage bi = javax.imageio.ImageIO.read(src);
-                    if (bi == null) throw new java.io.IOException("photo illisible");
-                    // au cas ou la taille lue differe de celle annoncee
-                    double kx = bi.getWidth() / rl, ky = bi.getHeight() / rh;
-                    int ix = (int) borne(Math.round(x0 * kx), 0, bi.getWidth() - 1);
-                    int iy = (int) borne(Math.round(y0 * ky), 0, bi.getHeight() - 1);
-                    int iw = (int) borne(Math.round(x1 * kx) - ix, 1, bi.getWidth() - ix);
-                    int ih = (int) borne(Math.round(y1 * ky) - iy, 1, bi.getHeight() - iy);
-                    boolean alpha = bi.getColorModel().hasAlpha();
-                    java.awt.image.BufferedImage out = new java.awt.image.BufferedImage(iw, ih,
-                            alpha ? java.awt.image.BufferedImage.TYPE_INT_ARGB : java.awt.image.BufferedImage.TYPE_INT_RGB);
-                    java.awt.Graphics2D g = out.createGraphics();
-                    g.drawImage(bi, -ix, -iy, null);
-                    g.dispose();
-
                     String ext = extension(src);
                     boolean gif = ext.equals("gif");
-                    File cible = gif ? libre(src.getParentFile(), src.getName().replaceFirst("\\.[^.]+$", "") + ".png") : src;
-                    remplacer(cible, f -> ecrireImage(out, gif ? "png" : ext, f));
-                    if (gif && !src.delete()) Journal.debug("recadrage : le GIF d'origine n'a pas pu etre supprime : " + src);
+                    // un GIF : toutes ses images, recadrees a la meme zone, une a la fois
+                    int[] toile = gif ? Capture.tailleGif(src) : null;
+                    java.awt.image.BufferedImage bi = gif ? null : javax.imageio.ImageIO.read(src);
+                    if (!gif && bi == null) throw new java.io.IOException("photo illisible");
+                    int bw = gif ? toile[0] : bi.getWidth(), bh = gif ? toile[1] : bi.getHeight();
+                    // au cas ou la taille lue differe de celle annoncee
+                    double kx = bw / rl, ky = bh / rh;
+                    int ix = (int) borne(Math.round(x0 * kx), 0, bw - 1);
+                    int iy = (int) borne(Math.round(y0 * ky), 0, bh - 1);
+                    int iw = (int) borne(Math.round(x1 * kx) - ix, 1, bw - ix);
+                    int ih = (int) borne(Math.round(y1 * ky) - iy, 1, bh - iy);
+                    File cible = src;
+                    int[] nb = {1};
+                    if (gif) {
+                        remplacer(cible, f -> nb[0] = Capture.recadrerGif(src, ix, iy, iw, ih, f));
+                    } else {
+                        boolean alpha = bi.getColorModel().hasAlpha();
+                        java.awt.image.BufferedImage out = new java.awt.image.BufferedImage(iw, ih,
+                                alpha ? java.awt.image.BufferedImage.TYPE_INT_ARGB : java.awt.image.BufferedImage.TYPE_INT_RGB);
+                        java.awt.Graphics2D g = out.createGraphics();
+                        g.drawImage(bi, -ix, -iy, null);
+                        g.dispose();
+                        remplacer(cible, f -> ecrireImage(out, ext, f));
+                    }
+                    int nbImages = nb[0];
                     Image img = lire(cible, new int[]{iw, ih}, max);
                     Platform.runLater(() -> {
                         if (premier) { original = avant; fichierOriginal = src; }
-                        if (gif) renommerDansGalerie(src.getParentFile(), src.getName(), cible.getName());
                         nouveauFichier(cible);
                         if (!img.isError()) vue.setImage(img);
                         reelleL = iw;
@@ -2257,7 +2304,7 @@ public class OngletGalerie {
                         majAction();
                         ajuster();
                         OngletGalerie.actualiser();
-                        if (gif) succes("GIF recadré : seule sa première image est gardée, enregistrée en PNG (« " + cible.getName() + " »).");
+                        if (gif && nbImages > 1) succes("GIF recadré : " + iw + " × " + ih + " px, ses " + nbImages + " images.");
                         else succes("Photo recadrée : " + iw + " × " + ih + " px.");
                     });
                 } catch (Throwable e) {

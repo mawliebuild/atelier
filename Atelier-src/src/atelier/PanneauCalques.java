@@ -185,6 +185,7 @@ public class PanneauCalques implements Ancrage.Ancrable {
         });
         Button zone = icone(Icones.CADRE, "Sélectionner une zone : deux clics dans le jeu. Ses mobis deviennent un nouveau calque.", () -> {
             selectionParZone = true;
+            actions.oublierChoixZone();             // un seul choix de zone a la fois
             Zone.demarrerChoix();
             dire("Clique les deux coins de la zone dans le jeu.");
             InfoJeu.consigne("Sélection par zone : clique le premier coin.");
@@ -204,12 +205,16 @@ public class PanneauCalques implements Ancrage.Ancrable {
                 + "le mobi depuis ton inventaire ou clique un mobi de la salle, il couvre toute la zone (re-clique pour annuler)",
                 RemplirZone::lancer);
 
-        Button etats = icone(Icones.ETAT, "Changer l'état des mobis d'une zone : choisis la zone (deux cases), "
-                + "puis chaque clic sur le bouton de la fenêtre les change tous", actions::etatsZone);
+        Button etats = icone(Icones.ETAT, "Changer l'état ou pivoter les mobis d'une zone : choisis la zone (deux cases), "
+                + "puis « Changer l'état » ou « Pivoter » dans la fenêtre, autant de fois que tu veux", actions::etatsZone);
 
         Button remplacer = icone(Icones.TROC, "Remplacer dans une zone : choisis la zone (deux cases), puis un type de mobi "
                 + "de la zone et son remplaçant (pipette ou nom technique) : mêmes cases, hauteurs et rotations",
                 actions::remplacerZone);
+
+        Button ramasser = icone(Icones.RAMASSER, WindowsClavier.texte("Tout ramasser dans une zone : clique deux coins dans le jeu, "
+                + "tous les mobis de la zone (sols et muraux) vont dans ton inventaire. Cmd+Z les repose"),
+                () -> { selectionParZone = false; actions.ramasserZone(); });
 
         regle = icone(Icones.REGLE, "Mesurer : clique deux cases dans le jeu", () -> {
             Runnable r = surMesure;
@@ -242,7 +247,7 @@ public class PanneauCalques implements Ancrage.Ancrable {
         // (les familles s'ouvrent dans leur fenetre).
         VBox l = new VBox(4,
                 rangee("Sélection", modeSel, zone, vider),
-                rangee("Actions", deplacer, pivoter, miroir, hauteur, remplir, etats, remplacer),
+                rangee("Actions", deplacer, pivoter, miroir, hauteur, remplir, etats, remplacer, ramasser),
                 rangee("Composants", escalier, regle, grille, photo),
                 rangee("Masquer", fam));
         return l;
