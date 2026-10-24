@@ -47,7 +47,7 @@ final class GrilleVue {
     static boolean montrer(boolean oui) {
         if (oui && !ClientModifie.saitGrille()) {
             Journal.erreur("Grille impossible : le client du jeu ne sait pas la dessiner. Installe le client "
-                    + "modifié (Paramètres › Inventaire), puis relance Habbo.");
+                    + "modifié (Réglages › Connexion › Jeu modifié), puis relance Habbo.");
             return false;
         }
         voulue = oui;

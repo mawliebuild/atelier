@@ -2042,3 +2042,218 @@ VBox > .split-menu-button.last > .arrow-button {
 .fenetre .segmente > .toggle-button { -fx-background-radius: 0; -fx-border-radius: 0; }
 .fenetre .segmente > .toggle-button:first-child { -fx-background-radius: 4 0 0 4; -fx-border-radius: 4 0 0 4; }
 .fenetre .segmente > .toggle-button:last-child { -fx-background-radius: 0 4 4 0; -fx-border-radius: 0 4 4 0; }
+
+/* ==========================================================================
+   Etats en couleur, les memes partout :
+     vert   reussi
+     orange partiel, avertissement, en attente
+     rouge  echec, ou action sans retour (Supprimer, Ramasser, Composter)
+   Couleurs sourdes de la palette du jeu, lisibles sur le fond creme.
+   ========================================================================== */
+
+/* --- progression des actions longues (Avancement) --- */
+.avancement { -fx-padding: 2 0 2 0; }
+.avancement .avancement-nom    { -fx-font-weight: bold; -fx-font-size: 11px; -fx-text-fill: #1D1C19; }
+.avancement .avancement-compte { -fx-font-size: 11px; -fx-text-fill: #5A574F; }
+.avancement .avancement-reste  { -fx-font-size: 10px; -fx-text-fill: #6F6B60; -fx-font-style: italic; }
+.avancement .progress-bar { -fx-indeterminate-bar-length: 50; }
+.avancement .progress-bar > .track {
+    -fx-background-color: #9E9A8D, #FFFFFF;
+    -fx-background-insets: 0, 1;
+    -fx-background-radius: 4, 3;
+    -fx-effect: null;
+    -fx-pref-height: 10;
+}
+.avancement .progress-bar > .bar {
+    -fx-background-color: #2B6688, #3E86AC;
+    -fx-background-insets: 1, 2;
+    -fx-background-radius: 3, 2;
+    -fx-padding: 3;
+}
+.progress-bar.avancement-reussi > .bar, .fenetre .progress-bar.avancement-reussi > .bar,
+.avancement .progress-bar.avancement-reussi > .bar { -fx-background-color: #215E24, #3B9A3F; }
+.progress-bar.avancement-partiel > .bar, .fenetre .progress-bar.avancement-partiel > .bar,
+.avancement .progress-bar.avancement-partiel > .bar { -fx-background-color: #8A5E08, #E3A21A; }
+.progress-bar.avancement-echec > .bar, .fenetre .progress-bar.avancement-echec > .bar,
+.avancement .progress-bar.avancement-echec > .bar { -fx-background-color: #8F2A24, #C8352E; }
+.avancement.avancement-reussi .avancement-nom { -fx-text-fill: #2C7A30; }
+.avancement.avancement-partiel .avancement-nom { -fx-text-fill: #9A6A0A; }
+.avancement.avancement-echec .avancement-nom { -fx-text-fill: #C8352E; }
+.avancement .button.avancement-arreter { -fx-pref-height: 22; -fx-padding: 1 8 1 8; -fx-font-size: 11px; }
+
+/* bandeau sous la barre d'outils du haut : gris de la barre, texte clair */
+.avancement-bandeau {
+    -fx-background-color: #000000, #3A3C40;
+    -fx-background-insets: 0, 1;
+    -fx-background-radius: 6, 5;
+    -fx-padding: 6 10 7 10;
+    -fx-font-family: "Ubuntu", "Helvetica Neue", "Arial";
+}
+.avancement-bandeau * { -fx-font-family: "Ubuntu", "Helvetica Neue", "Arial"; }
+.avancement-bandeau .avancement-nom    { -fx-text-fill: #FFFFFF; }
+.avancement-bandeau .avancement-compte { -fx-text-fill: #D6D3C9; -fx-font-weight: bold; }
+.avancement-bandeau .avancement-reste  { -fx-text-fill: #B5B2A8; }
+.avancement-bandeau.avancement-reussi .avancement-nom { -fx-text-fill: #8FDB92; }
+.avancement-bandeau.avancement-partiel .avancement-nom { -fx-text-fill: #F2C25C; }
+.avancement-bandeau.avancement-echec .avancement-nom { -fx-text-fill: #F08A84; }
+.avancement-bandeau .progress-bar > .track { -fx-background-color: #111111, #55585D; }
+.avancement-bandeau .button {
+    -fx-background-color: #111111, linear-gradient(to bottom, #62656B, #45484D);
+    -fx-background-insets: 0, 1;
+    -fx-background-radius: 4, 3;
+    -fx-text-fill: #FFFFFF;
+    -fx-cursor: hand;
+}
+.avancement-bandeau .button:hover { -fx-background-color: #111111, linear-gradient(to bottom, #6C6F75, #505359); }
+.avancement-bandeau .icone-bouton { -fx-stroke: #FFFFFF; }
+
+/* --- badges d'etat (petite etiquette arrondie) et pastilles --- */
+.badge {
+    -fx-background-radius: 8;
+    -fx-padding: 1 7 1 7;
+    -fx-font-size: 10px;
+    -fx-font-weight: bold;
+}
+.badge-ok, .fenetre .badge-ok           { -fx-background-color: #DCEFD9; -fx-text-fill: #2C7A30; }
+.badge-attente, .fenetre .badge-attente { -fx-background-color: #F8EACB; -fx-text-fill: #8A5E08; }
+.badge-echec, .fenetre .badge-echec     { -fx-background-color: #F6DAD7; -fx-text-fill: #A3302A; }
+.pastille-ok      { -fx-fill: #56C35B; }
+.pastille-attente { -fx-fill: #E3A21A; }
+.pastille-echec   { -fx-fill: #C8352E; }
+
+/* --- textes d'etat en couleur --- */
+.texte-ok, .fenetre .texte-ok           { -fx-text-fill: #2C7A30; }
+.texte-attente, .fenetre .texte-attente { -fx-text-fill: #9A6A0A; }
+.texte-echec, .fenetre .texte-echec     { -fx-text-fill: #C8352E; }
+
+/* --- boutons sans retour (Supprimer, Ramasser, Composter) : rouge sourd --- */
+.fenetre .button.danger, .connexion-corps .button.danger, .button.danger {
+    -fx-background-color: #7E2621, linear-gradient(to bottom, #D9554D, #B7372F);
+    -fx-background-insets: 0, 1;
+    -fx-background-radius: 4, 3;
+    -fx-border-width: 0;
+    -fx-text-fill: #FFFFFF;
+    -fx-font-weight: bold;
+}
+.fenetre .button.danger:hover, .connexion-corps .button.danger:hover, .button.danger:hover {
+    -fx-background-color: #7E2621, linear-gradient(to bottom, #E2645C, #C2423A);
+}
+.fenetre .button.danger:pressed, .connexion-corps .button.danger:pressed, .button.danger:pressed {
+    -fx-background-color: #7E2621, linear-gradient(to bottom, #B7372F, #D9554D);
+}
+.fenetre .button.danger .icone-bouton, .button.danger .icone-bouton { -fx-stroke: #FFFFFF; }
+
+/* ==========================================================================
+   Menu deroulant de la barre du haut : au survol d'une rubrique a plusieurs
+   parties, ses sous-rubriques dessous. Meme HUD sombre que la barre.
+   ========================================================================== */
+.deroulant {
+    -fx-background-color: #000000, #47494D, rgba(30,31,33,0.97);
+    -fx-background-insets: 0, 1, 2;
+    -fx-background-radius: 7, 6, 5;
+    -fx-padding: 5;
+    -fx-min-width: 190;
+    -fx-effect: dropshadow(one-pass-box, rgba(0,0,0,0.35), 0, 0, 0, 3);
+}
+.deroulant * { -fx-font-family: "Ubuntu", "Helvetica Neue", "Arial"; }
+.deroulant-titre { -fx-padding: 3 8 5 8; }
+.deroulant-titre .label { -fx-text-fill: #9A978E; -fx-font-size: 11px; -fx-font-weight: bold; }
+.deroulant .button.deroulant-ligne {
+    -fx-background-color: transparent;
+    -fx-background-insets: 0;
+    -fx-background-radius: 4;
+    -fx-border-width: 0;
+    -fx-text-fill: #E9E6DC;
+    -fx-font-size: 12px;
+    -fx-font-weight: normal;
+    -fx-padding: 5 10 5 10;
+    -fx-cursor: hand;
+    -fx-effect: null;
+}
+.deroulant .button.deroulant-ligne:hover { -fx-background-color: #3E86AC; -fx-text-fill: #FFFFFF; }
+.deroulant .button.deroulant-ligne:pressed { -fx-background-color: #2F6E8F; -fx-text-fill: #FFFFFF; }
+.deroulant-sep { -fx-background-color: #4A4C50; -fx-min-height: 1; -fx-pref-height: 1; -fx-max-height: 1; }
+/* sous-rubrique montree seule : pas de filet sous la derniere section */
+.fenetre .nav-section.seule, .nav-section.seule { -fx-border-color: transparent; }
+
+/* Curseur main sur tout ce qui se clique (survol) ; normal quand c'est grise */
+.button, .toggle-button, .hyperlink, .check-box, .radio-button, .menu-button, .split-menu-button,
+.combo-box, .choice-box, .color-picker, .tab-pane .tab, .spinner .increment-arrow-button,
+.spinner .decrement-arrow-button, .slider .thumb, .menu-item, .context-menu .menu-item {
+    -fx-cursor: hand;
+}
+.button:disabled, .toggle-button:disabled, .hyperlink:disabled, .check-box:disabled, .radio-button:disabled,
+.menu-button:disabled, .split-menu-button:disabled, .combo-box:disabled, .choice-box:disabled {
+    -fx-cursor: default;
+}
+
+/* --- Mon appart : chiffres cles de l'en-tete et pastilles d'etat compactes --- */
+.label.chiffre-appart, .fenetre .label.chiffre-appart {
+    -fx-background-color: #ECE8DE;
+    -fx-text-fill: #4A473F;
+    -fx-font-size: 11px;
+    -fx-padding: 2 8 2 8;
+}
+.label.chiffre-appart.chiffre-bc, .fenetre .label.chiffre-appart.chiffre-bc { -fx-background-color: #F8EACB; -fx-text-fill: #8A5E08; }
+.label.chiffre-appart.chiffre-fort, .fenetre .label.chiffre-appart.chiffre-fort { -fx-background-color: #DCE9F0; -fx-text-fill: #2B6688; }
+.label.pastille-nom, .fenetre .label.pastille-nom { -fx-text-fill: #6F6B60; -fx-font-size: 11px; }
+
+/* ==========================================================================
+   Liens d'apparts et Visibilite zone : rangees survolables, appart actuel,
+   cible du glisser-deposer, cartes de zones.
+   ========================================================================== */
+.badge-neutre, .fenetre .badge-neutre { -fx-background-color: #ECEAE0; -fx-text-fill: #5A574F; }
+.badge-info, .fenetre .badge-info     { -fx-background-color: #DCEAF2; -fx-text-fill: #2B6688; }
+
+/* une rangee d'appart ; survol gris, appart actuel vert pale */
+.lien-rangee {
+    -fx-padding: 4 6 4 6;
+    -fx-background-radius: 6;
+    -fx-border-radius: 6;
+    -fx-border-color: transparent;
+    -fx-border-width: 2 0 2 0;
+}
+.lien-rangee:hover { -fx-background-color: rgba(128,128,128,0.12); }
+.lien-rangee.ici, .lien-rangee.ici:hover { -fx-background-color: rgba(60,154,78,0.14); }
+.lien-rangee.traine { -fx-opacity: 0.4; }
+/* deposer avant / apres cette rangee : un trait bleu */
+.lien-rangee.cible-avant { -fx-border-color: #3E86AC transparent transparent transparent; }
+.lien-rangee.cible-apres { -fx-border-color: transparent transparent #3E86AC transparent; }
+.fenetre .button.lien-aller { -fx-pref-height: 24; -fx-padding: 2 8 2 6; -fx-font-size: 11px; }
+
+/* tete de rubrique ; cible de depot : fond et filet bleus */
+.lien-rubrique {
+    -fx-padding: 4 4 3 2;
+    -fx-background-radius: 6;
+    -fx-border-radius: 6;
+    -fx-border-color: transparent;
+    -fx-border-width: 1.5;
+}
+.lien-rubrique:hover { -fx-background-color: rgba(128,128,128,0.10); }
+.lien-rubrique.cible, .lien-rubrique.cible:hover {
+    -fx-background-color: rgba(62,134,172,0.16);
+    -fx-border-color: #3E86AC;
+}
+.lien-rubrique-nom { -fx-font-weight: bold; }
+.fenetre .lien-rubrique .button.bouton-icone { -fx-pref-height: 22; -fx-padding: 1 4 1 4; -fx-min-width: 24; }
+
+/* bandeau « retire, annuler » */
+.lien-annulation {
+    -fx-padding: 4 8 4 8;
+    -fx-background-color: #F2F0E8;
+    -fx-background-radius: 6;
+}
+
+/* une carte de zone ; masquee : fond gris et nom attenue */
+.zone-carte {
+    -fx-padding: 6 6 6 8;
+    -fx-background-radius: 6;
+    -fx-border-radius: 6;
+    -fx-border-color: #E2DFD4;
+}
+.zone-carte:hover { -fx-background-color: rgba(128,128,128,0.08); }
+.zone-carte.masquee { -fx-background-color: #F2F0E8; }
+.zone-carte.masquee .zone-nom { -fx-text-fill: #6F6B60; }
+.zone-nom { -fx-font-weight: bold; }
+.pastille-eteinte { -fx-fill: #A7A196; }
+.fenetre .button.capture-touche { -fx-background-color: #8A5E08, #F8EACB; -fx-text-fill: #8A5E08; -fx-font-weight: bold; }

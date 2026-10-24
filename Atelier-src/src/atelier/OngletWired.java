@@ -129,9 +129,9 @@ public class OngletWired {
         TableColumn<LigneWired, String> cn = new TableColumn<>("Mobi");
         cn.setCellValueFactory(new PropertyValueFactory<>("nom"));
         cn.setMaxWidth(3000); cn.setPrefWidth(120);
-        TableColumn<LigneWired, String> ca = new TableColumn<>("Alt.");
+        TableColumn<LigneWired, String> ca = new TableColumn<>("Hauteur");
         ca.setCellValueFactory(new PropertyValueFactory<>("altitude"));
-        ca.setMaxWidth(800); ca.setPrefWidth(52);
+        ca.setMaxWidth(800); ca.setPrefWidth(64);
         table.getColumns().add(cr); table.getColumns().add(ct);
         table.getColumns().add(cn); table.getColumns().add(ca);
         // noms longs (« Effet : envoyer un signal ») : a la ligne plutot que coupes
@@ -142,7 +142,7 @@ public class OngletWired {
         table.setMinHeight(160);
         VBox.setVgrow(table, Priority.ALWAYS);
 
-        altLbl = Ui.valeur("@altitude sera trouvée automatiquement");
+        altLbl = Ui.valeur("La hauteur des wired est vérifiée toute seule.");
 
         remettre = new Button("Remettre dans l'ordre");
         remettre.getStyleClass().add("primaire");

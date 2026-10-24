@@ -568,7 +568,7 @@ final class PoseOutils {
         /** En francais, pour le bilan. Logique pure. */
         static String raisonLisible(Signal s) {
             if (s.genre().startsWith("bc"))
-                return "le Builders Club demande une confirmation (la salle serait cachée aux visiteurs)";
+                return "le Builders Club demande une confirmation (l'appart serait caché aux visiteurs)";
             return s.texte();
         }
     }

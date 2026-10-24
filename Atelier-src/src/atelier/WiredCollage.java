@@ -606,8 +606,8 @@ public final class WiredCollage {
     static void copier(Collection<Integer> idsSols, Panneau b, String nom, boolean avecCibles, Consumer<String> fin) {
         if (enCours || PoseCopie.occupee()) { b.refus("Une copie ou un collage est déjà en cours."); return; }
         if (idsSols == null || idsSols.isEmpty()) { b.refus("Aucun mobi à copier : choisis des cases, un calque ou sélectionne des mobis."); return; }
-        if (!Salle.dansUneSalle()) { b.refus("Tu n'es pas dans une salle."); return; }
-        if (!Salle.furnidataPrete()) { b.refus("Furnidata pas encore chargée."); return; }
+        if (!Salle.dansUneSalle()) { b.refus("Tu n'es pas dans un appart."); return; }
+        if (!Salle.furnidataPrete()) { b.refus("Liste des mobis pas encore chargée."); return; }
         List<Integer> ids = new ArrayList<>(new LinkedHashSet<>(idsSols));
         String voulu = nom == null || nettoyer(nom).isEmpty() ? nomPropose() : nom;
         enCours = true;
@@ -627,7 +627,7 @@ public final class WiredCollage {
     /** Le nom enregistre, ou null si rien n'a ete copie. */
     private static String copier0(List<Integer> ids, Suivi b, String voulu, boolean avecCibles) {
         EtatSalle fs = Salle.etat();
-        if (fs == null) { b.fin("Tu n'es pas dans une salle."); return null; }
+        if (fs == null) { b.fin("Tu n'es pas dans un appart."); return null; }
         int salle = fs.getRoomId();
         List<HFloorItem> mobis = new ArrayList<>();
         List<Integer> wired = new ArrayList<>();
@@ -646,7 +646,7 @@ public final class WiredCollage {
                 (f, t) -> b.progres(f, t, "Lecture des réglages… " + f + " / " + t));
         if (b.arretee()) { b.fin("Arrêté : rien n'a été copié."); return null; }
         if (cfg.isEmpty()) {
-            b.fin("Aucun réglage lu : as-tu les droits wired dans cette salle ? Rien n'a été copié.");
+            b.fin("Aucun réglage lu : as-tu les droits wired dans cet appart ? Rien n'a été copié.");
             return null;
         }
 
@@ -725,7 +725,7 @@ public final class WiredCollage {
                 + ", " + p.lies + " mobi(s) qu'ils utilisent, " + (c.pieces.size() - c.nbWired() - p.lies)
                 + " autre(s) mobi(s). Zone de " + c.largeur() + "×" + c.longueur() + " cases."
                 + (p.refsPerdues > 0 ? " " + p.refsPerdues + " sélection(s) vers des mobis hors copie ne suivront pas." : "")
-                + (absents > 0 ? " " + absents + " mobi(s) introuvable(s) dans la salle ignoré(s)." : "")
+                + (absents > 0 ? " " + absents + " mobi(s) introuvable(s) dans l'appart ignoré(s)." : "")
                 + (errPhoto != null ? " Pas d'aperçu : " + errPhoto : ""));
         return nom;
     }
@@ -740,7 +740,7 @@ public final class WiredCollage {
      */
     static void collerDans(String nom, HPoint origine, Panneau b) {
         Copie c = lire(nom);
-        if (c == null || c.nbWired() == 0) { b.refus("Rien à coller : copie d'abord une config wired."); return; }
+        if (c == null || c.nbWired() == 0) { b.refus("Rien à coller : copie d'abord des wired."); return; }
         if (!pretAColler(b)) return;
         b.apercu(c, "Coller « " + nom + " »", resumeCopie(nom) + ".", false,
                 origine == null ? "Après Confirmer, clique dans le jeu la case du coin haut-gauche."
@@ -752,8 +752,8 @@ public final class WiredCollage {
     private static boolean pretAColler(Suivi b) {
         if (enCours || PoseCopie.occupee()) { b.fin("Une copie ou un collage est déjà en cours."); return false; }
         if (Salle.gp() == null) { b.fin("L'Atelier n'est pas encore prêt."); return false; }
-        if (!Salle.dansUneSalle()) { b.fin("Tu n'es pas dans une salle."); return false; }
-        if (!Salle.furnidataPrete()) { b.fin("Furnidata pas encore chargée."); return false; }
+        if (!Salle.dansUneSalle()) { b.fin("Tu n'es pas dans un appart."); return false; }
+        if (!Salle.furnidataPrete()) { b.fin("Liste des mobis pas encore chargée."); return false; }
         return true;
     }
 
@@ -774,12 +774,12 @@ public final class WiredCollage {
      */
     static void collerDans(Copie c, String titre, String resume, HPoint origine, Panneau b, boolean avecAutres, String consigne,
                            java.util.function.BiFunction<Copie, HPoint, Copie> auClic) {
-        String t = titre == null || titre.isBlank() ? "Coller la config wired" : titre;
+        String t = titre == null || titre.isBlank() ? "Coller les wired" : titre;
         if (c == null || c.nbWired() == 0) { b.refus("Rien à coller : la copie n'a aucun wired."); return; }
         if (enCours || PoseCopie.occupee()) { b.refus("Une copie ou un collage est déjà en cours."); return; }
         if (Salle.gp() == null) { b.refus("L'Atelier n'est pas encore prêt."); return; }
-        if (!Salle.dansUneSalle()) { b.refus("Tu n'es pas dans une salle."); return; }
-        if (!Salle.furnidataPrete()) { b.refus("Furnidata pas encore chargée."); return; }
+        if (!Salle.dansUneSalle()) { b.refus("Tu n'es pas dans un appart."); return; }
+        if (!Salle.furnidataPrete()) { b.refus("Liste des mobis pas encore chargée."); return; }
         String cons = consigne == null || consigne.isBlank() ? "la case du coin haut-gauche" : consigne;
         b.apercu(c, t, resume, avecAutres,
                 origine == null ? "Après Confirmer, clique dans le jeu " + cons + "."
@@ -808,7 +808,7 @@ public final class WiredCollage {
                     coin = Generateur.Dalle.attendreClic(120_000, emp.largeur(), emp.profondeur());
                     if (b.arretee()) { b.fin("Arrêté avant la pose : rien n'a été posé."); return; }
                     if (coin == null) { b.fin("Pas de clic dans le jeu en 2 minutes : collage annulé, rien n'a été posé."); return; }
-                    if (Salle.salleId() != salle) { b.fin("Tu as changé de salle : collage annulé, rien n'a été posé."); return; }
+                    if (Salle.salleId() != salle) { b.fin("Tu as changé d'appart : collage annulé, rien n'a été posé."); return; }
                 }
                 Copie aPoser = restreinte(c, planifier(c, avec));
                 if (auClic != null) aPoser = auClic.apply(aPoser, coin);
@@ -892,8 +892,8 @@ public final class WiredCollage {
         if (c == null || c.pieces.isEmpty()) { b.fin("Rien à coller."); f.accept(List.of()); return; }
         if (enCours) { b.fin("Une copie ou un collage est déjà en cours."); f.accept(List.of()); return; }
         if (Salle.gp() == null) { b.fin("L'Atelier n'est pas encore prêt."); f.accept(List.of()); return; }
-        if (!Salle.dansUneSalle()) { b.fin("Tu n'es pas dans une salle."); f.accept(List.of()); return; }
-        if (!Salle.furnidataPrete()) { b.fin("Furnidata pas encore chargée."); f.accept(List.of()); return; }
+        if (!Salle.dansUneSalle()) { b.fin("Tu n'es pas dans un appart."); f.accept(List.of()); return; }
+        if (!Salle.furnidataPrete()) { b.fin("Liste des mobis pas encore chargée."); f.accept(List.of()); return; }
         Plan p = planifier(c, true);
         enCours = true;
         InfoJeu.consigne(Ui.majuscule(Ui.accorder(p.aPoser.size() + " mobi(s) à poser depuis ton inventaire, dont "
@@ -990,7 +990,7 @@ public final class WiredCollage {
     private static List<Integer> coller0(Copie c, Plan plan, Generateur.Source source, HPoint origine, Suivi b) throws Exception {
         Moteur gp = Salle.gp();
         EtatSalle fs = Salle.etat();
-        if (gp == null || fs == null) { b.fin("Tu n'es plus dans une salle."); return List.of(); }
+        if (gp == null || fs == null) { b.fin("Tu n'es plus dans un appart."); return List.of(); }
         int salle = fs.getRoomId();
         if (PoseCopie.occupee()) {
             b.fin("L'Atelier est déjà en train de poser : attends la fin, ou tape :abort dans le jeu.");
@@ -998,7 +998,7 @@ public final class WiredCollage {
         }
         Furnidata fd = gp.getFurniDataTools();
         for (Piece p : plan.aPoser)
-            if (fd.getFloorTypeId(p.classe) == null) { b.fin("« " + p.classe + " » inconnu de la furnidata : collage annulé."); return List.of(); }
+            if (fd.getFloorTypeId(p.classe) == null) { b.fin("« " + p.classe + " » inconnu du jeu : collage annulé."); return List.of(); }
 
         // 1. la copie a poser (aller-retour JSON : exactement ce qu'une copie relue donnerait)
         CopieAppart relu = CopieAppart.lire(versPreset(c, plan, cl -> nomLisible(gp, cl)).json());
@@ -1016,7 +1016,7 @@ public final class WiredCollage {
             if (racine == null) { b.fin("Pas de clic dans le jeu en 2 minutes : collage annulé, rien n'a été posé."); return List.of(); }
         }
         // la salle a pu changer pendant l'attente du clic (ou depuis l'aperçu)
-        if (Salle.salleId() != salle) { b.fin("Tu as changé de salle : collage annulé, rien n'a été posé."); return List.of(); }
+        if (Salle.salleId() != salle) { b.fin("Tu as changé d'appart : collage annulé, rien n'a été posé."); return List.of(); }
 
         // 3. la pose avec la dalle magique (hauteurs exactes), comme Dupliquer, puis les reglages
         List<Generateur.Mobi> relatifs = new ArrayList<>();
@@ -1056,7 +1056,7 @@ public final class WiredCollage {
         }
         EtatSalle apresPose = Salle.etat();
         if (apresPose == null || apresPose.getRoomId() != salle) {
-            b.fin("Tu as quitté la salle pendant la pose : collage interrompu.");
+            b.fin("Tu as quitté l'appart pendant la pose : collage interrompu.");
             return List.of();
         }
         boolean arrete = pr.arrete;
@@ -1262,7 +1262,7 @@ public final class WiredCollage {
             });
             HBox boutons = new HBox(8, annuler, confirmer);
             boutons.setAlignment(Pos.CENTER_RIGHT);
-            HBox ligneSource = new HBox(8, Ui.etiquette("Source des mobis"), source);
+            ligneSource = new HBox(8, Ui.etiquette("Source des mobis"), source);
             ligneSource.setAlignment(Pos.CENTER_LEFT);
             apercu.getChildren().setAll(titre, resume, plan, ligneSource, autres, dispo, boutons);
             apercu.setPadding(new Insets(8, 10, 8, 10));
@@ -1284,6 +1284,20 @@ public final class WiredCollage {
 
         /** Le noeud a ranger dans l'onglet. */
         Region noeud() { return racine; }
+
+        private HBox ligneSource;
+        /** Appele (fil JavaFX) quand Confirmer lance l'operation. */
+        private Runnable surLancement = () -> { };
+
+        /** Quand Confirmer lance l'operation (fil JavaFX) : ex. fermer une fenetre qui ne montrerait plus que l'avancement. */
+        Panneau surLancement(Runnable r) { surLancement = r == null ? () -> { } : r; return this; }
+
+        /** Source imposee (meme index que sourceDefaut), sans le menu « Source des mobis ». */
+        Panneau sourceFixe(int i) {
+            sourceDefaut(i);
+            montrer(ligneSource, false);
+            return this;
+        }
 
         /** Source proposee a chaque aperçu : 0 inventaire seul, 1 inventaire puis BC, 2 BC puis inventaire, 3 BC seul. */
         Panneau sourceDefaut(int i) { sourceDefaut = Math.max(0, Math.min(3, i)); return this; }
@@ -1326,18 +1340,38 @@ public final class WiredCollage {
             fx(() -> etat.setText(t));
         }
 
+        /** L'operation en cours dans la barre commune de l'Atelier (bandeau du haut). */
+        private volatile Avancement.Suivi av;
+
+        private Avancement.Suivi av(String s) {
+            Avancement.Suivi a = av;
+            if (a == null || a.finie()) av = a = Avancement.debut("Wired", () -> stop = true);
+            String etape = Avancement.nomDe(s);
+            a.texte(etape.equals("En cours") ? null : etape);
+            return a;
+        }
+
         @Override public void travail(String s) {
+            av(s).part(-1);
             texte(s);
             fx(() -> { montrer(apercu, false); montrer(ligneProgres, true); barre.setProgress(ProgressBar.INDETERMINATE_PROGRESS); });
         }
 
         @Override public void progres(int fait, int total, String s) {
+            Avancement.Suivi a = av(s);
+            if (total > 0) a.compte(fait, total); else a.part(-1);
             texte(s);
             double v = total <= 0 ? ProgressBar.INDETERMINATE_PROGRESS : Math.min(1.0, fait / (double) total);
             fx(() -> { montrer(ligneProgres, true); barre.setProgress(v); });
         }
 
         @Override public void bilan(boolean ok, String s) {
+            Avancement.Suivi a = av;
+            av = null;
+            if (a != null) {
+                Avancement.Issue i = Avancement.issue(s);
+                a.fin(ok ? i : i == Avancement.Issue.REUSSI ? Avancement.Issue.ECHEC : i);
+            }
             java.util.function.BiConsumer<Boolean, String> r = surBilan;
             if (r == null) direBilan(ok, s);
             else try { r.accept(ok, s); } catch (Throwable t) { direBilan(ok, s); }
@@ -1406,6 +1440,7 @@ public final class WiredCollage {
                     boolean avec = autres.isSelected();
                     Generateur.Source s = source();
                     lancer.accept(avec, s);
+                    try { surLancement.run(); } catch (Throwable t) { Journal.debug("Suivi wired : lancement : " + t); }
                 };
                 etat.setText("");
                 montrer(ligneProgres, false);

@@ -19,7 +19,7 @@ import javafx.scene.layout.Region;
 public class BarreEtat extends HBox {
 
     private final Label etat      = new Label("Déconnectée");
-    private final Label salle     = new Label("Aucune salle");
+    private final Label salle     = new Label("Aucun appart");
     private final Label cptSalle  = new Label("--");
     private final Label cptAppart = new Label("--");
     private final Label ecart     = new Label("");
@@ -38,7 +38,7 @@ public class BarreEtat extends HBox {
                 new Separator(javafx.geometry.Orientation.VERTICAL),
                 salle,
                 espace,
-                new Label("Salle"), cptSalle,
+                new Label("Appart"), cptSalle,
                 new Separator(javafx.geometry.Orientation.VERTICAL),
                 new Label("Appart"), cptAppart,
                 ecart);
@@ -51,7 +51,7 @@ public class BarreEtat extends HBox {
     }
 
     public void salle(String nom, String modele) {
-        sur(() -> salle.setText(nom == null ? "Aucune salle"
+        sur(() -> salle.setText(nom == null ? "Aucun appart"
                 : nom + (modele == null || modele.isEmpty() ? "" : "  ·  " + modele)));
     }
 
@@ -73,7 +73,7 @@ public class BarreEtat extends HBox {
     }
 
     private static String format(int sols, int murs) {
-        return sols + " sols · " + murs + " murs · " + (sols + murs);
+        return sols + " sols · " + murs + (murs > 1 ? " muraux · " : " mural · ") + (sols + murs);
     }
 
     private static void sur(Runnable r) {

@@ -62,7 +62,7 @@ final class PlanteVue {
 
     /** Resume d'une ligne : « 12 plantes · 3 à soigner · 1 morte · 5 adultes ». */
     static String resume(Bilan b) {
-        if (b.total == 0) return "Aucune plante dans cette salle";
+        if (b.total == 0) return "Aucune plante dans cet appart";
         StringBuilder s = new StringBuilder(b.total + (b.total > 1 ? " plantes" : " plante"));
         if (b.aSoigner > 0) s.append(" · ").append(b.aSoigner).append(" à soigner");
         if (b.aRecolter > 0) s.append(" · ").append(b.aRecolter).append(" à récolter");

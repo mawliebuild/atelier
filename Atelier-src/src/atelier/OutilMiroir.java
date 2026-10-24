@@ -98,7 +98,7 @@ public class OutilMiroir {
                 Ui.bloc("Copie", copie, Ui.ligne(Ui.etiquette("Écart (cases)"), ecartCopie),
                         Ui.aide("La copie est générée comme appart temporaire et posée par "
                                 + "l'Atelier à droite de la zone (axe x) ou en dessous (axe y). "
-                                + "Pas de dalle magique dans la salle ? Je la pose à côté, "
+                                + "Pas de dalle magique dans l'appart ? Je la pose à côté, "
                                 + "puis je la ramasse à la fin.")),
                 source.bloc(),
                 Ui.bloc("Hauteurs", altLbl, chercherAlt,
@@ -149,7 +149,7 @@ public class OutilMiroir {
     private void majApercu() {
         if (apercu == null) return;
         if (!Zone.definie()) { apercu.setText("Choisis d'abord la zone."); return; }
-        if (!Salle.dansUneSalle()) { apercu.setText("Tu n'es pas dans une salle."); return; }
+        if (!Salle.dansUneSalle()) { apercu.setText("Tu n'es pas dans un appart."); return; }
         List<Cible> c = calculer(axeX.isSelected());
         if (c.isEmpty()) { apercu.setText("Aucun mobi dans la zone."); return; }
         int bougent = 0, hors = 0, empiles = 0, wired = 0;
@@ -170,7 +170,7 @@ public class OutilMiroir {
                       : "hauteurs remises seulement si @altitude est trouvée.");
         if (copie.isSelected() && wired > 0)
             sb.append("\n").append(wired).append(" wired ignoré(s) par la copie (sans leur réglage).");
-        apercu.setText(sb.toString());
+        apercu.setText(Ui.accorder(sb.toString()));
     }
 
     // ------------------------------------------------------------ action
@@ -178,7 +178,7 @@ public class OutilMiroir {
     private void lancer() {
         if (enCours) { refus("Un miroir est déjà en cours."); return; }
         if (Salle.gp() == null) { refus("L'Atelier n'est pas encore prêt."); return; }
-        if (!Salle.dansUneSalle()) { refus("Tu n'es pas dans une salle."); return; }
+        if (!Salle.dansUneSalle()) { refus("Tu n'es pas dans un appart."); return; }
         if (!Zone.definie()) { refus("Choisis d'abord la zone."); return; }
         boolean surX = axeX.isSelected();
         List<Cible> c = calculer(surX);

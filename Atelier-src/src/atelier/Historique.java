@@ -191,7 +191,7 @@ public final class Historique {
             aAnnuler.clear(); aRetablir.clear(); ouverte = null;
         }
         dire("Historique vidé.");
-        Journal.succes("Historique vidé.");
+        Journal.debug("historique vidé.");          // la liste se vide sous les yeux
     }
 
     /** Types de mobis dont les changements ne sont pas enregistres, avec leur echeance. */
@@ -259,7 +259,7 @@ public final class Historique {
                 salle = -1;
                 synchronized (VERROU) { base = null; }
                 videSilencieux();
-                signaler("Hors salle : rien à suivre.");
+                signaler("Hors appart : rien à suivre.");
             }
             return;
         }
@@ -271,7 +271,7 @@ public final class Historique {
             entree = now;
             synchronized (VERROU) { base = null; }
             videSilencieux();
-            dire("Nouvelle salle : l'historique repart de zéro.");
+            dire("Nouvel appart : l'historique repart de zéro.");
             return;
         }
         Map<Long, Place> photo = lire();
@@ -284,7 +284,7 @@ public final class Historique {
                 // On laisse la salle finir de charger avant de prendre la reference.
                 if (now - entree < REPOS_SALLE) return;
                 base = photo;
-                dire("Salle suivie (" + photo.size() + " mobis) : chaque modification peut s'annuler.");
+                dire("Appart suivi (" + photo.size() + " mobis) : chaque modification peut s'annuler.");
                 return;
             }
             // Salle rechargee (meme id) : tout disparait d'un coup -> nouvelle reference.
@@ -385,7 +385,7 @@ public final class Historique {
         synchronized (VERROU) {
             String refus = null;
             if (occupe) refus = quoi + " impossible : une annulation est déjà en cours.";
-            else if (!Salle.dansUneSalle()) refus = quoi + " impossible : entre d'abord dans une salle.";
+            else if (!Salle.dansUneSalle()) refus = quoi + " impossible : entre d'abord dans un appart.";
             a = refus != null ? null : arriere ? aAnnuler.poll() : aRetablir.poll();
             if (refus == null && a == null)
                 refus = arriere ? "Rien à annuler." : "Rien à rétablir.";
@@ -410,7 +410,7 @@ public final class Historique {
                 t.printStackTrace();
             }
             boolean memeSalle = Salle.salleId() == salleDepart;
-            if (!memeSalle || bilan == null) { bilan = interrompu + " : tu as changé de salle."; ok = false; }
+            if (!memeSalle || bilan == null) { bilan = interrompu + " : tu as changé d'appart."; ok = false; }
             synchronized (VERROU) {
                 // dans une autre salle, l'action (ids, cases) ne veut plus rien dire : on la jette
                 if (memeSalle) {

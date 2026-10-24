@@ -129,7 +129,7 @@ final class CaptureWindows {
         return meilleure[0];
     }
 
-    private static final String ABSENT = "L'appli Habbo n'est pas ouverte : lance-la et entre dans la salle.";
+    private static final String ABSENT = "L'appli Habbo n'est pas ouverte : lance-la et entre dans l'appart.";
 
     /** Met la fenetre devant ; true si elle y est. */
     private static boolean devant(WinDef.HWND h) {

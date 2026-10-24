@@ -133,7 +133,7 @@ public class OngletParametres {
 
         HBox racine = new HBox(menu, droite);
         racine.setPrefHeight(480);           // assez pour le menu de gauche, sans prendre tout l'ecran
-        Tab t = new Tab("Paramètres", racine);
+        Tab t = new Tab("Réglages", racine);
         t.setClosable(false);
         return t;
     }
@@ -197,7 +197,7 @@ public class OngletParametres {
      */
     private VBox aPropos() {
         Label atelier = Ui.aide("L'Atelier est un outil de construction pour Habbo : calques, floor dans l'appart, "
-                + "copies d'apparts et de wired, patrimoine, galerie…");
+                + "copies d'apparts et de wired, valeur de mes mobis, galerie…");
         atelier.setWrapText(true);
         Label base = new Label("La connexion au jeu repose sur G-Earth, de sirjonasxx (licence MIT), "
                 + "et une partie de la pose des mobis sur G-Presets, de sirjonasxx (modifié par TH et Zyker). "

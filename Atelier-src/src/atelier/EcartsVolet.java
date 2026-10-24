@@ -23,7 +23,7 @@ import java.util.*;
 import java.util.function.Supplier;
 
 /**
- * Volet « Écarts » (Murs › Aligner des murs) : un mobi mural par carte
+ * Volet « Écarts » (Poser des muraux) : un mobi mural par carte
  * compacte, avec seulement l'essentiel.
  *
  *     [vignette]  Poster                      [enregistré] [⚙]
@@ -265,7 +265,7 @@ public final class EcartsVolet {
             for (Ecart e : l) if (e.classe == null) sansClasse++;
             Ui.succes(etat, relus + " écart(s) exporté(s) dans " + f.getName() + ". Range-le à la place de "
                     + "ressources/atelier/ecarts-defaut.json : la prochaine version les aura."
-                    + (sansClasse > 0 ? " " + sansClasse + " sans nom technique : ouvre une salle, puis réexporte." : ""));
+                    + (sansClasse > 0 ? " " + sansClasse + " sans nom technique : ouvre un appart, puis réexporte." : ""));
         } catch (Throwable t) {
             Ui.erreur(etat, "Export impossible", t);
         }

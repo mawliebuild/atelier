@@ -170,8 +170,8 @@ public final class WiredGraphe extends Pane {
             g.setFont(Font.font(12));
             g.setTextAlign(TextAlignment.CENTER);
             g.setTextBaseline(VPos.CENTER);
-            g.fillText(modele == null || !modele.salle ? "Pas de salle ouverte."
-                    : "Aucun wired dans cette salle.", w / 2, h / 2);
+            g.fillText(modele == null || !modele.salle ? "Pas d'appart ouvert."
+                    : "Aucun wired dans cet appart.", w / 2, h / 2);
             return;
         }
         g.setTransform(echelle, 0, 0, echelle, tx, ty);
@@ -257,7 +257,7 @@ public final class WiredGraphe extends Pane {
         }
         if (p.wired.size() > WiredAnalyse.LIGNES_MAX) {
             g.setFill(TEXTE.deriveColor(0, 1, 1, 0.6));
-            g.fillText("+ " + (p.wired.size() - WiredAnalyse.LIGNES_MAX) + " autre(s)", p.gx + 20, y);
+            g.fillText(Ui.accorder("+ " + (p.wired.size() - WiredAnalyse.LIGNES_MAX) + " autre(s)"), p.gx + 20, y);
         }
     }
 }

@@ -22,7 +22,7 @@ public final class Prerequis extends VBox {
 
     public enum Condition {
         SALLE("Appart"), DROITS("Droits"), DROITS_WIRED("Droits wired"), NOMS("Noms"),
-        INVENTAIRE("Inventaire"), BC("Catalogue BC"), MUR("Mur choisi"), COULEUR("Couleur de décor"), DALLE("Dalle magique");
+        INVENTAIRE("Inventaire"), BC("Catalogue BC"), MUR("Mural choisi"), COULEUR("Couleur de décor"), DALLE("Dalle magique");
         final String nom;
         Condition(String n) { nom = n; }
     }

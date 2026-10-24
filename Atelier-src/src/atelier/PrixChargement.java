@@ -120,22 +120,42 @@ final class PrixChargement {
         demarrer();
         stopJeu = false;
         arretLe = 0;
+        // demande de la joueuse : la barre commune de l'Atelier suit (pas le chargement de fond)
+        Avancement.Suivi av = Avancement.debut("Mise à jour des prix", PrixChargement::arreter);
         boolean lance = PrixSite.actualiser(probleme -> {
             notifier();
-            if ("lecture arrêtée".equals(probleme)) return;
+            if ("lecture arrêtée".equals(probleme)) { av.fin(Avancement.Issue.PARTIEL); return; }
             if (probleme != null) {
                 long d = PrixSite.misAJour();
                 Journal.debug("Le site habbofurni.xyz n'a pas pu être relu (" + probleme + ")"
                         + (d > 0 ? " : prix gardés du " + PrixTexte.date(d) + "." : "."));
             }
             lancerJeu(true, nJeu -> {
+                av.fin(probleme != null || stopJeu ? Avancement.Issue.PARTIEL : Avancement.Issue.REUSSI);
                 if (probleme == null)
                     Journal.succes("Prix mis à jour : " + PrixTexte.nombre(PrixSite.nombre()) + " mobis sur habbofurni.xyz"
                             + (nJeu > 0 ? ", " + PrixTexte.nombre(nJeu) + " au marché du jeu." : "."));
             });
         });
-        if (!lance) Journal.debug("prix : lecture déjà en cours.");
+        if (!lance) { av.oublier(); Journal.debug("prix : lecture déjà en cours."); }
+        else suivre(av);
         notifier();
+    }
+
+    /** La barre suit les compteurs du chargement (deux fois par seconde) jusqu'a la fin. */
+    private static void suivre(Avancement.Suivi av) {
+        Thread t = new Thread(() -> {
+            while (!av.finie()) {
+                Etat e = etat();
+                if (e.enCours) {
+                    av.texte(e.source);
+                    if (e.total > 0) av.compte(e.fait, e.total); else av.part(-1);
+                }
+                try { Thread.sleep(500); } catch (InterruptedException x) { return; }
+            }
+        }, "atelier-prix-avancement");
+        t.setDaemon(true);
+        t.start();
     }
 
     /** Arrete ce qui est en cours (site et jeu) ; le deja-lu est garde. */

@@ -264,7 +264,33 @@ public final class ClientModifie {
     private static volatile boolean style = false;
     private static volatile boolean calque = false;
     private static volatile boolean empreinte = false;
+    private static volatile boolean empreinteZone = false;
+    private static volatile boolean masque = false;
     private static volatile boolean opacite = false;
+    private static volatile boolean prix = false;
+    private static volatile boolean interfaceJeu = false;
+    private static volatile boolean marges = false;
+
+    /**
+     * Le client installe sait-il ecarter sa fiche des menus de l'Atelier
+     * (« atelier:marges= ») et montrer le prix en credits / lingots avec icones ?
+     */
+    public static boolean saitMarges() {
+        if (!saitSurligner()) return false;
+        return marges;
+    }
+
+    /** Le client installe sait-il masquer les encadres du jeu (« atelier:interface= », mode Construction) ? */
+    public static boolean saitInterface() {
+        if (!saitSurligner()) return false;
+        return interfaceJeu;
+    }
+
+    /** Le client installe sait-il montrer le prix estime dans la fiche du mobi (« atelier:prix= ») ? */
+    public static boolean saitPrix() {
+        if (!saitSurligner()) return false;
+        return prix;
+    }
 
     /** Le client installe sait-il mettre des mobis en valeur par l'opacite (« atelier:opacite= ») ? */
     public static boolean saitOpacite() {
@@ -276,6 +302,18 @@ public final class ClientModifie {
     public static boolean saitEmpreinte() {
         if (!saitSurligner()) return false;
         return empreinte;
+    }
+
+    /** Le client installe sait-il dessiner une zone fixe (« atelier:empreinte=zone; ») ? */
+    public static boolean saitEmpreinteZone() {
+        if (!saitSurligner()) return false;
+        return empreinteZone;
+    }
+
+    /** Le client installe sait-il laisser passer la souris dans les zones masquees (« atelier:masque= ») ? */
+    public static boolean saitMasque() {
+        if (!saitSurligner()) return false;
+        return masque;
     }
 
     /** Le client installe sait-il afficher une photo de reference (« atelier:calque= ») ? */
@@ -395,7 +433,7 @@ public final class ClientModifie {
     /** Une seule lecture du SWF a la fois (il pese des dizaines de Mo une fois decompresse). */
     private static synchronized boolean lireClient(File f, String cle) {
         if (cle.equals(cleLueur)) return lueur;          // lu entre-temps par un autre fil
-        boolean r = false, cap = false, gr = false, zo = false, da = false, an = false, ca = false, st = false, cq = false, em = false, op = false;
+        boolean r = false, cap = false, gr = false, zo = false, da = false, an = false, ca = false, st = false, cq = false, em = false, ez = false, mq = false, op = false, px = false, ij = false, mg = false;
         try {
             byte[] tout = java.nio.file.Files.readAllBytes(f.toPath());
             byte[] corps = tout;
@@ -422,7 +460,12 @@ public final class ClientModifie {
             st = contient(corps, "atelier:style=".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
             cq = contient(corps, "atelier:calque=".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
             em = contient(corps, "atelier:empreinte=".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+            ez = contient(corps, "atelier:empreinte=zone;".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+            mq = contient(corps, "atelier:masque=".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
             op = contient(corps, "atelier:opacite=".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+            px = contient(corps, "atelier:prix=".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+            ij = contient(corps, "atelier:interface=".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+            mg = contient(corps, "atelier:marges=".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
         } catch (Throwable t) {
             Journal.debug("Lecture du client impossible (" + t + ") : sélection en clignotement.");
         }
@@ -436,7 +479,12 @@ public final class ClientModifie {
         style = st;
         calque = cq;
         empreinte = em;
+        empreinteZone = ez;
+        masque = mq;
         opacite = op;
+        prix = px;
+        interfaceJeu = ij;
+        marges = mg;
         cleLueur = cle;
         Journal.debug("Client du jeu : " + (r ? "mise en valeur de la sélection disponible."
                 : "pas de mise en valeur de la sélection (client d'origine ou ancienne version) : clignotement."));

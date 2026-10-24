@@ -32,7 +32,7 @@ final class FloorSession {
     /** Comment montrer les mobis sur le plan. */
     enum Affichage {
         SANS("Sans mobis", "Seulement le sol : pour voir le plan nu."),
-        AVEC("Avec mobis", "Les mobis posés, comme dans la salle."),
+        AVEC("Avec mobis", "Les mobis posés, comme dans l'appart."),
         TRANSPARENTS("Mobis en transparence", "Les mobis en fantôme : on voit le sol dessous."),
         TOUCHES("Mobis touchés", "Seulement les mobis posés sur une case que tu changes.");
         final String libelle, aide;
@@ -108,7 +108,7 @@ final class FloorSession {
         try {
             if (Salle.gp() == null) { l.erreur = "L'Atelier n'est pas encore prêt."; return l; }
             EtatSalle s = Salle.etat();
-            if (s == null) { l.erreur = "Pas dans une salle (ou plan pas encore reçu)."; return l; }
+            if (s == null) { l.erreur = "Pas dans un appart (ou plan pas encore reçu)."; return l; }
             try { l.salleId = s.getRoomId(); } catch (Throwable ignored) { }
             FloorModele m = null;
             try { m = FloorModele.depuisTexte(s.getRawFloorplan()); } catch (Throwable ignored) { }
@@ -123,7 +123,7 @@ final class FloorSession {
                         }
                 }
             }
-            if (m == null) { l.erreur = "Plan de la salle pas encore reçu : il arrive dans un instant."; return l; }
+            if (m == null) { l.erreur = "Plan de l'appart pas encore reçu : il arrive dans un instant."; return l; }
             try { m.hauteurMur = s.getFloorWallHeight(); } catch (Throwable ignored) { }
             try { m.echelle = s.getFloorScale(); } catch (Throwable ignored) { }
             if (FloorReseau.porteRecue > 0 && (FloorReseau.porteSalle == l.salleId || FloorReseau.porteSalle == -1)) {

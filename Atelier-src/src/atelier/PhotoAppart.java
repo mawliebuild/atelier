@@ -225,6 +225,7 @@ final class PhotoAppart {
         racine.setStyle("-fx-background-color: transparent;");
         racine.setPadding(new Insets(0, 0, 3, 0));
         Ui.majusculesAuto(corps);
+        Ui.rienDeCoupe(corps);
         return racine;
     }
 }

@@ -200,7 +200,11 @@ public final class Ui {
             String c = accorder(b);
             if (c != null && !c.equals(b) && !l.textProperty().isBound()) { l.setText(c); return; }
             if (c != null) b = c;   // texte lie (bind) : on classe la version accordee
-            if (b == null || b.isBlank()) { montre.set(false); return; }
+            if (b == null || b.isBlank()) {
+                Avancement.depuisEtat(l, b, Journal.Genre.INFO, null);
+                montre.set(false);
+                return;
+            }
             // genre donne par Ui.succes / Ui.erreur, sinon devine sur le texte
             Object force = l.getProperties().remove(GENRE_ETAT);
             Journal.Genre g = force instanceof Journal.Genre ? (Journal.Genre) force : Journal.genre(b);
@@ -208,7 +212,12 @@ public final class Ui {
             if (resultat) {
                 if (g == Journal.Genre.ERREUR) Journal.erreur(b); else Journal.succes(b);
             } else if (g == Journal.Genre.INFO) Journal.debug(b);
-            montre.set(!resultat || !Salle.dansUneSalle());
+            // « Ramassage : 3 / 10 » : une barre sous le texte ; le resultat qui suit
+            // la colore (vert, orange, rouge) et la garde un moment a l'ecran
+            final String texte = b;
+            boolean garder = Avancement.depuisEtat(l, b, g,
+                    () -> { if (texte.equals(l.getText())) montre.set(!Salle.dansUneSalle()); });
+            montre.set(!resultat || !Salle.dansUneSalle() || garder);
         });
         l.visibleProperty().bind(montre);
         l.managedProperty().bind(l.visibleProperty());
@@ -222,6 +231,13 @@ public final class Ui {
      * le genre est dit, pas devine sur le texte. Appelable depuis n'importe quel fil.
      */
     public static void succes(Label etat, String m) { resultat(etat, m, Journal.Genre.SUCCES); }
+
+    /**
+     * Resultat d'une action rapide dont l'effet se voit deja dans le jeu
+     * (masque, reaffiche, grille, selection videe) : il reste dans la ligne
+     * d'etat de la fenetre, sans message dans le jeu (console en diagnostic).
+     */
+    public static void vu(Label etat, String m) { resultat(etat, m, Journal.Genre.INFO); }
 
     /** Echec d'une action, dans une ligne d'etat faite par Ui.etat(). */
     public static void erreur(Label etat, String m) { resultat(etat, m, Journal.Genre.ERREUR); }
@@ -328,11 +344,16 @@ public final class Ui {
     /**
      * Accorde les « (s) » d'un message selon le nombre qui precede : « 1 dalle(s)
      * posée(s) » -> « 1 dalle posée », « 3 dalle(s) » -> « 3 dalles ». Aussi
-     * « mural(aux) » -> mural / muraux et « niveau(x) ». Sans nombre dans la
+     * « mural(aux) » -> mural / muraux, « niveau(x) » et « existe(nt) ». Sans nombre dans la
      * phrase, on met le pluriel. 0 et 1 : singulier (comme en francais).
      */
     public static String accorder(String t) {
-        t = WindowsClavier.texte(t);   // noms des touches selon la plateforme (Option -> Alt sous Windows)
+        // noms des touches selon la plateforme (Option -> Alt sous Windows)
+        return accorderSeul(WindowsClavier.texte(t));
+    }
+
+    /** Les accords seuls, sans toucher aux noms des touches (textes deja adaptes). */
+    static String accorderSeul(String t) {
         if (t == null || t.indexOf('(') < 0) return t;
         java.util.regex.Matcher m = ACCORD.matcher(t);
         StringBuilder r = new StringBuilder();
@@ -355,6 +376,7 @@ public final class Ui {
                     case "x":   r.append(pluriel ? mot + "x" : mot); break;
                     case "es":  r.append(pluriel ? mot + "es" : mot); break;
                     case "e":   r.append(mot); break;
+                    case "nt":  r.append(pluriel ? mot + "nt" : mot); break;   // « existe(nt) »
                     default:    r.append(pluriel ? mot + "s" : mot);
                 }
             }
@@ -364,7 +386,7 @@ public final class Ui {
     }
 
     private static final java.util.regex.Pattern ACCORD = java.util.regex.Pattern.compile(
-            "(\\d[\\d\u202f\u00a0]*)|([.!?;](?:\\s|$))|([\\p{L}'’]+)\\((s|x|aux|es|e)\\)");
+            "(\\d[\\d\u202f\u00a0]*)|([.!?;](?:\\s|$))|([\\p{L}'’]+)\\((s|x|aux|es|e|nt)\\)");
 
     public static String majuscule(String t) {
         if (t == null || t.isEmpty()) return t;
@@ -391,9 +413,10 @@ public final class Ui {
             javafx.scene.control.Labeled l = (javafx.scene.control.Labeled) n;
             if (l.getProperties().putIfAbsent("atelier.majuscule", Boolean.TRUE) == null) {
                 if (!l.textProperty().isBound()) {
-                    l.setText(majuscule(l.getText()));
+                    // majuscule, et pas de « (s) » : accorde selon le nombre
+                    l.setText(majuscule(accorderSeul(l.getText())));
                     l.textProperty().addListener((o, a, b) -> {
-                        String m = majuscule(b);
+                        String m = majuscule(accorderSeul(b));
                         if (m != null && !m.equals(b) && !l.textProperty().isBound()) l.setText(m);
                     });
                 }
@@ -479,26 +502,135 @@ public final class Ui {
      * - un texte qui passe a la ligne garde toutes ses lignes (une colonne
      *   trop courte serre plutot le tableau, ou fait defiler la fenetre).
      * Ce qui a deja une taille minimale reglee n'est pas touche.
+     * - une etiquette ou une case a cocher trop longue passe a la ligne au
+     *   lieu de finir en « … » (sauf celles qui ont une largeur minimale
+     *   reglee : un nom de mobi qui doit ceder, par exemple) ;
+     * - ce qui est ajoute ensuite (rangees refaites, contenu remplace) est
+     *   traite aussi : le volet reste ecoute.
      */
     public static void rienDeCoupe(Node n) {
-        if (n == null) return;
+        rienDeCoupe(n, n == null ? null : n.getParent());
+    }
+
+    private static final String ECOUTE_COUPE = "atelier.rienDeCoupe";
+    private static final String LAISSER_TEL = "atelier.rienDeCoupe.laisser";
+
+    /**
+     * rienDeCoupe ne touche pas a ce noeud ni a ce qu'il contient : une grille
+     * dont les hauteurs de rangee sont calculees d'avance (cartes de la galerie).
+     */
+    public static <N extends Node> N laisserTel(N n) {
+        n.getProperties().put(LAISSER_TEL, Boolean.TRUE);
+        return n;
+    }
+    private static final double CALCULEE = javafx.scene.layout.Region.USE_COMPUTED_SIZE;
+    private static final double PREF = javafx.scene.layout.Region.USE_PREF_SIZE;
+
+    private static void rienDeCoupe(Node n, javafx.scene.Parent parent) {
+        if (n == null || n.getProperties().containsKey(LAISSER_TEL)) return;
         if (n instanceof javafx.scene.control.ButtonBase && !(n instanceof javafx.scene.control.Hyperlink)) {
             javafx.scene.control.ButtonBase b = (javafx.scene.control.ButtonBase) n;
-            if (b.getParent() instanceof HBox && b.getText() != null && !b.getText().isBlank()
-                    && b.getMinWidth() == javafx.scene.layout.Region.USE_COMPUTED_SIZE)
-                b.setMinWidth(javafx.scene.layout.Region.USE_PREF_SIZE);
+            if (b instanceof javafx.scene.control.CheckBox || b instanceof javafx.scene.control.RadioButton) {
+                // case longue : sur deux lignes plutot que « Remplacer de… »
+                if (!b.isWrapText() && b.getMinWidth() == CALCULEE && b.getPrefHeight() == CALCULEE
+                        && b.getMaxHeight() == CALCULEE && !hauteurFixe(parent))
+                    b.setWrapText(true);
+                if (b.isWrapText() && b.getMinHeight() == CALCULEE) b.setMinHeight(PREF);
+            } else if ((parent instanceof HBox || parent instanceof javafx.scene.layout.GridPane)
+                    && b.getMinWidth() == CALCULEE) {
+                // un bouton dans une rangee garde toute sa largeur (« Arr... » non)
+                b.setMinWidth(PREF);
+            } else if (parent instanceof VBox && !b.isWrapText() && b.getMinWidth() == CALCULEE
+                    && b.getPrefHeight() == CALCULEE && b.getMaxHeight() == CALCULEE
+                    && b.getContentDisplay() != javafx.scene.control.ContentDisplay.GRAPHIC_ONLY) {
+                // bouton en colonne, plus long que la fenetre est large : deux lignes plutot que « … »
+                b.setWrapText(true);
+                b.setTextAlignment(javafx.scene.text.TextAlignment.CENTER);
+                if (b.getMinHeight() == CALCULEE) b.setMinHeight(PREF);
+            }
             return;
         }
         if (n instanceof Label) {
             Label l = (Label) n;
-            if (l.isWrapText() && l.getMinHeight() == javafx.scene.layout.Region.USE_COMPUTED_SIZE)
-                l.setMinHeight(javafx.scene.layout.Region.USE_PREF_SIZE);
+            if (!l.isWrapText() && l.getMinWidth() == CALCULEE && l.getPrefHeight() == CALCULEE
+                    && l.getMaxHeight() == CALCULEE && l.getContentDisplay() != javafx.scene.control.ContentDisplay.GRAPHIC_ONLY
+                    && !hauteurFixe(parent))
+                l.setWrapText(true);           // trop longue : elle passe a la ligne, sans « … »
+            if (l.isWrapText() && l.getMinHeight() == CALCULEE) l.setMinHeight(PREF);
             return;
         }
-        if (n instanceof javafx.scene.control.ScrollPane) rienDeCoupe(((javafx.scene.control.ScrollPane) n).getContent());
-        else if (n instanceof javafx.scene.control.TitledPane) rienDeCoupe(((javafx.scene.control.TitledPane) n).getContent());
-        else if (n instanceof javafx.scene.layout.Pane)
-            for (Node e : ((javafx.scene.layout.Pane) n).getChildren()) rienDeCoupe(e);
+        if (n instanceof javafx.scene.control.ScrollPane) {
+            javafx.scene.control.ScrollPane sp = (javafx.scene.control.ScrollPane) n;
+            if (sp.getProperties().putIfAbsent(ECOUTE_COUPE, Boolean.TRUE) == null)
+                sp.contentProperty().addListener((o, a, b) -> rienDeCoupe(b, null));
+            rienDeCoupe(sp.getContent(), null);
+        } else if (n instanceof javafx.scene.control.TitledPane) {
+            rienDeCoupe(((javafx.scene.control.TitledPane) n).getContent(), null);
+        } else if (n instanceof javafx.scene.control.ToolBar) {
+            javafx.scene.control.ToolBar t = (javafx.scene.control.ToolBar) n;
+            for (Node e : t.getItems()) rienDeCoupe(e, null);
+        } else if (n instanceof javafx.scene.control.SplitPane) {
+            for (Node e : ((javafx.scene.control.SplitPane) n).getItems()) rienDeCoupe(e, null);
+        } else if (n instanceof javafx.scene.control.TabPane) {
+            for (javafx.scene.control.Tab t : ((javafx.scene.control.TabPane) n).getTabs()) rienDeCoupe(t.getContent(), null);
+        } else if (n instanceof javafx.scene.layout.Pane) {
+            javafx.scene.layout.Pane p = (javafx.scene.layout.Pane) n;
+            for (Node e : p.getChildren()) rienDeCoupe(e, p);
+            if (p.getProperties().putIfAbsent(ECOUTE_COUPE, Boolean.TRUE) == null)
+                p.getChildren().addListener((javafx.collections.ListChangeListener<Node>) c -> {
+                    while (c.next()) if (c.wasAdded()) for (Node e : c.getAddedSubList()) rienDeCoupe(e, p);
+                });
+        }
+    }
+
+    /** Barre de hauteur fixe (titre de fenetre...) : un texte n'y passe pas a la ligne. */
+    private static boolean hauteurFixe(javafx.scene.Parent p) {
+        if (!(p instanceof javafx.scene.layout.Region)) return false;
+        double m = ((javafx.scene.layout.Region) p).getMaxHeight();
+        return m != CALCULEE && m != Double.MAX_VALUE && m != PREF;
+    }
+
+    /**
+     * Titre centre d'une barre de fenetre, avec des boutons a droite : trop long
+     * pour la place laissee entre eux, il rapetisse (jusqu'a 3 px de moins)
+     * au lieu de passer sous les boutons ; s'il ne tient toujours pas, il
+     * finit en « … » et sa bulle le donne en entier. Rend de quoi le
+     * reajuster (boutons de la barre changes).
+     */
+    public static Runnable titreQuiTient(Label titre, javafx.scene.layout.Region barre, javafx.scene.layout.Pane boutons) {
+        Runnable ajuster = () -> {
+            double dispo = barre.getWidth() - 2 * boutons.prefWidth(-1) - 8;
+            String texte = titre.getText();
+            if (dispo <= 0 || texte == null || titre.getScene() == null) return;
+            Object b = titre.getProperties().get("atelier.titre.taille");
+            if (!(b instanceof Double)) {
+                titre.setStyle("");
+                titre.applyCss();
+                b = titre.getFont().getSize();
+                titre.getProperties().put("atelier.titre.taille", b);
+            }
+            double base = (Double) b;
+            String famille = titre.getFont().getFamily();
+            double taille = base;
+            while (taille > base - 3 && largeurTexte(texte, famille, taille) > dispo) taille -= 1;
+            titre.setStyle(taille < base ? "-fx-font-size: " + taille + "px;" : "");
+            titre.setMaxWidth(dispo);
+            boolean coupe = largeurTexte(texte, famille, taille) > dispo;
+            if (coupe) titre.setTooltip(bulle(texte));
+            else if (titre.getTooltip() != null) titre.setTooltip(null);
+        };
+        Runnable plusTard = () -> javafx.application.Platform.runLater(ajuster);
+        barre.widthProperty().addListener((o, a, c) -> plusTard.run());
+        titre.textProperty().addListener((o, a, c) -> plusTard.run());
+        boutons.getChildren().addListener((javafx.collections.ListChangeListener<Node>) c -> plusTard.run());
+        titre.sceneProperty().addListener((o, a, c) -> plusTard.run());
+        return plusTard;
+    }
+
+    private static double largeurTexte(String s, String famille, double taille) {
+        javafx.scene.text.Text t = new javafx.scene.text.Text(s);
+        t.setFont(javafx.scene.text.Font.font(famille, javafx.scene.text.FontWeight.BOLD, taille));
+        return t.getLayoutBounds().getWidth();
     }
 
     // ------------------------------------------------------------- bulles

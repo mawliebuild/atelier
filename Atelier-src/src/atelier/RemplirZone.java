@@ -41,7 +41,7 @@ final class RemplirZone {
 
     /** Bouton « Remplir une zone ». Un second clic pendant le choix annule. */
     static void lancer() {
-        if (etape == Etape.POSE) { stop = true; InfoJeu.consigne("Remplissage arrêté."); return; }
+        if (etape == Etape.POSE) { stop = true; Journal.debug("remplissage : arrêt demandé."); return; }   // la barre le montre, le bilan suit
         if (etape != Etape.RIEN) { annuler(); return; }
         brancher();
         stop = false;
@@ -85,7 +85,7 @@ final class RemplirZone {
         mobiDepuis = System.currentTimeMillis();
         Salle.surClicMobi(PIPETTE);
         InfoJeu.consigne("Zone de " + Zone.largeur() + " × " + Zone.longueur()
-                + " : pose le mobi depuis ton inventaire, ou clique un mobi déjà dans la salle : il remplira la zone.");
+                + " : pose le mobi depuis ton inventaire, ou clique un mobi déjà dans l'appart : il remplira la zone.");
     }
 
     /** Passe de MOBI a POSE une seule fois (pose retenue ou pipette, le premier gagne). */
@@ -155,7 +155,7 @@ final class RemplirZone {
         Moteur gp = Salle.gp();
         if (gp == null || !Zone.definie()) return;
         Furnidata.Mobi d = classe == null ? null : Salle.details(classe);
-        if (d == null) { Journal.erreur("Taille du mobi inconnue (furnidata) : remplissage impossible."); return; }
+        if (d == null) { Journal.erreur("Taille du mobi inconnue du jeu : remplissage impossible."); return; }
         boolean tourne = rot == 2 || rot == 6;
         int a = Math.max(1, tourne ? d.yDim : d.xDim), b = Math.max(1, tourne ? d.xDim : d.yDim);
         int zx = Zone.minX(), zy = Zone.minY(), w = Zone.largeur(), h = Zone.longueur();
@@ -174,13 +174,15 @@ final class RemplirZone {
         }
         if (sols.isEmpty()) { Journal.erreur("Aucune place pour ce mobi dans la zone."); return; }
         InfoJeu.consigne("Remplissage : " + sols.size() + " mobis à poser (" + a + " × " + b + " cases)…");
+        Avancement.Suivi av = Avancement.debut("Remplissage de la zone", () -> stop = true).compte(0, sols.size());
         PoseDirecte.Resultat r = PoseDirecte.poser(sols, List.of(), Generateur.Source.INVENTAIRE_PUIS_BC,
-                InfoJeu::dire, () -> stop, (fait, total) -> { });
+                InfoJeu::dire, () -> stop, av::compte);
         String fin = "Zone remplie : " + r.sols.size() + " mobis posés";
         if (r.manquants > 0) fin += ", " + r.manquants + " manquants (ni dans l'inventaire ni au BC)";
         if (horsPlan > 0) fin += ", " + horsPlan + " places hors du sol";
         if (r.hauteursFausses > 0) fin += ", " + r.hauteursFausses + " hauteurs à reprendre";
         fin += ".";
+        av.fin(r.sols.size(), r.manquants + horsPlan + r.hauteursFausses, stop);
         if (r.sols.isEmpty()) Journal.erreur(fin); else Journal.succes(fin);
     }
 

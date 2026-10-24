@@ -6,8 +6,10 @@ import java.util.*;
 /**
  * Le calcul de la valeur, sans JavaFX ni reseau : logique pure, testee.
  *
- *  - fusion des sources : ton prix (PrixPerso) > habbofurni.xyz (PrixSite) >
- *    place du marche du jeu (Marche) ; un mobi non vendable n'a pas de prix ;
+ *  - fusion des sources : ton prix (PrixPerso) d'abord ; sinon le moins cher
+ *    entre habbofurni.xyz (PrixSite) et l'offre la moins chere en vente au
+ *    marche du jeu (MarcheOffres) ; a defaut la moyenne du marche (Marche) ;
+ *    un mobi non vendable n'a pas de prix ;
  *  - comptage de l'inventaire par mobi different (sol / mur, typeId) ;
  *  - totaux (valeur, mobis, avec / sans prix, non vendables) ;
  *  - filtre et recherche du tableau.
@@ -22,6 +24,7 @@ final class PrixCalcul {
         SITE("Habbofurni"),
         SITE_ESTIMATION("Habbofurni (estimation)"),
         JEU("Marché du jeu"),
+        MARCHE("Marché du jeu (offre la moins chère)"),
         AUCUNE("Aucun prix"),
         NON_VENDABLE("Non vendable");
 
@@ -35,6 +38,8 @@ final class PrixCalcul {
         PrixSite.Prix site(String classe);
         /** Prix moyen du marche du jeu (> 0), ou null. */
         Integer jeu(boolean mur, int typeId);
+        /** Offre la moins chere en vente au marche du jeu (> 0), ou null. */
+        default Integer marche(boolean mur, int typeId) { return null; }
     }
 
     /** Un prix et sa source ; prix -1 si aucun. */
@@ -49,8 +54,13 @@ final class PrixCalcul {
         Integer perso = s.perso(mur, typeId);
         if (perso != null && perso >= 0) return new Prix(perso, Source.PERSO);
         PrixSite.Prix ps = classe == null ? null : s.site(classe);
-        if (ps != null && ps.moyen > 0)
+        Integer m = s.marche(mur, typeId);
+        boolean offre = m != null && m > 0;
+        if (ps != null && ps.moyen > 0) {
+            if (offre && m < ps.moyen) return new Prix(m, Source.MARCHE);   // moins cher au marche
             return new Prix(ps.moyen, "site".equals(ps.source) ? Source.SITE_ESTIMATION : Source.SITE);
+        }
+        if (offre) return new Prix(m, Source.MARCHE);
         Integer j = s.jeu(mur, typeId);
         if (j != null && j > 0) return new Prix(j, Source.JEU);
         return new Prix(-1, Source.AUCUNE);
@@ -111,7 +121,7 @@ final class PrixCalcul {
             else {
                 t.avecPrix += l.quantite;
                 t.valeur += l.total();
-                if (l.source == Source.JEU) t.parJeu += l.quantite;
+                if (l.source == Source.JEU || l.source == Source.MARCHE) t.parJeu += l.quantite;
             }
         }
         return t;

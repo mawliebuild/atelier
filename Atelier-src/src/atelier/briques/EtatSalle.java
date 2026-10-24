@@ -472,7 +472,7 @@ final class EtatSalle {
     String manque() {
         List<String> l = new ArrayList<>();
         synchronized (verrou) {
-            if (salleId == 0) l.add("numéro de salle");
+            if (salleId == 0) l.add("numéro d'appart");
             if (plan == null) l.add("plan du sol");
             if (hauteurs == null) l.add("hauteurs");
             if (sols == null) l.add("mobis de sol");

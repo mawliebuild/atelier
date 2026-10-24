@@ -167,7 +167,7 @@ public class OngletAnalyseWired {
         // Du bas vers le haut de la pile : l'ordre de fonctionnement.
         for (WiredAnalyse.Fil f : p.wired) {
             Rectangle c = new Rectangle(9, 9, WiredGraphe.couleur(f.rang));
-            Label l = new Label(WiredAnalyse.detail(f), c);
+            Label l = new Label(Ui.accorder(WiredAnalyse.detail(f)), c);
             l.setWrapText(true);
             l.setStyle("-fx-font-size: 11px;");
             l.setAlignment(Pos.TOP_LEFT);
@@ -190,7 +190,7 @@ public class OngletAnalyseWired {
         Button zone = new Button("Prendre cette case comme zone");
         zone.setOnAction(e -> {
             Zone.definir(p.x, p.y, p.x, p.y);
-            Journal.succes("Zone définie sur la case " + p.caseTexte() + ".");
+            Journal.debug("analyse wired : zone définie sur la case " + p.caseTexte() + ".");
         });
         boite.getChildren().add(zone);
     }
@@ -271,7 +271,7 @@ public class OngletAnalyseWired {
             WiredAnalyse.Probleme q = problemes.getSelectionModel().getSelectedItem();
             if (q == null) return;
             Zone.definir(q.x, q.y, q.x, q.y);
-            Journal.succes("Zone définie sur la case (" + q.x + "," + q.y + ").");
+            Journal.debug("analyse wired : zone définie sur la case (" + q.x + "," + q.y + ").");
         });
 
         return volet(bandeau(),
@@ -326,14 +326,14 @@ public class OngletAnalyseWired {
             WiredAnalyse.Resultat r = resultats.getSelectionModel().getSelectedItem();
             if (r == null) return;
             Zone.definir(r.fil.x, r.fil.y, r.fil.x, r.fil.y);
-            Journal.succes("Zone définie sur la case " + r.fil.caseTexte() + ".");
+            Journal.debug("analyse wired : zone définie sur la case " + r.fil.caseTexte() + ".");
         });
 
         return volet(bandeau(),
                 Ui.bloc("Par mobi", attenteClic),
                 Ui.bloc("Par texte ou variable", ligne,
                         Ui.aide("Texte : nom du wired, nom technique ou texte réglé. "
-                                + "Variable : identifiant (ou nom si la liste de la salle est connue).")),
+                                + "Variable : identifiant (ou nom si la liste de l'appart est connue).")),
                 Ui.bloc("Résultats", resultats,
                         Ui.aide("Double-clic : la case du wired devient la zone de travail.")),
                 etatRecherche);
@@ -398,7 +398,7 @@ public class OngletAnalyseWired {
 
     private void montrerResultats(WiredAnalyse a, List<WiredAnalyse.Resultat> r, String quoi) {
         majListe(resultats, r, x -> x.fil.id + "|" + x.role);
-        if (!a.salle) { dire(etatRecherche, "Pas de salle ouverte."); return; }
+        if (!a.salle) { dire(etatRecherche, "Pas d'appart ouvert."); return; }
         String avert = a.nbLus == 0 && a.parId.size() > 0
                 ? " Réglages pas encore lus : ça se fait tout seul, patiente un peu."
                 : (a.nbLus < a.parId.size() ? " (" + a.nbLus + " / " + a.parId.size()
@@ -456,7 +456,7 @@ public class OngletAnalyseWired {
             remplirDetail(detail, p);
             if (detailGrand != null) remplirDetail(detailGrand, p);
             dire(etatGraphe, a.erreur != null ? "Analyse des wired impossible : " + a.erreur
-                    : !a.salle ? "Pas de salle ouverte."
+                    : !a.salle ? "Pas d'appart ouvert."
                     : a.piles.size() + " pile(s) · " + a.parId.size() + " wired · "
                       + a.liens.size() + " flèche(s)"
                       + (a.nbLus < a.parId.size() ? " · " + (a.parId.size() - a.nbLus)
@@ -473,9 +473,9 @@ public class OngletAnalyseWired {
                 else if (q.gravite == WiredAnalyse.Gravite.ATTENTION) att++;
                 else inf++;
             }
-            resumeVerif.setText(!a.salle ? "Pas de salle ouverte."
+            resumeVerif.setText(!a.salle ? "Pas d'appart ouvert."
                     : l.isEmpty() ? "Aucun problème trouvé."
-                    : err + " erreur(s) · " + att + " attention · " + inf + " info");
+                    : Ui.accorder(err + " erreur(s) · " + att + " attention · " + inf + " info"));
             Map<String, String> vars = WiredLecteur.variables();
             dire(etatVerif, a.nbLus == 0 && a.parId.size() > 0
                     ? "Réglages pas encore lus : seuls l'ordre et la composition des piles sont vérifiés pour l'instant. "
@@ -491,7 +491,8 @@ public class OngletAnalyseWired {
 
     private static void dire(Label l, String s) {
         if (l == null) return;
-        if (Platform.isFxApplicationThread()) l.setText(s);
-        else Platform.runLater(() -> l.setText(s));
+        String t = Ui.accorder(s);   // pas de « (s) »
+        if (Platform.isFxApplicationThread()) l.setText(t);
+        else Platform.runLater(() -> l.setText(t));
     }
 }

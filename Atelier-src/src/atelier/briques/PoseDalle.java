@@ -73,7 +73,7 @@ final class PoseDalle {
             if (!hauteursFausses.isEmpty())
                 b.append(", ").append(PoseOutils.nombre(hauteursFausses.size(), "hauteur fausse", "hauteurs fausses"));
             if (!etatsFaux.isEmpty()) b.append(", ").append(PoseOutils.nombre(etatsFaux.size(), "état faux", "états faux"));
-            if (dallePosee) b.append(dalleRamassee ? ", dalle magique ramassée" : ", dalle magique restée dans la salle");
+            if (dallePosee) b.append(dalleRamassee ? ", dalle magique ramassée" : ", dalle magique restée dans l'appart");
             if (arrete) b.append(" (arrêtée)");
             return Ui.majuscule(b.toString()) + ".";
         }
@@ -223,8 +223,8 @@ final class PoseDalle {
     Bilan poser(List<Mobi> mobis, PoseOutils.Source source, HPoint caseDalle, BooleanSupplier stop) {
         Bilan b = new Bilan();
         if (stop == null) stop = () -> false;
-        if (!salle.dansUneSalle()) { b.erreur = "pas dans une salle"; b.manquants.addAll(mobis); return b; }
-        if (furnidata == null || !furnidata.pret()) { b.erreur = "furnidata pas prête"; b.manquants.addAll(mobis); return b; }
+        if (!salle.dansUneSalle()) { b.erreur = "pas dans un appart"; b.manquants.addAll(mobis); return b; }
+        if (furnidata == null || !furnidata.pret()) { b.erreur = "liste des mobis pas prête"; b.manquants.addAll(mobis); return b; }
 
         List<Mobi> ordre = new ArrayList<>(mobis);
         ordre.sort(Comparator.comparingDouble(Mobi::z).thenComparingInt(Mobi::y).thenComparingInt(Mobi::x));

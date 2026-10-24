@@ -251,11 +251,11 @@ public class OngletCalques {
             }
             if (visible) {
                 int n = Calques.reafficher(l.cle);
-                if (!auto) dire(etatCalques, "« " + nomCalque + " » : " + n + " mobi(s) réaffiché(s).");
+                if (!auto) Ui.vu(etatCalques, "« " + nomCalque + " » : " + n + " mobi(s) réaffiché(s).");
                 return;
             }
             if (!Salle.furnidataPrete() && l != lMurs) {
-                dire(etatCalques, "Furnidata pas encore chargée : impossible de reconnaître les mobis.");
+                dire(etatCalques, "Liste des mobis pas encore chargée : impossible de reconnaître les mobis.");
                 Platform.runLater(() -> silencieux(() -> l.visible.setSelected(true)));
                 return;
             }
@@ -263,7 +263,7 @@ public class OngletCalques {
             List<HWallItem> murs = new ArrayList<>();
             choisir(l, fs, port, sols, murs);
             int[] r = Calques.regler(l.cle, sols, murs);
-            if (!auto) dire(etatCalques, "« " + nomCalque + " » : " + (sols.size() + murs.size())
+            if (!auto) Ui.vu(etatCalques, "« " + nomCalque + " » : " + (sols.size() + murs.size())
                     + " mobi(s) masqué(s)" + (r[0] < sols.size() + murs.size() ? " (dont déjà masqués par un autre calque)" : "")
                     + ".");
         });
@@ -311,7 +311,7 @@ public class OngletCalques {
         Salle.tache("calques", () -> {
             if (!verifierPret(etatCalques)) return;
             int n = Calques.reafficherTout();
-            dire(etatCalques, n + " mobi(s) réaffiché(s).");
+            Ui.vu(etatCalques, n + " mobi(s) réaffiché(s).");
             Platform.runLater(() -> { if (rechercheEtat != null) rechercheEtat.setText(""); });
         });
     }
@@ -329,13 +329,13 @@ public class OngletCalques {
     private void majCompteurs() {
         for (Ligne l : lignes) {
             int n = Calques.nombre(l.cle);
-            l.compte.setText(n > 0 ? n + " masqué(s)" : "");
+            l.compte.setText(n > 0 ? Ui.accorder(n + " masqué(s)") : "");
         }
         int t = Calques.total();
-        if (totalLbl != null) totalLbl.setText(t == 0 ? "Aucun mobi masqué" : t + " mobi(s) masqué(s) en tout");
+        if (totalLbl != null) totalLbl.setText(t == 0 ? "Aucun mobi masqué" : Ui.accorder(t + " mobi(s) masqué(s) en tout"));
         if (rechercheCompte != null) {
             int r = Calques.nombre(Calques.RECHERCHE);
-            rechercheCompte.setText(r > 0 ? r + " mobi(s) masqué(s) par la recherche" : "");
+            rechercheCompte.setText(r > 0 ? Ui.accorder(r + " mobi(s) masqué(s) par la recherche") : "");
         }
     }
 
@@ -389,7 +389,7 @@ public class OngletCalques {
             Salle.tache("recherche", () -> {
                 if (!verifierPret(rechercheEtat)) return;
                 int n = Calques.reafficher(Calques.RECHERCHE);
-                dire(rechercheEtat, n + " mobi(s) réaffiché(s).");
+                Ui.vu(rechercheEtat, n + " mobi(s) réaffiché(s).");
             });
         });
         Button zone = new Button("Définir la zone autour");
@@ -404,7 +404,7 @@ public class OngletCalques {
                 + "sans sélection, les boutons agissent sur tous les résultats. "
                 + "« Montrer » fait clignoter les mobis chez toi seulement. "
                 + "« Masquer tout le reste » ne laisse visibles que les résultats ; "
-                + "recharger la salle réaffiche tout.");
+                + "recharger l'appart réaffiche tout.");
 
         VBox v = volet(
                 Ui.bloc("Rechercher", ligneRecherche, rechercheResume),
@@ -421,9 +421,9 @@ public class OngletCalques {
     private void chercher() {
         String texte = rechercheTexte.getText() == null ? "" : rechercheTexte.getText().trim().toLowerCase(Locale.ROOT);
         Salle.tache("recherche", () -> {
-            if (!Salle.dansUneSalle()) { dire(rechercheEtat, "Pas dans une salle (ou l'Atelier pas encore prêt)."); return; }
+            if (!Salle.dansUneSalle()) { dire(rechercheEtat, "Pas dans un appart (ou l'Atelier pas encore prêt)."); return; }
             if (!Salle.furnidataPrete())
-                dire(rechercheEtat, "La furnidata n'est pas encore là : recherche sur les numéros de type seulement.");
+                dire(rechercheEtat, "La liste des mobis n'est pas encore là : recherche sur les numéros de type seulement.");
 
             // type -> mobis, groupes tries par nombre decroissant
             Map<String, Entree> groupes = new LinkedHashMap<>();
@@ -471,8 +471,8 @@ public class OngletCalques {
             }
             trouvesSols = List.copyOf(sols);
             trouvesMurs = List.copyOf(murs);
-            String resume = (sols.size() + murs.size()) + " mobi(s) : " + sols.size() + " au sol, "
-                    + murs.size() + " au mur, " + liste.size() + " type(s)";
+            String resume = Ui.accorder((sols.size() + murs.size()) + " mobi(s) : " + sols.size() + " au sol, "
+                    + murs.size() + " mural(aux), " + liste.size() + " type(s)");
             Platform.runLater(() -> {
                 arbre.setRoot(racine);
                 rechercheResume.setText(resume);
@@ -539,7 +539,7 @@ public class OngletCalques {
             for (HFloorItem it : Salle.sols()) if (!gardeS.contains(it.getId())) autresS.add(it);
             for (HWallItem it : Salle.murs()) if (!gardeW.contains(it.getId())) autresW.add(it);
             Calques.regler(Calques.RECHERCHE, autresS, autresW);
-            dire(rechercheEtat, (autresS.size() + autresW.size()) + " autre(s) mobi(s) masqué(s) ; "
+            Ui.vu(rechercheEtat, (autresS.size() + autresW.size()) + " autre(s) mobi(s) masqué(s) ; "
                     + (s.size() + w.size()) + " restent visibles.");
         });
     }
@@ -570,7 +570,7 @@ public class OngletCalques {
         if (Salle.gp() == null) { dire(etat, "L'Atelier n'est pas encore prêt."); return false; }
         if (!Calques.pret()) { dire(etat, "Les calques s'installent : encore un instant."); return false; }
         if (Calques.ecoutes() == 0) { dire(etat, "Aucune écoute de paquets : masquer est désactivé par prudence."); return false; }
-        if (!Salle.dansUneSalle()) { dire(etat, "Pas dans une salle."); return false; }
+        if (!Salle.dansUneSalle()) { dire(etat, "Pas dans un appart."); return false; }
         return true;
     }
 

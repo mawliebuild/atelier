@@ -72,10 +72,20 @@ final class CalqueActions {
         if (Journal.genre(m) == Journal.Genre.ERREUR) Journal.erreur(m); else Journal.succes(m);
     }
 
-    /** Resultat d'une action de Groupes : erreur seulement si elle a echoue (pas si arretee). */
+    /**
+     * Resultat d'une action de Groupes : erreur seulement si elle a echoue (pas
+     * si arretee). Une action rapide qui a tout reussi (deplacer, pivoter,
+     * masquer...) se voit deja dans le jeu : pas de message, la console garde
+     * le bilan. Les actions longues, les arrets et les echecs sont dits.
+     */
     static void resultat(Groupes.Resultat r) {
         if (r == null || r.message == null || r.message.isBlank()) return;
         String m = Ui.majuscule(r.message);
+        if (r.ok && !r.arrete && r.echecs == 0 && r.duree >= 0 && r.duree < InfoJeu.DUREE_MIN
+                && Journal.genre(m) != Journal.Genre.ERREUR) {
+            Journal.debug("calques : " + m);
+            return;
+        }
         if (r.ok || r.arrete) Journal.succes(m); else Journal.erreur(m);
     }
 
@@ -170,7 +180,6 @@ final class CalqueActions {
             for (Button b : List.of(xm, xp, ym, yp, pivI, pivH, confirmer, fermer)) b.setDisable(true);
             arreter.setVisible(true);
             int dx = d[0], dy = d[1], q = d[2];
-            f.dire("Envoi au jeu…");
             Groupes.annulerApercu();
             montrer.run();                          // les vrais mobis reviennent, puis partent
             tache = Groupes.deplacer(i.id, dx, dy, q, progression(f, r -> f.fermer()));
@@ -291,7 +300,7 @@ final class CalqueActions {
         if (occupe()) { refus("Une action est déjà en cours."); return; }
         List<Set<Integer>> lus = ids != null ? ids : Groupes.mobis(calque);
         int[] n = GroupeActions.sortes(lus);                      // sols, wired, muraux
-        if (n[0] + n[1] + n[2] == 0) { refus("Rien à copier : aucun de ces mobis n'est dans la salle."); return; }
+        if (n[0] + n[1] + n[2] == 0) { refus("Rien à copier : aucun de ces mobis n'est dans l'appart."); return; }
         int salle = Groupes.salle();
         CalqueFenetre f = ouvrir(titre);
         CheckBox sols = new CheckBox("Sols (" + n[0] + ")");
@@ -363,7 +372,6 @@ final class CalqueActions {
             pose[0] = true;
             for (Node x : controles) x.setDisable(true);
             arreter.setVisible(true);
-            f.dire("Pose de la copie…");
             tache = Groupes.poserCopie(calque, ids, dessus, tr[0], bs, bm, bw, so, progression(f, r -> {
                 if (r.nouveauCalque == null && r.reussis == 0 && !r.arrete && f.ouverte()) {
                     // rien n'est pose (refus, moteur occupe...) : on garde la copie fantome pour reessayer
@@ -430,7 +438,6 @@ final class CalqueActions {
             if (occupe()) { f.dire("Une action est déjà en cours."); return; }
             for (Node b : boutons) b.setDisable(true);
             arreter.setVisible(true);
-            f.dire("Hauteurs en cours…");
             tache = Groupes.hauteur(i.id, relatif, n, progression(f, r -> {
                 for (Node b : boutons) b.setDisable(false);
                 arreter.setVisible(false);
@@ -474,7 +481,7 @@ final class CalqueActions {
             f.dire((surX ? "Gauche ↔ droite" : "Haut ↔ bas") + ", "
                     + (enCopie ? "une copie fantôme apparaît à côté : tu la places, puis Poser. Elle devient un nouveau calque."
                                : "retournés sur place, dans le cadre qui les contient.")
-                    + (c.murs > 0 ? " Les " + c.murs + " mobi(s) mural(aux) ne sont pas retournés." : ""));
+                    + (c.murs == 1 ? " 1 mural n'est pas retourné." : c.murs > 1 ? " " + c.murs + " muraux ne sont pas retournés." : ""));
         };
         for (ToggleGroup g : List.of(gAxe, gMode))
             g.selectedToggleProperty().addListener((o, a, b) -> { if (b == null) a.setSelected(true); else maj.run(); });
@@ -495,7 +502,6 @@ final class CalqueActions {
             if (occupe()) { f.dire("Une action est déjà en cours."); return; }
             for (Node n : List.of(axeX, axeY, copie, place, ok, annuler)) n.setDisable(true);
             arreter.setVisible(true);
-            f.dire("Miroir en cours…");
             // sur place : tapis de dalles, par Groupes (une action a la fois, verrou, Arreter)
             tache = Groupes.miroirSurPlace(i.id, surX, progression(f, r -> {
                 arreter.setVisible(false);
@@ -692,20 +698,209 @@ final class CalqueActions {
             if (ids.isEmpty()) { Journal.erreur("Aucun mobi dans la zone."); return; }
             pivoter.setDisable(true);
             changer.setDisable(true);
-            f.dire("Rotation…");
             tache = Groupes.pivoterMobis(ids, true, progression(f, r -> {
                 pivoter.setDisable(false);
                 changer.setDisable(false);
                 maj.run();
             }));
         });
+        // ---- un etat precis, par type de mobi de la zone
+        VBox types = new VBox(4);
+        java.util.Map<Integer, Spinner<Integer>> voulus = new java.util.LinkedHashMap<>();
+        VBox[] blocEtats = {null};
+        Runnable[] majTypes = {null};
+        majTypes[0] = () -> {
+            // le bloc n'apparait que si un type de la zone a au moins deux etats
+            boolean un = remplirTypes(types, voulus, () -> { if (courante == f) majTypes[0].run(); });
+            if (blocEtats[0] != null && blocEtats[0].isManaged() != un) {
+                blocEtats[0].setVisible(un);
+                blocEtats[0].setManaged(un);
+                f.ajuster();
+            }
+        };
+        ScrollPane defTypes = new ScrollPane(types);
+        defTypes.setFitToWidth(true);
+        defTypes.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+        defTypes.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
+        defTypes.prefViewportHeightProperty().bind(javafx.beans.binding.Bindings.min(220, types.heightProperty()));
+        defTypes.setMaxHeight(224);
+        Button mettre = CalqueFenetre.bouton("Mettre à ces états", false, () -> { });
+        mettre.setTooltip(CalqueFenetre.bulle("Chaque mobi de la zone est mis directement à l'état choisi pour son type, "
+                + "sans cliquer à la main. Les mobis déjà à cet état ne bougent pas."));
+        mettre.setOnAction(e -> {
+            if (envoi[0] || occupe()) { refus("Une action est déjà en cours."); return; }
+            java.util.Map<Integer, String> cibles = new java.util.LinkedHashMap<>();
+            for (HFloorItem it : mobisAEtat()) {
+                Spinner<Integer> sp = voulus.get(it.getTypeId());
+                if (sp == null || GroupeFantomes.estFantome(it.getId())) continue;
+                String v = String.valueOf(sp.getValue());
+                if (!v.equals(Generateur.etatDe(it))) cibles.put(it.getId(), v);
+            }
+            if (cibles.isEmpty()) return;               // deja tous a l'etat voulu : rien a dire, ca se voit
+            envoi[0] = true;
+            mettre.setDisable(true);
+            changer.setDisable(true);
+            pivoter.setDisable(true);
+            boolean[] arret = {false};
+            Avancement.Suivi av = Avancement.debut("Mise aux états", () -> arret[0] = true).part(-1);
+            f.suivre(av);
+            Salle.tache("etats-zone-precis", () -> {
+                int faux = 0;
+                boolean fini = false;
+                try { faux = PoseDirecte.etats(Salle.gp(), cibles, () -> arret[0]); fini = true; }
+                finally {
+                    int n = faux;
+                    if (fini) av.fin(cibles.size() - n, n, arret[0]); else av.fin(Avancement.Issue.ECHEC);
+                    Platform.runLater(() -> {
+                        envoi[0] = false;
+                        mettre.setDisable(false);
+                        changer.setDisable(false);
+                        pivoter.setDisable(false);
+                        f.dire("");
+                        maj.run();
+                        majTypes[0].run();
+                        if (n > 0) Journal.erreur(Ui.accorder(n + " mobi(s) sur " + cibles.size()
+                                + " n'ont pas pu être mis à l'état voulu (cet état n'existe pas pour ce mobi, ou refusé par le jeu)."));
+                    });
+                }
+            });
+        });
+
         Button autre = CalqueFenetre.bouton("Nouvelle zone", false, () -> { f.fermer(); etatsZone(); });
+        blocEtats[0] = Ui.bloc("Mettre à un état précis", defTypes, Ui.boutons(mettre),
+                Ui.aide("Pour chaque type de mobi de la zone qui a plusieurs états : choisis son état (0 = le premier, "
+                        + "l'image montre le mobi dans cet état), puis « Mettre à ces états ». "
+                        + "Par exemple les blocs : directement l'état 4, sans cliquer 4 fois."));
+        blocEtats[0].setVisible(false);              // montre des qu'un type a plusieurs etats
+        blocEtats[0].setManaged(false);
+        majTypes[0].run();
         f.contenu(Ui.bloc("Zone", quoi,
                 Ui.aide("« Changer l'état » fait comme un double-clic sur tous les mobis de la zone ; "
                         + "« Pivoter » les fait tourner chacun sur place. Les deux se combinent, dans l'ordre que tu veux "
-                        + "(les wired et les dalles magiques ne sont pas touchés).")));
+                        + "(les wired et les dalles magiques ne sont pas touchés).")),
+                blocEtats[0]);
         f.boutons(CalqueFenetre.bouton("Fermer", false, f::fermer), autre, pivoter, changer);
         f.montrer();
+    }
+
+    /**
+     * Une rangee par type de mobi de la zone QUI A PLUSIEURS ETATS : image du
+     * mobi dans l'etat choisi, nom ×n, etats actuels, et l'etat voulu (par
+     * defaut le plus courant), borne au vrai nombre d'etats (EtatsMobis, lu
+     * dans le fichier du mobi, en fond : relancer est appele a chaque reponse).
+     * Garde les choix deja faits. Vrai s'il y a au moins une rangee.
+     */
+    private static boolean remplirTypes(VBox types, java.util.Map<Integer, Spinner<Integer>> voulus, Runnable relancer) {
+        java.util.Map<Integer, List<HFloorItem>> parType = new java.util.TreeMap<>();
+        for (HFloorItem it : mobisAEtat())
+            if (!GroupeFantomes.estFantome(it.getId())) parType.computeIfAbsent(it.getTypeId(), k -> new ArrayList<>()).add(it);
+        List<Integer> ordre = new ArrayList<>(parType.keySet());
+        java.text.Collator col = java.text.Collator.getInstance(java.util.Locale.FRANCE);
+        ordre.sort((a, b) -> col.compare(Salle.nom(a, false), Salle.nom(b, false)));
+        List<Node> rangs = new ArrayList<>();
+        java.util.Map<Integer, Spinner<Integer>> garde = new java.util.HashMap<>(voulus);
+        voulus.clear();
+        for (int type : ordre) {
+            List<HFloorItem> l = parType.get(type);
+            java.util.Map<String, Integer> etats = new java.util.TreeMap<>((a, b) -> {
+                try { return Integer.compare(Integer.parseInt(a), Integer.parseInt(b)); }
+                catch (NumberFormatException x) { return a.compareTo(b); }
+            });
+            for (HFloorItem it : l) etats.merge(Generateur.etatDe(it), 1, Integer::sum);
+            String courant = null;
+            int max = -1;
+            for (java.util.Map.Entry<String, Integer> e : etats.entrySet()) if (e.getValue() > max) { max = e.getValue(); courant = e.getKey(); }
+            int defaut = 0;
+            try { defaut = Integer.parseInt(courant); } catch (Exception ignored) { }
+            int vuMax = 0;                                  // plus grand etat deja vu dans la zone
+            for (String e : etats.keySet()) try { vuMax = Math.max(vuMax, Integer.parseInt(e)); } catch (NumberFormatException ignored) { }
+
+            String classe = Salle.classe(type, false);
+            int revision = PrixTexte.revision(Salle.gp(), false, classe);
+            EtatsMobis.Mobi m = EtatsMobis.connu(classe, revision);
+            int n;
+            if (m == null && revision > 0) {
+                EtatsMobis.demander(classe, revision, x -> relancer.run());
+                continue;                                   // la rangee viendra avec la reponse
+            }
+            if (m != null && m.etats > 0) n = Math.max(m.etats, vuMax + 1);
+            else n = vuMax >= 1 ? 100 : 1;                  // nombre inconnu : seulement si la zone montre deja un autre etat
+            if (n < 2) continue;
+
+            Spinner<Integer> sp = garde.get(type);
+            if (sp != null && ((SpinnerValueFactory.IntegerSpinnerValueFactory) sp.getValueFactory()).getMax() != n - 1) sp = null;
+            if (sp == null) {
+                sp = new Spinner<>(0, n - 1, Math.max(0, Math.min(n - 1, defaut)));
+                sp.setEditable(n > 20);                     // nombre inconnu : on peut taper l'etat
+                sp.setPrefWidth(74);
+                sp.setMinWidth(74);
+                sp.setCursor(javafx.scene.Cursor.HAND);
+            }
+            voulus.put(type, sp);
+            List<String> act = new ArrayList<>();
+            for (java.util.Map.Entry<String, Integer> e : etats.entrySet())
+                act.add(e.getKey() + (etats.size() > 1 ? " ×" + e.getValue() : ""));
+
+            // image : le mobi dans l'etat choisi (l'icone en attendant)
+            int[] rot = new int[8];
+            for (HFloorItem it : l) rot[Math.floorMod(Salle.rotation(it), 8)]++;
+            int dir = 0;
+            for (int i = 1; i < 8; i++) if (rot[i] > rot[dir]) dir = i;
+            javafx.scene.image.ImageView v = new javafx.scene.image.ImageView();
+            javafx.scene.image.Image icone = PrixVignettes.icone(classe, revision);
+            javafx.scene.image.Image deja = EtatsMobis.dessinee(m, classe, sp.getValue(), dir);
+            v.setImage(deja != null ? deja : icone);
+            v.setFitWidth(EtatsMobis.TAILLE);
+            v.setFitHeight(EtatsMobis.TAILLE);
+            v.setPreserveRatio(true);
+            v.setSmooth(true);
+            javafx.scene.layout.StackPane cadre = new javafx.scene.layout.StackPane(v);
+            cadre.setMinSize(EtatsMobis.TAILLE + 4, EtatsMobis.TAILLE + 4);
+            cadre.setPrefSize(EtatsMobis.TAILLE + 4, EtatsMobis.TAILLE + 4);
+            cadre.setMaxSize(EtatsMobis.TAILLE + 4, EtatsMobis.TAILLE + 4);
+            if (m != null && m.dessinable()) {
+                int d = dir;
+                int[] demande = {0};
+                java.util.function.IntConsumer montrer = etat -> {
+                    javafx.scene.image.Image i = EtatsMobis.dessinee(m, classe, etat, d);
+                    if (i != null) { v.setImage(i); v.setOpacity(1); return; }
+                    int k = ++demande[0];
+                    v.setOpacity(0.45);                     // on garde l'image precedente, en plus pale, le temps du dessin
+                    EtatsMobis.dessiner(m, classe, etat, d, img -> {
+                        if (k != demande[0]) return;        // un autre etat a ete choisi entre-temps
+                        if (img != null) v.setImage(img);
+                        v.setOpacity(1);
+                    });
+                };
+                // le Spinner est garde d'une mise a jour a l'autre : un seul ecouteur, celui de la rangee actuelle
+                Object ancien = sp.getProperties().get("etats.ecouteur");
+                if (ancien instanceof javafx.beans.value.ChangeListener)
+                    sp.valueProperty().removeListener((javafx.beans.value.ChangeListener<? super Integer>) ancien);
+                javafx.beans.value.ChangeListener<Integer> ec = (o, a, b) -> { if (b != null) montrer.accept(b); };
+                sp.getProperties().put("etats.ecouteur", ec);
+                sp.valueProperty().addListener(ec);
+                if (deja == null) montrer.accept(sp.getValue());
+            }
+
+            Label nom = new Label(Ui.majuscule(Salle.nom(type, false)) + (l.size() > 1 ? "  ×" + l.size() : ""));
+            nom.setStyle("-fx-font-weight: bold;");
+            nom.setWrapText(true);
+            nom.setMinHeight(javafx.scene.layout.Region.USE_PREF_SIZE);
+            String etatsTexte = (etats.size() > 1 ? "États actuels : " : "État actuel : ") + String.join(", ", act);
+            if (m != null && m.etats > 0) etatsTexte += Ui.accorder(" (" + n + " état(s) : 0 à " + (n - 1) + ")");
+            Label det = Ui.discret(etatsTexte);
+            det.setWrapText(true);
+            det.setMinHeight(javafx.scene.layout.Region.USE_PREF_SIZE);
+            VBox textes = new VBox(0, nom, det);
+            textes.setMinWidth(0);
+            textes.setMaxWidth(Double.MAX_VALUE);
+            HBox.setHgrow(textes, javafx.scene.layout.Priority.ALWAYS);
+            HBox h = new HBox(8, cadre, textes, sp);
+            h.setAlignment(Pos.CENTER_LEFT);
+            rangs.add(h);
+        }
+        types.getChildren().setAll(rangs);
+        return !rangs.isEmpty();
     }
 
     // ===================================================== remplacer dans une zone
@@ -753,7 +948,7 @@ final class CalqueActions {
      * Tout ramasser dans une zone : deux cases dans le jeu (coin et coin
      * oppose), puis tous les mobis de sol qui touchent la zone et les muraux
      * accroches au-dessus de ses cases vont dans l'inventaire. Une seule
-     * action pour Ctrl+Z ; confirmation s'il y a des wired ou beaucoup de mobis.
+     * action pour Ctrl+Z ; toujours une fenetre de confirmation avant.
      */
     void ramasserZone() {
         if (occupe()) { refus("Une action est déjà en cours."); return; }
@@ -796,10 +991,7 @@ final class CalqueActions {
         if (v != null) { InfoJeu.consigne(v); return; }
         if (occupe()) { refus("Une action est déjà en cours."); return; }
         int n = sols.size() + murs.size();
-        if (!GroupeModele.confirmationVoulue(n, wired)) {
-            tache = Groupes.ramasserMobis(sols, murs, progressionJeu());
-            return;
-        }
+        // toujours une confirmation : on ne ramasse pas une zone par erreur
         CalqueFenetre f = ouvrir("Tout ramasser dans la zone ?");
         Label l = new Label(WindowsClavier.texte("Zone " + coins + " : " + GroupePressePapier.mobis(n) + (n > 1 ? " vont être ramassés" : " va être ramassé")
                 + (wired > 0 ? ", dont " + wired + " wired : leurs réglages seront perdus" : "")
@@ -810,6 +1002,7 @@ final class CalqueActions {
         Button annuler = CalqueFenetre.bouton("Annuler", false, f::fermer);
         Button arreter = arreter();
         Button ok = CalqueFenetre.bouton("Ramasser", true, () -> { });
+        ok.getStyleClass().setAll("button", "danger");     // sans retour : rouge
         ok.setOnAction(e -> {
             ok.setDisable(true); annuler.setDisable(true);
             arreter.setVisible(true);
@@ -818,14 +1011,6 @@ final class CalqueActions {
         });
         f.boutons(annuler, arreter, ok);
         f.montrer();
-    }
-
-    /** Sans fenetre : l'avancement et le bilan vont dans le jeu. */
-    private static Groupes.Progression progressionJeu() {
-        return new Groupes.Progression() {
-            @Override public void progres(int fait, int total, String texte) { }
-            @Override public void fin(Groupes.Resultat r) { resultat(r); }
-        };
     }
 
     /** Copie tournee : la fenetre de copie, deja tournee et posee a cote (fantomes, puis Poser). */
@@ -867,6 +1052,7 @@ final class CalqueActions {
         Button annuler = CalqueFenetre.bouton("Annuler", false, f::fermer);
         Button arreter = arreter();
         Button ok = CalqueFenetre.bouton("Supprimer", true, () -> { });
+        ok.getStyleClass().setAll("button", "danger");     // sans retour : rouge
         ok.setOnAction(e -> {
             ok.setDisable(true); annuler.setDisable(true);
             arreter.setVisible(true);

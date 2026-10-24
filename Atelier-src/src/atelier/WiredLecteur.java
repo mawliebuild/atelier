@@ -148,7 +148,7 @@ public final class WiredLecteur {
     private static volatile boolean parNomOk = false;
 
     private static volatile boolean enLecture = false, arret = false;
-    private static volatile String message = "En attente de la salle…";
+    private static volatile String message = "En attente de l'appart…";
     private static volatile int lus = 0, total = 0;
     /** Pas d'envoi avant cet instant (l'utilisatrice vient d'ouvrir un wired). */
     private static volatile long pauseJusqua = 0;
@@ -734,7 +734,7 @@ public final class WiredLecteur {
         EtatSalle s = Salle.etat();
         if (s == null) {
             if (salleCourante != -1) { salleCourante = -1; oublierSalle(); donneesChangees(); }
-            etat("Pas dans une salle.");
+            etat("Pas dans un appart.");
             return;
         }
         int salle = s.getRoomId();
@@ -746,7 +746,7 @@ public final class WiredLecteur {
         long now = System.currentTimeMillis();
         demandes.values().removeIf(d -> now - d.envoi() > DEMANDE_VALIDE_MS);
         if (!actif) { etat("Lecture des wired en pause (outil Wired fermé)."); return; }
-        if (!Salle.furnidataPrete()) { etat("Furnidata en cours de chargement…"); return; }
+        if (!Salle.furnidataPrete()) { etat("Liste des mobis en cours de chargement…"); return; }
         if (!branche) { etat("Écoute des paquets en préparation…"); return; }
 
         // Photographie : boites wired (avec position) + ensemble des ids de la salle.

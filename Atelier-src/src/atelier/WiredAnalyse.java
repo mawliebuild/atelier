@@ -116,7 +116,7 @@ public final class WiredAnalyse {
         /** Le wired en cause, ou 0 si le probleme concerne toute la pile. */
         public final int id;
         Probleme(Gravite g, int x, int y, String t) { this(g, x, y, t, 0); }
-        Probleme(Gravite g, int x, int y, String t, int id) { gravite = g; this.x = x; this.y = y; texte = t; this.id = id; }
+        Probleme(Gravite g, int x, int y, String t, int id) { gravite = g; this.x = x; this.y = y; texte = Ui.accorder(t); this.id = id; }
     }
 
     public static final class Resultat {
@@ -348,7 +348,7 @@ public final class WiredAnalyse {
                 if (absents > 0)
                     r.add(new Probleme(Gravite.ERREUR, p.x, p.y,
                             "« " + f.nom + " » sélectionne " + absents
-                                    + " mobi(s) qui n'existe(nt) plus dans la salle.", f.id));
+                                    + " mobi(s) qui n'existe(nt) plus dans l'appart.", f.id));
                 if (demandeDesMobis(f) && f.tousLesMobis().isEmpty()
                         && !(f.estEffet() && p.aSelecteur()))
                     r.add(new Probleme(Gravite.ATTENTION, p.x, p.y,
@@ -359,7 +359,7 @@ public final class WiredAnalyse {
                         if (!vars.containsKey(v))
                             r.add(new Probleme(Gravite.ATTENTION, p.x, p.y,
                                     "« " + f.nom + " » utilise la variable " + v
-                                            + " introuvable dans la salle.", f.id));
+                                            + " introuvable dans l'appart.", f.id));
                     }
                 }
             }

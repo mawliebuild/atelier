@@ -47,7 +47,7 @@ public class OutilAligner {
             SelectionMur.Mur m = SelectionMur.courant();
             return m == null ? java.util.List.<String>of() : java.util.List.of("m" + m.id);
         });
-        selLbl = Ui.valeur("Aucun mur sélectionné");
+        selLbl = Ui.valeur("Aucun mural choisi");
 
         nombre = spin(1, 200, 5);
         espacement = spin(1, 500, 1);
@@ -145,7 +145,7 @@ public class OutilAligner {
                         ligneGrille("→ Vers la droite", colonnes, pasDroite, "pans"),
                         ligneGrille("↑ Vers le haut", rangees, pasHaut, "px"),
                         bandeauGrille,
-                        Ui.aide("Le mur choisi est la copie en bas à gauche. Vers la droite : combien "
+                        Ui.aide("Le mural choisi est la copie en bas à gauche. Vers la droite : combien "
                                 + "de copies sur la ligne, et l'écart en pans de mur. Vers le haut : "
                                 + "combien de rangées, et l'écart en pixels. 5 × 3 = 15 mobis, dont "
                                 + "celui déjà posé.")),
@@ -216,7 +216,7 @@ public class OutilAligner {
         if (SelectionMur.courant() != null) bandeauGrille.enregistrerAPose();   // l'ecart se retient pour ce mobi
         List<int[]> d = decalagesGrille(colonnes.getValue(), rangees.getValue(),
                 pasDroite.getValue(), pasHaut.getValue());
-        if (d.isEmpty()) { direGrille("Grille impossible : en 1 × 1, c'est le mur déjà posé."); return; }
+        if (d.isEmpty()) { direGrille("Grille impossible : en 1 × 1, c'est le mural déjà posé."); return; }
         PoseMur.Source src = gBc.isSelected() ? PoseMur.Source.BC
                 : gInvBc.isSelected() ? PoseMur.Source.INVENTAIRE_PUIS_BC
                 : PoseMur.Source.INVENTAIRE;
@@ -231,9 +231,9 @@ public class OutilAligner {
         if (enCours) return;   // pendant une pose, les boutons servent a Arreter (finPose remet tout)
         if (reglages != null) { reglages.setDisable(!actif); ajouter.setDisable(!actif); }
         if (reglagesGrille != null) { reglagesGrille.setDisable(!actif); ajouterGrille.setDisable(!actif); }
-        String aide = actif ? "Mur choisi : « " + m.nom + " »." : "Clique un mobi mural dans le jeu pour le choisir.";
+        String aide = actif ? "Mural choisi : « " + m.nom + " »." : "Clique un mobi mural dans le jeu pour le choisir.";
         if (etatGrille != null && (!actif || etatGrille.getText().isEmpty() || etatGrille.getText().startsWith("Clique un mobi")
-                || etatGrille.getText().startsWith("Mur choisi")))
+                || etatGrille.getText().startsWith("Mural choisi")))
             Platform.runLater(() -> etatGrille.setText(aide));
 
     }
@@ -267,14 +267,14 @@ public class OutilAligner {
     private void lancerAvec(List<int[]> decalages, PoseMur.Source src,
                             java.util.function.Consumer<String> dire, String nomOutil) {
         SelectionMur.Mur ref = SelectionMur.courant();
-        if (ref == null) { dire.accept("Pose impossible : clique d'abord un mur dans le jeu."); return; }
+        if (ref == null) { dire.accept("Pose impossible : clique d'abord un mural dans le jeu."); return; }
         Moteur gp = AtelierLauncher.moteur();
         if (gp == null) { dire.accept("Pose impossible : l'Atelier n'est pas encore prêt."); return; }
-        if (ref.typeId < 0) { dire.accept("Pose impossible : type du mur inconnu, reclique le mur dans le jeu."); return; }
+        if (ref.typeId < 0) { dire.accept("Pose impossible : type du mural inconnu, reclique le mural dans le jeu."); return; }
 
         PositionMur p;
         try { p = PositionMur.lire(ref.position); }
-        catch (Throwable t) { dire.accept("Pose impossible : position du mur illisible (" + ref.position + ")."); return; }
+        catch (Throwable t) { dire.accept("Pose impossible : position du mural illisible (" + ref.position + ")."); return; }
 
         List<String> cibles = new ArrayList<>();
         boolean faceGauche = (p.cote() == 'l');
@@ -352,11 +352,12 @@ public class OutilAligner {
         String raison = "";
         String arret = null;
         int salle = Salle.salleId();
+        Avancement.Suivi av = Avancement.debut(nomOutil, () -> arreter = true).compte(0, cibles.size());
         Journal.debug(nomOutil + " : " + cibles.size() + " copie(s) de « " + ref.nom
                 + " » (type " + ref.typeId + ", état " + ref.etat + ") depuis " + ref.position + ", source " + src);
         for (String cible : cibles) {
             if (arreter) { arret = "pose arrêtée"; break; }
-            if (Salle.salleId() != salle) { arret = "pose interrompue, tu as changé de salle"; break; }
+            if (Salle.salleId() != salle) { arret = "pose interrompue, tu as changé d'appart"; break; }
             // rythme commun des rafales, meme si la copie precedente est apparue tout de suite
             Salle.espacer();
             k++;
@@ -375,6 +376,7 @@ public class OutilAligner {
                 ligne = "envoyée " + r.detail + ", mais refusée par le jeu";
             }
             Journal.debug(nomOutil + " " + k + "/" + cibles.size() + " " + cible + " : " + ligne);
+            av.compte(k, cibles.size());
             dire.accept(nomOutil + " : " + k + "/" + cibles.size() + " — " + ligne + "…");   // « … » : progression, pas un resultat
             // tout manque dans l'inventaire / au BC : inutile d'insister
             if (!r.ok && pose == 0 && k >= 2) {
@@ -387,8 +389,9 @@ public class OutilAligner {
                         + (echecs > 0 ? ", " + echecs + " échec(s) : " + raison : "") + ")."
                 : pose + " copie(s) posée(s)" + (echecs > 0 ? ", " + echecs + " échec(s) : " + raison : "") + ".";
         bilan = nomOutil + " : " + bilan;
+        av.fin(pose, echecs, arret != null);
         // un seul message de resultat (la ligne d'etat garde le meme texte, sans le redire)
-        if (echecs > 0 || (arret != null && arret.contains("salle"))) Journal.erreur(bilan);
+        if (echecs > 0 || (arret != null && arret.contains("appart"))) Journal.erreur(bilan);
         else Journal.succes(bilan);
         dire.accept(bilan);
     }

@@ -106,6 +106,9 @@ final class CatalogueBc {
         synchronized (verrou) { if (etat == Etat.NONE) etat = Etat.AWAITING_INDEX; }
     }
 
+    /** La barre de l'Atelier pendant la lecture des pages (pas quand le cache suffit). */
+    private volatile Avancement.Suivi avancement;
+
     private void surIndex(HMessage m) {
         HCatalogIndex index = new HCatalogIndex(m.getPacket());
         if (!BC.equals(index.getCatalogType())) return;
@@ -126,6 +129,10 @@ final class CatalogueBc {
             cacheExiste = existe;
         }
         Journal.debug("Catalogue BC : index reçu, " + nb(pages.size(), "page utile", "pages utiles") + " (empreinte " + emp + ").");
+        Avancement.Suivi avant = avancement;
+        if (avant != null) avant.oublier();
+        avancement = existe || pages.isEmpty() ? null
+                : Avancement.debut("Chargement du catalogue BC").compte(0, pages.size());
         relireCacheSiPossible();                 // furnidata deja prete : tout de suite
     }
 
@@ -148,12 +155,17 @@ final class CatalogueBc {
                 murs.computeIfAbsent(pr.getFurniClassId(), k -> new ConcurrentHashMap<>()).put(pr.getExtraParam(), prod);
         }
         boolean fini;
+        int recues, attendues;
         synchronized (verrou) {
             pagesRecues.add(id);
             dernierePageLe = System.currentTimeMillis();
             fini = etat == Etat.COLLECTING_PAGES && pagesRecues.containsAll(pagesAttendues);
             if (fini) etat = Etat.COLLECTED;
+            recues = pagesRecues.size();
+            attendues = pagesAttendues.size();
         }
+        Avancement.Suivi a = avancement;
+        if (a != null) a.compte(recues, attendues);
         if (fini) finCollecte();
     }
 
@@ -235,6 +247,13 @@ final class CatalogueBc {
     }
 
     private void finCollecte() {
+        Avancement.Suivi a = avancement;
+        avancement = null;
+        if (a != null) {
+            boolean tout;
+            synchronized (verrou) { tout = pagesRecues.containsAll(pagesAttendues); }
+            a.fin(tout ? Avancement.Issue.REUSSI : Avancement.Issue.PARTIEL);
+        }
         Journal.debug("Catalogue BC : collecte finie, " + nb(sols.size(), "sol", "sols") + " et "
                 + nb(nombreVariantesMurales(), "variante murale", "variantes murales") + ", " + nb(pagesRecues(), "page", "pages") + ".");
         if (ecritureCache) ecrireCache();

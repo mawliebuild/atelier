@@ -66,10 +66,35 @@ public class Navigation {
             defilement.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
         }
 
-        /** L'aide de toute la fenetre (menu a un seul volet), pour la barre de titre ; null sinon. */
+        /**
+         * L'aide de toute la fenetre, pour la barre de titre : celle du menu a
+         * un seul volet, ou celle de la sous-rubrique montree seule ; null sinon.
+         */
         Button info;
-        public Button info() { return info; }
+        public Button info() {
+            if (filtre >= 0 && filtre < vues.size()) return vues.get(filtre).info();
+            return info;
+        }
+
+        /** Les sections repliables (menu a plusieurs volets), dans l'ordre ; vide sinon. */
+        final List<SectionVue> vues = new ArrayList<>();
+        /** La sous-rubrique montree seule (menu deroulant de la barre), -1 = tout le menu. */
+        int filtre = -1;
+
+        /** Les intitules des sous-rubriques ; vide pour un menu a un seul volet. */
+        public List<String> sousRubriques() {
+            List<String> l = new ArrayList<>();
+            for (SectionVue v : vues) l.add(v.nom());
+            return l;
+        }
+        /** Le titre de la fenetre : « Rubrique › Sous-rubrique » quand une seule est montree. */
+        public String titre() {
+            return (filtre >= 0 && filtre < vues.size()) ? nom + " › " + vues.get(filtre).nom() : nom;
+        }
     }
+
+    /** Une section repliable : son bloc, sa ligne d'intitule, son « i » (ou null), et de quoi la deplier. */
+    record SectionVue(String nom, VBox bloc, HBox ligne, Button info, Runnable deplier) { }
 
     private final StackPane zone = new StackPane();
     private final List<Menu> menus = new ArrayList<>();
@@ -123,9 +148,18 @@ public class Navigation {
         return m;
     }
 
-    public void afficher(String cle) {
+    public void afficher(String cle) { afficher(cle, -1); }
+
+    /**
+     * Ouvre le menu cle en ne montrant que sa sous-rubrique n° sous (les autres
+     * sections sont cachees, la fenetre prend la hauteur de celle-ci).
+     * sous = -1 (ou un menu a un seul volet) : tout le menu, comme avant.
+     */
+    public void afficher(String cle, int sous) {
         Menu m = menu(cle);
         if (m == null) return;
+        m.filtre = (sous >= 0 && sous < m.vues.size()) ? sous : -1;
+        appliquerFiltre(m);
         actif = m;
         for (Menu x : menus) {
             boolean v = (x == m);
@@ -211,6 +245,7 @@ public class Navigation {
             Ui.rienDeCoupe(n);
         }
         m.sections.getChildren().clear();
+        m.vues.clear();
         if (noeuds.size() == 1) {
             Node n = noeuds.get(0);
             // Aides hors des blocs : elles valent pour toute la fenetre, leur
@@ -220,10 +255,41 @@ public class Navigation {
             m.sections.getChildren().add(n);
         } else {
             m.info = null;     // a plusieurs sections : chaque section a son « i »
-            for (int i = 0; i < noeuds.size(); i++)
-                m.sections.getChildren().add(section(noms.get(i), noeuds.get(i), i == 0, aides.get(i)));
+            for (int i = 0; i < noeuds.size(); i++) {
+                SectionVue v = section(noms.get(i), noeuds.get(i), i == 0, aides.get(i));
+                m.vues.add(v);
+                m.sections.getChildren().add(v.bloc());
+            }
         }
+        if (m.filtre >= m.vues.size()) m.filtre = -1;
+        appliquerFiltre(m);
+        // remonte pendant qu'une sous-rubrique seule est ouverte : titre et « i » a jour
+        if (m == actif && m.filtre >= 0) surChangement.accept(m);
         Journal.debug("menu " + m.nom + " : " + noeuds.size() + " volet(s)");
+    }
+
+    /**
+     * Une sous-rubrique seule : les autres sections sont cachees (pas
+     * seulement repliees), son intitule aussi (il est dans le titre de la
+     * fenetre, son « i » a cote), et elle est depliee. Sans filtre : toutes
+     * les sections reviennent, chacune avec son intitule et son « i ».
+     */
+    private static void appliquerFiltre(Menu m) {
+        for (int i = 0; i < m.vues.size(); i++) {
+            SectionVue v = m.vues.get(i);
+            boolean voir = m.filtre < 0 || m.filtre == i;
+            v.bloc().setVisible(voir);
+            v.bloc().setManaged(voir);
+            boolean tete = m.filtre < 0;
+            v.ligne().setVisible(tete);
+            v.ligne().setManaged(tete);
+            if (m.filtre == i) v.deplier().run();
+            // le « i » a pu partir dans la barre de titre : il revient a sa ligne
+            if (tete && v.info() != null && v.info().getParent() != v.ligne())
+                v.ligne().getChildren().add(v.info());
+            if (m.filtre == i) v.bloc().getStyleClass().add("seule");
+            else v.bloc().getStyleClass().remove("seule");
+        }
     }
 
     private static Prerequis prerequisEnHaut(Prerequis.Condition[] c) {
@@ -236,7 +302,7 @@ public class Navigation {
      * Une section repliable : un intitule cliquable, et son contenu dessous.
      * La premiere du menu s'ouvre d'emblee, les autres restent fermees.
      */
-    private Node section(String nom, Node contenu, boolean ouvert, List<Label> aides) {
+    private SectionVue section(String nom, Node contenu, boolean ouvert, List<Label> aides) {
         Label fleche = new Label(ouvert ? "▾" : "▸");
         fleche.getStyleClass().add("nav-fleche");
 
@@ -261,21 +327,22 @@ public class Navigation {
         HBox.setHgrow(tete, Priority.ALWAYS);
         ligne.setPadding(new javafx.geometry.Insets(0, 10, 0, 0));
         // Aides hors des blocs : un « i » a droite de l'intitule de la section.
-        if (!aides.isEmpty()) ligne.getChildren().add(Ui.info(aides));
+        Button info = aides.isEmpty() ? null : Ui.info(aides);
+        if (info != null) ligne.getChildren().add(info);
 
-        tete.setOnAction(a -> {
-            boolean v = !corps.isVisible();
+        java.util.function.Consumer<Boolean> regler = v -> {
             corps.setVisible(v);
             corps.setManaged(v);
             fleche.setText(v ? "▾" : "▸");
+            tete.getStyleClass().remove("ouvert");
             if (v) tete.getStyleClass().add("ouvert");
-            else   tete.getStyleClass().remove("ouvert");
-        });
+        };
+        tete.setOnAction(a -> regler.accept(!corps.isVisible()));
 
         VBox s = new VBox(ligne, corps);
         s.getStyleClass().add("nav-section");
         s.setFillWidth(true);
-        return s;
+        return new SectionVue(nom == null ? "" : nom, s, ligne, info, () -> regler.accept(true));
     }
 
     /**

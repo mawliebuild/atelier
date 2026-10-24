@@ -96,7 +96,7 @@ final class EnregistrementCopie {
         File fichier;
         /** Wired de la zone sans reglage connu (ids reels). */
         final List<Integer> wiredNonLus = new ArrayList<>();
-        /** Mobis dont la classe est inconnue de la furnidata (ignores). */
+        /** Mobis dont la classe est inconnue du jeu (ignores). */
         int inconnus;
         int murauxInspectes, murauxSansReponse;
         boolean listeVariables;
@@ -197,8 +197,8 @@ final class EnregistrementCopie {
         Bilan b = new Bilan();
         if (stop == null) stop = () -> false;
         if (o == null) o = new Options();
-        if (!salle.dansUneSalle()) { b.erreur = "pas dans une salle"; return b; }
-        if (furnidata == null || !furnidata.pret()) { b.erreur = "furnidata pas prête"; return b; }
+        if (!salle.dansUneSalle()) { b.erreur = "pas dans un appart"; return b; }
+        if (furnidata == null || !furnidata.pret()) { b.erreur = "liste des mobis pas prête"; return b; }
         if (zone == null) zone = Zone.toute(salle);
         boolean wired = o.wired && o.sols;
         if (wired && droits != null && !droits.peutRegler()) {

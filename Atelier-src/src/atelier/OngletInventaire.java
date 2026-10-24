@@ -435,11 +435,11 @@ public class OngletInventaire {
 
         if (total == 0) {
             return lignesVues.isEmpty()
-                    ? "Inventaire vide ou pas encore chargé — entre dans une salle"
+                    ? "Inventaire vide ou pas encore chargé — entre dans un appart"
                     : "Inventaire en cours de chargement…";
         }
         if (!fd) {
-            return Ui.accorder(total + " mobi(s), mais la furnidata n'est pas chargée : "
+            return Ui.accorder(total + " mobi(s), mais la liste des mobis n'est pas chargée : "
                     + "les catégories ne peuvent pas encore être déterminées");
         }
         boolean anneeChoisieActive = !Categories.TOUTES_ANNEES.equals(anneeChoisie);

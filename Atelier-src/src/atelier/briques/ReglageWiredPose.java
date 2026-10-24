@@ -116,7 +116,7 @@ final class ReglageWiredPose {
             for (Map.Entry<String, String> e : variablesManquantes.entrySet())
                 l.add("Variable « " + e.getKey() + " » : " + e.getValue() + ".");
             for (String n : doublons)
-                l.add("Variable « " + n + " » en double dans la salle : celle créée par la copie est utilisée.");
+                l.add("Variable « " + n + " » en double dans l'appart : celle créée par la copie est utilisée.");
             for (String s : nonEnvoyes.values()) l.add(Ui.majuscule(s) + " : non envoyé.");
             for (String s : refuses.values()) l.add(Ui.majuscule(s) + " : refusé par le jeu.");
             for (String s : rates.values()) l.add(Ui.majuscule(s) + " : pas de réponse du jeu.");
@@ -280,11 +280,11 @@ final class ReglageWiredPose {
             String nom = e.getKey(), ancien = e.getValue();
             if (ReglageWired.variableGardee(ancien)) continue;          // interne : pas a retrouver
             table.remove(ancien);
-            if (apres == null) { b.variablesManquantes.put(nom, "liste des variables de la salle non reçue"); continue; }
+            if (apres == null) { b.variablesManquantes.put(nom, "liste des variables de l'appart non reçue"); continue; }
             List<PoseOutils.Variable> memeNom = new ArrayList<>();
             for (PoseOutils.Variable v : apres.values()) if (nom.equals(v.nom())) memeNom.add(v);
             if (memeNom.isEmpty()) {
-                b.variablesManquantes.put(nom, creees.contains(nom) ? "pas créée par son wired variable" : "absente de la salle");
+                b.variablesManquantes.put(nom, creees.contains(nom) ? "pas créée par son wired variable" : "absente de l'appart");
                 continue;
             }
             Integer cible = cibles.get(nom);

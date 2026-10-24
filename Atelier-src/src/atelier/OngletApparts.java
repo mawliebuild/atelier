@@ -40,18 +40,25 @@ public class OngletApparts {
         private final SimpleStringProperty nom;
         private final SimpleIntegerProperty quantite;
         private final String type;          // "sol" | "mur"
-        private final String origine;       // "BC" | "Inventaire" | "?"
+        /** D'ou ce mobi-ci a ete pose : "BC" (id 0x7FFF0000..) ou "Inventaire". */
+        private final String origine;
         private final String proprietaire;  // le pseudo du poseur, ou "—"
-        public Ligne(String n, int q, String t, String o, String pr) {
+        /** Le TYPE existe au catalogue Builders Club : OUI, NON ou "?" (catalogue pas encore lu). */
+        private final String auBc;
+        public Ligne(String n, int q, String t, String o, String pr) { this(n, q, t, o, pr, "?"); }
+        public Ligne(String n, int q, String t, String o, String pr, String bc) {
             nom = new SimpleStringProperty(n);
             quantite = new SimpleIntegerProperty(q);
-            type = t; origine = o; proprietaire = pr;
+            type = t; origine = o; proprietaire = pr; auBc = bc;
         }
         public String getNom() { return nom.get(); }
         public int getQuantite() { return quantite.get(); }
         public String getType() { return type; }
         public String getOrigine() { return origine; }
         public String getProprietaire() { return proprietaire; }
+        public String getAuBc() { return auBc; }
+        /** Pose depuis le Builders Club : disparait sans abonnement, ne se ramasse pas. */
+        public boolean estPoseBc() { return "BC".equals(origine); }
         /** Prix de la ligne (quantite comprise), en credits ; -1 inconnu. Pas dans « Copier la liste ». */
         private long prix = -1;
         /** Classe et revision du mobi, pour son icone dans le tableau (vides si inconnues). */
@@ -64,13 +71,16 @@ public class OngletApparts {
 
     /** Ligne d'etat de chaque volet : ce sont eux que Navigation monte, pas la racine. */
     private final Label etatSalle = Ui.etat(), etatAppart = Ui.etat();
+    /** Progression du collage ou de la copie (et des « 3 / 10 » de etatAppart) ; « Arrêter le collage » est a part. */
+    private final Avancement.Barre barreAppart = new Avancement.Barre().pour(etatAppart).sansArret();
+    /** Le collage en cours, pour sa barre. */
+    private volatile Avancement.Suivi avCollage;
 
     // volet « ma salle »
     private RadioButton oTout, oBc, oInv, tTout, tSols, tMurs;
     private TableView<Ligne> tableSalle;
     /** Ligne choisie dans « Ma salle », recopiee sur le fil FX. */
     private volatile Ligne ligneChoisie;
-    private Label cptSalle;
     private Ui.Voyant vInv, vBc, vFurni, vSalle;
     private VBox blocEtat, contenuSalle, blocEtat2, contenuAppart;
     private Ui.Voyant vInv2, vBc2, vFurni2, vSalle2;
@@ -79,6 +89,8 @@ public class OngletApparts {
     private ComboBox<String> choixProprio;
     private HBox ligneProprio;
     private TextField rechercheSalle;
+    /** « 12 mobis posés depuis le BC » au-dessus du tableau. */
+    private Label compteBc;
 
     /** Choix par defaut du filtre par personne. */
     private static final String TOUT_LE_MONDE = "Tout le monde";
@@ -100,7 +112,7 @@ public class OngletApparts {
     // ------------------------------------------------------------------ UI
 
     public Pane construire() {
-        Tab t1 = new Tab("Ma salle", defiler(voletSalle()));
+        Tab t1 = new Tab("Mon appart", defiler(voletSalle()));
         Tab t2 = new Tab("Dupliquer un appart", defiler(voletAppart()));
         t1.setClosable(false); t2.setClosable(false);
 
@@ -123,28 +135,35 @@ public class OngletApparts {
 
     // -------------------------------------------------------- volet ma salle
 
+    /**
+     * Volet « Mon appart », de haut en bas :
+     *   1. l'appart actuel et ses chiffres (sols, muraux, BC, valeur), puis des
+     *      pastilles seulement pour ce qui manque ou charge ;
+     *   2. les filtres sur une ligne qui passe a la ligne (et « Effacer les filtres ») ;
+     *   3. le tableau, qui prend la hauteur restante ;
+     *   4. les actions : « Copier la liste » en principal, les autres a cote.
+     * Hors d'un appart (ou pendant le premier chargement), un etat vide prend la place.
+     */
     private Pane voletSalle() {
-        cptSalle = new Label("--");
-
         vInv = new Ui.Voyant("Inventaire");
         vBc  = new Ui.Voyant("Catalogue BC");
-        vFurni = new Ui.Voyant("Furnidata");
-        vSalle = new Ui.Voyant("Salle");
+        vFurni = new Ui.Voyant("Liste des mobis");
+        vSalle = new Ui.Voyant("Appart");
         vPaquets = new Ui.Voyant("Paquets");
-        demarrerVoyants();
-        demarrerSuiviSalle();
 
         ToggleGroup origSalle = new ToggleGroup();
-        oTout = radio("Les deux", origSalle, true);
+        oTout = radio("Tout", origSalle, true);
         oBc   = radio("BC", origSalle, false);
         oInv  = radio("Inventaire", origSalle, false);
         for (RadioButton r : new RadioButton[]{oTout, oBc, oInv})
             r.setOnAction(e -> filtrerSalle());
+        oBc.setTooltip(bulle("Posés depuis le Builders Club : ils disparaissent sans abonnement BC."));
+        oInv.setTooltip(bulle("Posés depuis un inventaire : de vrais mobis, qui se ramassent."));
 
         ToggleGroup typeSalle = new ToggleGroup();
         tTout = radio("Tout", typeSalle, true);
         tSols = radio("Sols", typeSalle, false);
-        tMurs = radio("Murs", typeSalle, false);
+        tMurs = radio("Muraux", typeSalle, false);
         for (RadioButton r : new RadioButton[]{tTout, tSols, tMurs})
             r.setOnAction(e -> filtrerSalle());
 
@@ -167,101 +186,290 @@ public class OngletApparts {
             return r;
         });
 
-        Button copier = Icones.sur(new Button("Copier la liste"), Icones.DUPLIQUER);
-        copier.setOnAction(e -> copier(tableSalle, "Ma salle"));
-        copier.getStyleClass().add("primaire");
-        copier.setMinWidth(Region.USE_PREF_SIZE);
-        copier.setTooltip(bulle("Le tableau tel qu'il est filtré, prêt à coller (une ligne « - Nom xQuantité » par mobi)."));
+        // ---- 1. l'appart actuel et ses chiffres
+        salleActuelle = Ui.valeur("—");
+        salleActuelle.setWrapText(true);
+        salleActuelle.setMaxWidth(Double.MAX_VALUE);
+        chSols = chiffre("Mobis au sol");
+        chMurs = chiffre("Mobis accrochés au mur");
+        chBc = chiffre("Mobis posés depuis le Builders Club : ils disparaissent sans abonnement BC.");
+        chValeur = chiffre("");
+        chValeur.setTooltip(bulle(""));
+        chValeur.getStyleClass().add("chiffre-fort");
+        chNoms = chiffre("La liste des mobis se télécharge depuis habbo.fr : les noms en français arrivent tout seuls.");
+        chNoms.getStyleClass().setAll("label", "badge", "badge-attente");
+        chNoms.setText("Noms techniques");
+        chNoms.setVisible(false); chNoms.setManaged(false);
+        compteBc = chBc;
 
-        // Recherche par nom, au-dessus du tableau
+        // Limites de l'appart : repliees par defaut, un lien les montre
+        VBox blocLimites = LimitesSalle.bloc();
+        Hyperlink voirLimites = new Hyperlink("Limites");
+        voirLimites.setTooltip(bulle("Montre ou cache les limites de l'appart (mobis, animaux, bots)."));
+        boolean limites = PREFS.getBoolean("appart.limites", false);
+        blocLimites.setVisible(limites); blocLimites.setManaged(limites);
+        voirLimites.setOnAction(e -> {
+            boolean voir = !blocLimites.isVisible();
+            blocLimites.setVisible(voir); blocLimites.setManaged(voir);
+            PREFS.putBoolean("appart.limites", voir);
+        });
+        javafx.scene.layout.FlowPane chiffres = new javafx.scene.layout.FlowPane(6, 4,
+                chSols, chMurs, chBc, chValeur, chNoms, voirLimites);
+        chiffres.setAlignment(Pos.CENTER_LEFT);
+        chiffres.setRowValignment(javafx.geometry.VPos.CENTER);
+        majChiffres(0, 0, true);
+
+        // Pastilles d'etat : seulement ce qui manque ou charge (bulle = la raison)
+        javafx.scene.layout.FlowPane pastilles = new javafx.scene.layout.FlowPane(10, 4);
+        pastilles.setAlignment(Pos.CENTER_LEFT);
+        pastilles.getStyleClass().add("pastilles-appart");
+        Object[][] suivis = {{vFurni, "Liste des mobis", false}, {vBc, "Catalogue BC", true},
+                {vInv, "Inventaire", true}, {vPaquets, "Paquets", false}};
+        for (Object[] s : suivis) {
+            Ui.Voyant v = (Ui.Voyant) s[0];
+            Pastille p = new Pastille((String) s[1], (Boolean) s[2]);
+            miroirs.put(v, p);
+            pastilles.getChildren().add(p);
+            p.visibleProperty().addListener((o, a, b) -> majPastilles(pastilles));
+        }
+        majPastilles(pastilles);
+        // apres les pastilles : leur premier etat ne doit pas leur echapper
+        demarrerVoyants();
+        demarrerSuiviSalle();
+
+        VBox enTete = new VBox(4, salleActuelle, chiffres, pastilles);
+
+        // ---- 2. les filtres
         rechercheSalle = new TextField();
         rechercheSalle.setPromptText("Chercher un mobi");
         rechercheSalle.textProperty().addListener((o, a, b) -> filtrerSalle());
         rechercheSalle.setMaxWidth(Double.MAX_VALUE);
+        rechercheSalle.setMinWidth(90);
         Button effacerRecherche = Icones.seul(Icones.VIDER, "Effacer la recherche");
         effacerRecherche.setOnAction(e -> rechercheSalle.clear());
         effacerRecherche.visibleProperty().bind(rechercheSalle.textProperty().isNotEmpty());
-        // Remplacer mes mobis par ceux d'une zone (BC ou d'une autre personne) : RemplacerParZone
-        Button remplacerMiens = Icones.sur(new Button("Remplacer mes mobis…"), Icones.DEPLACER);
-        remplacerMiens.setMinWidth(Region.USE_PREF_SIZE);
-        remplacerMiens.setTooltip(Ui.bulle("Choisis une zone par deux clics dans le jeu : les mobis du Builders Club "
-                + "ou d'une autre personne posés dedans prennent exactement la place des tiens du même type "
-                + "(case, hauteur, rotation, état). Les tiens retournent dans ton inventaire."));
-        remplacerMiens.setOnAction(e -> RemplacerParZone.lancer(remplacerMiens.getScene() == null
-                || remplacerMiens.getScene().getStylesheets().isEmpty() ? null
-                : remplacerMiens.getScene().getStylesheets().get(0)));
-        HBox barreMobis = new HBox(8, Icones.petit(Icones.LOUPE), rechercheSalle, effacerRecherche, remplacerMiens, copier);
-        barreMobis.setAlignment(Pos.CENTER_LEFT);
+        HBox boiteRecherche = new HBox(4, Icones.petit(Icones.LOUPE), rechercheSalle, effacerRecherche);
+        boiteRecherche.setAlignment(Pos.CENTER_LEFT);
         HBox.setHgrow(rechercheSalle, Priority.ALWAYS);
 
-
         choixProprio = new ComboBox<>();
+        choixProprio.setPrefWidth(150);
         choixProprio.setMaxWidth(Double.MAX_VALUE);
         choixProprio.getItems().add(TOUT_LE_MONDE);
         choixProprio.setValue(TOUT_LE_MONDE);
         choixProprio.valueProperty().addListener((o, a, b) -> filtrerSalle());
+        choixProprio.setTooltip(bulle("Seulement les mobis posés par cette personne."));
 
-        salleActuelle = Ui.valeur("—");
-        blocEtat = Ui.bloc("État", vPaquets, vSalle, vFurni, vInv, vBc);
+        effacerFiltres = Icones.sur(new Button("Effacer les filtres"), Icones.VIDER);
+        effacerFiltres.setOnAction(e -> effacerFiltresSalle());
+        effacerFiltres.setVisible(false); effacerFiltres.setManaged(false);
 
-        // Grand par defaut : la fenetre prend toute la hauteur dispo, et seul le
-        // tableau defile (la fenetre, elle, ne defile pas).
-        tableSalle.setPrefHeight(900);
-        tableSalle.setMinHeight(140);
-        VBox.setVgrow(tableSalle, Priority.ALWAYS);
-
-        // En tete : le nom de la salle en valeur, le compte juste dessous.
-        salleActuelle.setWrapText(true);
-        cptSalle.getStyleClass().add("salle-compte");
-        cptSalle.setWrapText(true);
-        VBox enTete = new VBox(2, salleActuelle, cptSalle);
-
-        // Filtres : une ligne chacun, l'intitule a gauche, sans boites imbriquees.
-        VBox filtres = new VBox(8,
-                filtre("Origine", Ui.ligne(oTout, oBc, oInv)),
-                filtre("Type", Ui.ligne(tTout, tSols, tMurs)),
-                ligneProprio = filtre("À qui", choixProprio));
-        // « À qui » seulement si les mobis de l'appart sont a plusieurs personnes
+        ligneProprio = groupeFiltre("Personne", choixProprio);
+        // « Personne » seulement si les mobis de l'appart sont a plusieurs personnes
         // (la liste contient « tout le monde » + un nom par proprietaire).
         ligneProprio.visibleProperty().bind(javafx.beans.binding.Bindings.size(choixProprio.getItems()).greaterThan(2));
         ligneProprio.managedProperty().bind(ligneProprio.visibleProperty());
 
-        // En haut : la salle a gauche, les filtres a droite.
-        VBox blocSalle = Ui.bloc("Salle", enTete), blocFiltres = Ui.bloc("Filtres", filtres);
-        HBox haut = new HBox(12, blocSalle, blocFiltres);
-        HBox.setHgrow(blocSalle, Priority.ALWAYS);
-        HBox.setHgrow(blocFiltres, Priority.ALWAYS);
-        blocSalle.setMaxWidth(Double.MAX_VALUE);
-        blocFiltres.setMaxWidth(Double.MAX_VALUE);
-        blocSalle.setPrefWidth(200);
-        blocFiltres.setPrefWidth(300);
+        javafx.scene.layout.FlowPane filtres = new javafx.scene.layout.FlowPane(14, 6,
+                boiteRecherche,
+                groupeFiltre("Origine", oTout, oBc, oInv),
+                groupeFiltre("Type", tTout, tSols, tMurs),
+                ligneProprio, effacerFiltres);
+        filtres.setAlignment(Pos.CENTER_LEFT);
+        filtres.setRowValignment(javafx.geometry.VPos.CENTER);
+        // la recherche prend une ligne entiere en fenetre etroite, 240 px sinon
+        boiteRecherche.prefWidthProperty().bind(javafx.beans.binding.Bindings.min(240, filtres.widthProperty()));
+        boiteRecherche.setMinWidth(Region.USE_PREF_SIZE);
 
-        // « À qui » : la colonne n'a de sens qu'avec plusieurs poseurs, comme le filtre.
-        for (TableColumn<Ligne, ?> c : tableSalle.getColumns())
-            if ("À qui".equals(c.getText())) c.visibleProperty().bind(ligneProprio.visibleProperty());
-        Label videSalle = new Label("Aucun mobi à afficher.");
-        videSalle.getStyleClass().add("aide-vide");
-        tableSalle.setPlaceholder(videSalle);
+        // ---- 3. le tableau
+        tableSalle.setPrefHeight(420);
+        tableSalle.setMinHeight(160);
+        VBox.setVgrow(tableSalle, Priority.ALWAYS);
+        // En etroit, les colonnes secondaires se cachent : jamais de barre en largeur.
+        TableColumn<Ligne, ?> colType = tableSalle.getColumns().get(3),
+                colQui = tableSalle.getColumns().get(5), colPrix = tableSalle.getColumns().get(6);
+        javafx.beans.binding.BooleanBinding large = tableSalle.widthProperty().greaterThan(520),
+                moyen = tableSalle.widthProperty().greaterThan(400);
+        colType.visibleProperty().bind(large);
+        // « Poseur » : n'a de sens qu'avec plusieurs poseurs, comme le filtre.
+        colQui.visibleProperty().bind(ligneProprio.visibleProperty().and(large));
+        colPrix.visibleProperty().bind(moyen);
 
-        VBox blocMobis = Ui.bloc("Mobis", barreMobis, tableSalle,
-                Ui.aide("La liste suit la salle toute seule, en temps réel. Clique un intitulé de colonne "
-                        + "pour trier ; la ligne choisie s'allume dans l'appart. "
-                        + "Copier la liste : le tableau tel qu'il est filtré, prêt à coller."));
-        // Le tableau prend toute la hauteur restante.
+        videTable = new Label("Aucun mobi à afficher.");
+        videTable.getStyleClass().add("aide-vide");
+        videTable.setWrapText(true);
+        Button effacerVide = Icones.sur(new Button("Effacer les filtres"), Icones.VIDER);
+        effacerVide.setOnAction(e -> effacerFiltresSalle());
+        effacerVide.visibleProperty().bind(effacerFiltres.visibleProperty());
+        effacerVide.managedProperty().bind(effacerFiltres.visibleProperty());
+        VBox placeholder = new VBox(8, videTable, effacerVide);
+        placeholder.setAlignment(Pos.CENTER);
+        placeholder.setPadding(new Insets(12));
+        tableSalle.setPlaceholder(placeholder);
+
+        VBox blocMobis = Ui.bloc("Mobis", filtres, tableSalle,
+                Ui.aide("La liste suit l'appart en temps réel. Clique une ligne pour l'allumer dans l'appart, "
+                        + "un intitulé de colonne pour trier. Survole la colonne BC pour son sens."));
+        // Le tableau prend toute la hauteur restante (bloc, boite, tableau).
         VBox.setVgrow(blocMobis, Priority.ALWAYS);
-        VBox.setVgrow(blocMobis.getChildren().get(1), Priority.ALWAYS);
+        if (blocMobis.getChildren().size() > 1) VBox.setVgrow(blocMobis.getChildren().get(1), Priority.ALWAYS);
 
-        contenuSalle = new VBox(12, haut, LimitesSalle.bloc(), blocMobis);
+        // ---- 4. les actions
+        Button copier = Icones.sur(new Button("Copier la liste"), Icones.DUPLIQUER);
+        copier.setOnAction(e -> copier(tableSalle, "Mon appart"));
+        copier.getStyleClass().add("primaire");
+        copier.setMinWidth(Region.USE_PREF_SIZE);
+        copier.setTooltip(bulle("Copie le tableau filtré, prêt à coller : Sols puis Muraux, « - Nom ×Quantité », "
+                + "sans les mobis techniques (dalles magiques, contrôleur invisible…)."));
+
+        Button listeBc = Icones.sur(new Button("Liste des mobis BC"), Icones.LISTE);
+        listeBc.setMinWidth(Region.USE_PREF_SIZE);
+        listeBc.setTooltip(bulle("Copie les mobis posés depuis le BC, regroupés par nom (Sols puis Muraux), "
+                + "prêts à envoyer à qui les remplacera."));
+        listeBc.setOnAction(e -> copierListeBc());
+
+        // Remplacer des mobis (BC ou les miens) par ceux d'autres personnes : RemplacerParZone
+        Button remplacerMiens = Icones.sur(new Button("Remplacer des mobis…"), Icones.DEPLACER);
+        remplacerMiens.setMinWidth(Region.USE_PREF_SIZE);
+        remplacerMiens.setTooltip(bulle("Des mobis d'autres personnes prennent la place des mobis du même type : "
+                + "ceux du BC ou les tiens."));
+        remplacerMiens.setOnAction(e -> RemplacerParZone.lancer(remplacerMiens.getScene() == null
+                || remplacerMiens.getScene().getStylesheets().isEmpty() ? null
+                : remplacerMiens.getScene().getStylesheets().get(0)));
+        javafx.scene.layout.FlowPane actions = Ui.boutons(copier, listeBc, remplacerMiens);
+
+        contenuSalle = new VBox(10, enTete, blocLimites, blocMobis, actions);
         contenuSalle.setFillWidth(true);
         VBox.setVgrow(contenuSalle, Priority.ALWAYS);
 
-        // Les voyants techniques (paquets, furnidata...) ne s'affichent plus :
-        // la liste se remplit d'elle-meme, et ce qui manque se voit dans le tableau.
-        VBox v = new VBox(12, contenuSalle, etatSalle);
+        // ---- hors d'un appart, ou premier chargement : un etat clair a la place
+        videTitre = Ui.valeur("Pas dans un appart");
+        videTitre.setWrapText(true);
+        videTexte = Ui.discret("Entre dans un appart : ses mobis s'affichent ici tout seuls.");
+        videTexte.setMaxWidth(320);
+        videTexte.setAlignment(Pos.CENTER);
+        videTexte.setTextAlignment(javafx.scene.text.TextAlignment.CENTER);
+        videCharge = new ProgressIndicator();
+        videCharge.setPrefSize(22, 22);
+        videCharge.setMaxSize(22, 22);
+        videCharge.setVisible(false); videCharge.setManaged(false);
+        etatVide = new VBox(8, videCharge, videTitre, videTexte);
+        etatVide.setAlignment(Pos.CENTER);
+        etatVide.setPadding(new Insets(28, 8, 28, 8));
+        etatVide.setVisible(false); etatVide.setManaged(false);
+
+        VBox v = new VBox(10, contenuSalle, etatVide, etatSalle);
         VBox.setVgrow(contenuSalle, Priority.ALWAYS);
         v.setFillWidth(true);
         v.setPadding(new Insets(12, 14, 14, 14));
         return v;
+    }
+
+    // champs du volet « Mon appart » (en-tete, etats vides)
+    private Label chSols, chMurs, chBc, chValeur, chNoms, videTable, videTitre, videTexte;
+    private Button effacerFiltres;
+    private ProgressIndicator videCharge;
+    private VBox etatVide;
+    /** Voyant -> sa pastille dans l'en-tete de « Mon appart ». */
+    private static final Map<Ui.Voyant, Pastille> miroirs =
+            java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
+
+    /** Un chiffre cle de l'en-tete : petite etiquette arrondie, avec sa bulle. */
+    private static Label chiffre(String aide) {
+        Label l = new Label("");
+        l.getStyleClass().addAll("badge", "chiffre-appart");
+        l.setMinWidth(Region.USE_PREF_SIZE);
+        if (aide != null && !aide.isEmpty()) l.setTooltip(bulle(aide));
+        return l;
+    }
+
+    /** Les chiffres de tout l'appart (pas du tableau filtre). Fil FX. */
+    private void majChiffres(int sols, int murs, boolean fd) {
+        if (chSols == null) return;
+        chSols.setText(sols + (sols > 1 ? " sols" : " sol"));
+        chMurs.setText(Ui.accorder(murs + " mural(aux)"));
+        long total = 0; int sansPrix = 0;
+        for (Ligne l : brutSalle) { if (l.prix >= 0) total += l.prix; else sansPrix++; }
+        boolean connu = total > 0;
+        chValeur.setVisible(connu); chValeur.setManaged(connu);
+        if (connu) {
+            chValeur.setText("≈ " + java.text.NumberFormat.getIntegerInstance(Locale.FRANCE).format(total) + " c");
+            chValeur.getTooltip().setText(Ui.accorder("Valeur estimée : total de la colonne Prix pour tout l'appart"
+                    + (sansPrix > 0 ? ", sans " + sansPrix + " sorte(s) de mobi(s) au prix inconnu." : ".")));
+        }
+        chNoms.setVisible(!fd); chNoms.setManaged(!fd);
+    }
+
+    /** La rangee de pastilles n'existe que si l'une d'elles a quelque chose a dire. */
+    private static void majPastilles(javafx.scene.layout.FlowPane f) {
+        boolean une = false;
+        for (javafx.scene.Node n : f.getChildren()) une |= n.isVisible();
+        f.setVisible(une); f.setManaged(une);
+    }
+
+    /** Un groupe de filtre : son nom en gras, puis ses choix ; il ne se coupe pas, la ligne passe dessous. */
+    private static HBox groupeFiltre(String nom, javafx.scene.Node... choix) {
+        HBox h = new HBox(8, Ui.etiquette(nom));
+        h.getChildren().addAll(choix);
+        h.setAlignment(Pos.CENTER_LEFT);
+        h.setMinWidth(Region.USE_PREF_SIZE);
+        return h;
+    }
+
+    /** Un filtre est-il actif (recherche, origine, type, personne) ? */
+    private boolean filtreActif() {
+        return (rechercheSalle != null && rechercheSalle.getText() != null && !rechercheSalle.getText().isBlank())
+                || !oTout.isSelected() || !tTout.isSelected()
+                || (choixProprio.getValue() != null && !TOUT_LE_MONDE.equals(choixProprio.getValue()));
+    }
+
+    /** « Effacer les filtres » : tout revient a « Tout ». */
+    private void effacerFiltresSalle() {
+        oTout.setSelected(true);
+        tTout.setSelected(true);
+        choixProprio.setValue(TOUT_LE_MONDE);
+        rechercheSalle.clear();
+        filtrerSalle();
+    }
+
+    /** Texte du tableau vide et bouton « Effacer les filtres » (fil FX). */
+    private void majVide() {
+        boolean actif = filtreActif();
+        if (effacerFiltres != null) { effacerFiltres.setVisible(actif); effacerFiltres.setManaged(actif); }
+        if (videTable != null)
+            videTable.setText(brutSalle.isEmpty() ? "Aucun mobi dans cet appart."
+                    : "Aucun mobi ne correspond aux filtres.");
+    }
+
+    /**
+     * Pastille compacte de l'en-tete : un rond de couleur et le nom, la raison
+     * en bulle. Cachee quand tout va bien. absentEstAttente : « absent » veut
+     * dire « demande en cours » (inventaire, catalogue), pas un echec.
+     */
+    private static final class Pastille extends HBox {
+        private final javafx.scene.shape.Circle rond = new javafx.scene.shape.Circle(4);
+        private final String nom;
+        private final Tooltip aide = bulle("");
+        private final boolean absentEstAttente;
+        Pastille(String nom, boolean absentEstAttente) {
+            super(5);
+            this.nom = nom;
+            this.absentEstAttente = absentEstAttente;
+            Label n = new Label(nom);
+            n.getStyleClass().add("pastille-nom");
+            n.setMinWidth(Region.USE_PREF_SIZE);
+            setAlignment(Pos.CENTER_LEFT);
+            getChildren().addAll(rond, n);
+            Tooltip.install(this, aide);
+            setVisible(false); setManaged(false);
+        }
+        void regler(String niveau, String raison) {
+            boolean ok = "ok".equals(niveau);
+            boolean attente = "attente".equals(niveau) || absentEstAttente;
+            rond.getStyleClass().setAll(ok ? "pastille-ok" : attente ? "pastille-attente" : "pastille-echec");
+            aide.setText(nom + " : " + Ui.majuscule(raison));
+            setVisible(!ok); setManaged(!ok);
+        }
     }
 
     /**
@@ -298,12 +506,12 @@ public class OngletApparts {
 
         EtatSalle s = gp.getFloorState();
         boolean dansSalle = (s != null && s.inRoom());
-        if (s == null)         reglerDuo(vSalle, vSalle2, "absent", "État de salle indisponible");
+        if (s == null)         reglerDuo(vSalle, vSalle2, "absent", "État d'appart indisponible");
         else if (!dansSalle)   reglerDuo(vSalle, vSalle2, "absent", manqueSalle(s));
         else {
             // Le nom seulement : le modele (« model_a ») ne dit rien a personne.
             String n = NomSalle.nomValide(gp);
-            reglerDuo(vSalle, vSalle2, "ok", (n == null || n.isEmpty()) ? "Dans une salle" : n);
+            reglerDuo(vSalle, vSalle2, "ok", (n == null || n.isEmpty()) ? "Dans un appart" : n);
         }
 
         boolean fd = false;
@@ -338,7 +546,7 @@ public class OngletApparts {
         // On laisse quelques secondes aux voyants, puis le contenu passe devant.
         boolean attenteCourte = dansSalle && !fd
                 && (System.currentTimeMillis() - entreeSalle) < 8000;
-        montrerEtat(!dansSalle || attenteCourte);
+        montrerEtat(!dansSalle || attenteCourte, dansSalle);
     }
 
     /**
@@ -346,12 +554,13 @@ public class OngletApparts {
      * montre que les voyants ; des que c'est pret, ils disparaissent et le
      * contenu prend toute la place. Jamais les deux a la fois.
      */
-    private Boolean dernierEtat = null;
+    private String dernierEtat = null;
 
-    private void montrerEtat(boolean enAttente) {
+    private void montrerEtat(boolean enAttente, boolean dansSalle) {
         if (fenetreGelee) return;
-        if (Boolean.valueOf(enAttente).equals(dernierEtat)) return;
-        dernierEtat = enAttente;
+        String cle = enAttente + "/" + dansSalle;
+        if (cle.equals(dernierEtat)) return;
+        dernierEtat = cle;
         Platform.runLater(() -> {
             if (blocEtat != null) {
                 blocEtat.setVisible(false);   // les Prérequis en haut du volet le disent deja
@@ -360,6 +569,16 @@ public class OngletApparts {
             if (contenuSalle != null) {
                 contenuSalle.setVisible(!enAttente);
                 contenuSalle.setManaged(!enAttente);
+            }
+            // « Mon appart » : a la place du contenu, un etat clair (hors appart, ou chargement)
+            if (etatVide != null) {
+                etatVide.setVisible(enAttente);
+                etatVide.setManaged(enAttente);
+                videCharge.setVisible(dansSalle);
+                videCharge.setManaged(dansSalle);
+                videTitre.setText(dansSalle ? "Chargement de la liste des mobis…" : "Pas dans un appart");
+                videTexte.setText(dansSalle ? "Les noms en français arrivent de habbo.fr, quelques secondes."
+                        : "Entre dans un appart : ses mobis s'affichent ici tout seuls.");
             }
             if (contenuAppart != null) {
                 contenuAppart.setVisible(!enAttente);
@@ -378,7 +597,11 @@ public class OngletApparts {
         // Rafraichi chaque seconde : ne rien poster quand rien n'a change.
         String cle = niveau + "|" + raison;
         if (cle.equals(dejaRegle.put(v, cle))) return;
-        Platform.runLater(() -> v.regler(niveau, raison));
+        Platform.runLater(() -> {
+            v.regler(niveau, raison);
+            Pastille p = miroirs.get(v);     // sa pastille dans l'en-tete de « Mon appart »
+            if (p != null) p.regler(niveau, raison);
+        });
     }
 
     private static final Map<Ui.Voyant, String> dejaRegle =
@@ -387,7 +610,7 @@ public class OngletApparts {
     /** Dit CE QUI manque pour etre « dans une salle » (EtatSalle.manque), au lieu d'un message muet. */
     private static String manqueSalle(EtatSalle s) {
         String m = s.manque();
-        return m == null ? "Pas dans une salle" : "Pas encore reçu : " + Character.toLowerCase(m.charAt(0)) + m.substring(1);
+        return m == null ? "Pas dans un appart" : "Pas encore reçu : " + Character.toLowerCase(m.charAt(0)) + m.substring(1);
     }
 
     private void reglerDuo(Ui.Voyant a, Ui.Voyant b, String niveau, String raison) {
@@ -422,7 +645,7 @@ public class OngletApparts {
         etZone.setOnAction(e -> { if (!Zone.definie()) choisirZone(); });
 
         cpSols  = new CheckBox("Sols");   cpSols.setSelected(true);
-        cpMurs  = new CheckBox("Murs");   cpMurs.setSelected(true);
+        cpMurs  = new CheckBox("Muraux");   cpMurs.setSelected(true);
         cpWired = new CheckBox("Wired");  cpWired.setSelected(true);
 
         Button copierSalle = Icones.sur(plein("Copier", e -> copierSalleVersAppart()), Icones.DUPLIQUER);
@@ -475,8 +698,14 @@ public class OngletApparts {
         avecFloor.setWrapText(true);
         avecFloor.setSelected(true);
 
-        Button poser = Icones.sur(plein("Coller ici", e -> collerAppart()), Icones.COLLER);
+        Button poser = Icones.sur(plein("Coller ici", e -> collerAppart(false)), Icones.COLLER);
         poser.getStyleClass().add("primaire");
+        Button completer = Icones.sur(plein("Compléter l'appart", e -> collerAppart(true)), Icones.COLLER);
+        completer.setTooltip(bulle("Comme Coller ici, mais sans repartir de zéro : les mobis déjà à leur place "
+                + "(case, hauteur, rotation) ne sont pas touchés, leur état est remis s'il le faut ; les mobis du même type "
+                + "mal placés sont déplacés à la bonne place ; seul ce qui manque est posé. Les autres mobis de l'appart restent où ils sont."));
+        completer.visibleProperty().bind(collageEnCours.not());
+        completer.managedProperty().bind(collageEnCours.not());
         // Pendant un collage : « Arrêter » a la place de « Coller ici »
         Button arreter = plein("Arrêter le collage", e -> arreterCollage());
         // jamais declenche par une touche (Entree / Espace envoyees pendant que l'on joue)
@@ -497,7 +726,7 @@ public class OngletApparts {
         apercu.getTooltip().setWrapText(true);
         apercu.getTooltip().setMaxWidth(300);
         apercu.setOnAction(e -> reprendreApercu(liste));
-        for (Button b : new Button[]{poser, renommer, supprimer, apercu})
+        for (Button b : new Button[]{poser, completer, renommer, supprimer, apercu})
             b.disableProperty().bind(choixAppart.valueProperty().isNull());
         HBox actions = new HBox(4, renommer, apercu, supprimer);
         actions.setAlignment(Pos.CENTER_RIGHT);
@@ -511,7 +740,7 @@ public class OngletApparts {
         VBox choixSource = new VBox(4, sInv, sInvBc, sBc, sBcInv);
         choixSource.setPadding(new Insets(0, 0, 0, 4));
 
-        Label salleLbl = Ui.etiquette("Salle actuelle");
+        Label salleLbl = Ui.etiquette("Appart actuel");
         salleLbl.setMinWidth(Region.USE_PREF_SIZE);
         HBox ligneSalle = new HBox(8, salleLbl, salleActuelle2);
         ligneSalle.setAlignment(Pos.BASELINE_LEFT);
@@ -541,18 +770,20 @@ public class OngletApparts {
                 Ui.bloc("Coller dans l'appart où je suis",
                         choixSource,
                         avecFloor,
-                        poser, boutonArreter,
+                        poser, completer, boutonArreter,
                         Ui.aide("Sans le floor (ou pour une zone), clique dans le jeu la case du coin "
-                                + "haut-gauche. Les mobis introuvables sont signalés et le reste est collé.")));
+                                + "haut-gauche. Les mobis introuvables sont signalés et le reste est collé. "
+                                + "« Compléter l'appart » reprend ce qui est déjà posé : ce qui est bien placé reste, "
+                                + "le reste est déplacé, seul ce qui manque est posé.")));
         contenuAppart.setFillWidth(true);
 
-        vSalle2 = new Ui.Voyant("Salle");
-        vFurni2 = new Ui.Voyant("Furnidata");
+        vSalle2 = new Ui.Voyant("Appart");
+        vFurni2 = new Ui.Voyant("Liste des mobis");
         vInv2   = new Ui.Voyant("Inventaire");
         vBc2    = new Ui.Voyant("Catalogue BC");
         blocEtat2 = Ui.bloc("État", vSalle2, vFurni2, vInv2, vBc2);
 
-        VBox v = new VBox(14, blocEtat2, contenuAppart, etatAppart);
+        VBox v = new VBox(14, blocEtat2, contenuAppart, barreAppart, etatAppart);
         v.setFillWidth(true);
         v.setPadding(new Insets(12, 14, 14, 14));
 
@@ -1181,7 +1412,8 @@ public class OngletApparts {
      * passent par la dalle, un par un. Le
      * fichier est relu ici (CopieAppart) : c'est bien l'appart choisi qui est pose.
      */
-    private void collerAppart() {
+    /** completer : on part de ce qui est deja dans la salle (CompleterAppart). */
+    private void collerAppart(boolean completer) {
         // Pendant le collage, chaque message va aussi dans le chat du jeu :
         // on a les yeux sur le jeu, pas sur le volet.
         java.util.function.Consumer<String> dire = this::direJeu;
@@ -1191,7 +1423,7 @@ public class OngletApparts {
         if (nom == null) { dire.accept("Choisis d'abord un appart."); return; }
 
         EtatSalle s = gp.getFloorState();
-        if (s == null || !s.inRoom()) { dire.accept("Collage impossible : tu n'es pas dans une salle."); return; }
+        if (s == null || !s.inRoom()) { dire.accept("Collage impossible : tu n'es pas dans un appart."); return; }
 
         Generateur.Source src = sBc.isSelected()    ? Generateur.Source.BC
                               : sInv.isSelected()   ? Generateur.Source.INVENTAIRE
@@ -1215,7 +1447,7 @@ public class OngletApparts {
                     Furnidata fd = gp.getFurniDataTools();
                     for (CopieAppart.MobiSol pf : cfg.sols)
                         if (fd.getFloorTypeId(pf.classe) == null) {
-                            dire.accept("Collage impossible : « " + pf.classe + " » inconnu de la furnidata.");
+                            dire.accept("Collage impossible : « " + pf.classe + " » inconnu du jeu.");
                             return;
                         }
                 }
@@ -1266,7 +1498,7 @@ public class OngletApparts {
                 gearth.extensions.parsers.HPoint repere = clic != null ? clic : racine;   // case de reference des hauteurs
                 double sol0 = Math.max(0, Salle.hauteurSol(repere.getX(), repere.getY()));
                 Furnidata fdt = gp.getFurniDataTools();
-                List<PoseTapis.Piece> sols = new ArrayList<>();
+                List<PoseTapis.Piece> voulues = new ArrayList<>();
                 for (CopieAppart.MobiSol pf : cfg.sols) {
                     int x = racine.getX() + pf.x, y = racine.getY() + pf.y;
                     // floor de la copie remis tel quel : z est deja l'altitude absolue d'origine
@@ -1275,11 +1507,31 @@ public class OngletApparts {
                     String nomMobi = pf.nom;
                     if (nomMobi == null || nomMobi.isBlank())
                         try { nomMobi = Generateur.nomSol(fdt, pf.classe); } catch (Throwable ignored) { nomMobi = pf.classe; }
-                    sols.add(PoseTapis.Piece.nouveau(pf.classe, pf.etat, nomMobi, x, y, z, pf.rotation, e[0], e[1], pf.id));
+                    voulues.add(PoseTapis.Piece.nouveau(pf.classe, pf.etat, nomMobi, x, y, z, pf.rotation, e[0], e[1], pf.id));
                 }
+                // Completer : ce qui est deja a sa place reste, le meme type mal place est deplace
+                CompleterAppart.Plan cp = completer ? CompleterAppart.plan(voulues, cfg, racine) : null;
+                List<PoseTapis.Piece> sols = cp != null ? cp.pieces : voulues;
+                CopieAppart cfgMurs = cfg;
+                if (cp != null) {
+                    cfgMurs = cfg.copie();
+                    cfgMurs.murs = new ArrayList<>(cp.mursAPoser);
+                    Journal.debug("compléter « " + nom + " » : sols " + cp.solsGardes + " gardés, " + cp.solsDeplaces
+                            + " déplacés, " + cp.solsNouveaux + " à poser ; muraux " + cp.mursGardes + " gardés, "
+                            + cp.mursDeplaces + " déplacés, " + cp.mursAPoser.size() + " à poser ; "
+                            + cp.etats.size() + " états à remettre.");
+                    if (sols.isEmpty() && cp.mursAPoser.isEmpty() && cp.mursADeplacer.isEmpty() && cp.etats.isEmpty()) {
+                        dire.accept("« " + CopiesDossiers.court(nom) + " » est déjà complet : tout est à sa place, rien à faire.");
+                        return;
+                    }
+                }
+                final CopieAppart mursCfg = cfgMurs;
                 // Tout est une seule action pour Ctrl+Z (les dalles n'y vont pas).
                 collageArrete = false;
                 dernierBilanMuraux = null;
+                Avancement.Suivi av = Avancement.debut(completer ? "Compléter l'appart" : "Collage de l'appart", this::arreterCollage);
+                avCollage = av;
+                barreAppart.suivre(av);
                 Platform.runLater(() -> collageEnCours.set(true));
                 int salle0 = Groupes.salleCourante();
                 // changement de salle : seulement une autre vraie salle, vue 2 fois de suite
@@ -1295,27 +1547,36 @@ public class OngletApparts {
                 };
                 long[] derniere = {0};
                 PoseTapis.Suivi suivi = (k, tot, texte) -> {
+                    String etape = Avancement.nomDe(texte);
+                    av.texte(etape.equals("En cours") ? null : etape);
+                    if (tot > 0) av.compte(k, tot);
                     long t = System.currentTimeMillis();
                     if (tot > 0 && k < tot && t - derniere[0] < 250) return;
                     derniere[0] = t;
                     note(texte);
                 };
                 PoseTapis.JeuSalle jeu = new PoseTapis.JeuSalle(src, () -> collageArrete, this::note, suivi, false);
-                int[] mursPoses = {0};
+                int[] mursPoses = {0}, mursDeplaces = {0};
+                int[] etatsFaux = {0};
                 ReglagesWired.Bilan[] rw = {null, null};
                 PoseTapis.Bilan[] tb = {null};
                 List<PoseTapis.Piece> piecesFinales = sols;
                 final gearth.extensions.parsers.HPoint coin = racine;
                 Runnable etape3 = () -> {
                     // muraux : leur position, leur hauteur et leur decalage (variables du jeu)
-                    if (!cfg.murs.isEmpty() && !stop.getAsBoolean()) {
+                    if (cp != null && !cp.mursADeplacer.isEmpty() && !stop.getAsBoolean()) {
+                        note("Muraux à déplacer…");
+                        mursDeplaces[0] = CompleterAppart.deplacerMuraux(cp, stop);
+                    }
+                    if (!mursCfg.murs.isEmpty() && !stop.getAsBoolean()) {
                         note("Muraux…");
-                        mursPoses[0] = poserMuraux(cfg, src, coin, stop);
+                        mursPoses[0] = poserMuraux(mursCfg, src, coin, stop);
                     }
                     // les reglages des wired, sur les wired poses (cle -> id reel)
                     if (avecWired && !stop.getAsBoolean()) {
                         note("Réglages des wired…");
                         Map<Integer, Integer> cles = new LinkedHashMap<>();
+                        if (cp != null) cles.putAll(cp.cles);
                         for (PoseTapis.Piece p : piecesFinales) if (p.obtenu >= 0 && p.cle != -1) cles.put(p.cle, p.obtenu);
                         rw[0] = ReglagesWired.appliquer(cfg, cles, coin);
                     }
@@ -1323,6 +1584,11 @@ public class OngletApparts {
                 Historique.grouper(true);
                 try {
                     tb[0] = PoseTapis.executer(sols, jeu, suivi, etape3);
+                    // completer : l'etat des mobis gardes et deplaces
+                    if (cp != null && !cp.etats.isEmpty() && !stop.getAsBoolean()) {
+                        note("États…");
+                        etatsFaux[0] = PoseDirecte.etats(gp, cp.etats, stop);
+                    }
                     // les wired repris a la dalle a la verification (nouveaux ids) : leurs reglages
                     if (avecWired && !stop.getAsBoolean()) {
                         Map<Integer, Integer> repris = new LinkedHashMap<>();
@@ -1343,17 +1609,21 @@ public class OngletApparts {
                 }
                 PoseTapis.Bilan b = tb[0];
                 boolean arrete = collageArrete || b.arrete;
-                if (b.sortie) { dire.accept("Collage interrompu : tu as changé de salle."); return; }
+                if (b.sortie) { av.fin(Avancement.Issue.PARTIEL); dire.accept("Collage interrompu : tu as changé d'appart."); return; }
                 // Un seul bilan. Un manque ou une hauteur fausse en fait une erreur (Journal.ERREUR).
                 b.arrete = arrete;
-                String bilan = b.texte("posé");
+                String bilan = b.texte(completer ? "placé" : "posé");
+                if (cp != null) bilan = "Compléter : " + CompleterAppart.resume(cp) + " ; "
+                        + Character.toLowerCase(bilan.charAt(0)) + bilan.substring(1);
                 bilan = bilan.substring(0, bilan.length() - 1)
-                        + (!cfg.murs.isEmpty() ? " ; muraux : " + mursPoses[0] + "/" + cfg.murs.size()
-                                + (mursPoses[0] < cfg.murs.size() && !arrete ? " (" + (cfg.murs.size() - mursPoses[0]) + " refusé(s)"
+                        + (cp != null && cp.mursDeplaces > mursDeplaces[0] && !arrete
+                                ? " ; " + (cp.mursDeplaces - mursDeplaces[0]) + " mural(aux) pas arrivé(s) à sa place" : "")
+                        + (!mursCfg.murs.isEmpty() ? " ; muraux : " + mursPoses[0] + "/" + mursCfg.murs.size()
+                                + (mursPoses[0] < mursCfg.murs.size() && !arrete ? " (" + (mursCfg.murs.size() - mursPoses[0]) + " refusé(s)"
                                         + pasAuBcMuraux() + raisonsMuraux() + ")" : "")
                                 + (dernierBilanMuraux != null && dernierBilanMuraux.etatsFaux > 0
                                         ? ", " + dernierBilanMuraux.etatsFaux + " pas dans le bon état" : "") : "")
-                        + (b.etatsFaux > 0 ? " ; " + b.etatsFaux + " pas dans le bon état" : "");
+                        + (b.etatsFaux + etatsFaux[0] > 0 ? " ; " + (b.etatsFaux + etatsFaux[0]) + " pas dans le bon état" : "");
                 ReglagesWired.Bilan r0 = rw[0];
                 if (r0 != null && !r0.possible)
                     bilan += " ; réglages des wired pas appliqués (" + r0.raison + ")";
@@ -1366,12 +1636,16 @@ public class OngletApparts {
                             + (r0.relusDifferents > 0 ? ", " + r0.relusDifferents + " relu(s) différent(s)" : "");
                 }
                 bilan += "." + (b.sansAltitude ? PoseTapis.SANS_ALTITUDE : "");
+                av.fin(Ui.accorder(bilan));
                 dire.accept(Ui.accorder(bilan));
             } catch (Throwable t) {
                 Journal.debug("collage : " + t);
                 dire.accept("Collage impossible : " + lisible(t) + ".");
             } finally {
                 gelerFenetre(false);
+                Avancement.Suivi a = avCollage;
+                avCollage = null;
+                if (a != null && !a.finie()) a.fin(Avancement.Issue.ECHEC);
             }
         });
     }
@@ -1525,7 +1799,7 @@ public class OngletApparts {
                 return true;
             }
         }
-        dire.accept("Collage impossible : le floor n'est pas revenu du jeu en 15 s (droits de la salle ?).");
+        dire.accept("Collage impossible : le floor n'est pas revenu du jeu en 15 s (droits de l'appart ?).");
         return false;
     }
 
@@ -1543,7 +1817,7 @@ public class OngletApparts {
         Moteur gp = AtelierLauncher.moteur();
         if (gp == null) { dire.accept("Copie impossible : l'Atelier n'est pas encore prêt."); return; }
         EtatSalle s = gp.getFloorState();
-        if (s == null || !s.inRoom()) { dire.accept("Copie impossible : tu n'es pas dans une salle."); return; }
+        if (s == null || !s.inRoom()) { dire.accept("Copie impossible : tu n'es pas dans un appart."); return; }
 
         String saisi = nomNouvelAppart.getText() == null ? "" : nomNouvelAppart.getText().trim();
         if (saisi.isEmpty()) {
@@ -1581,12 +1855,12 @@ public class OngletApparts {
             }
             try {
                 EnregistrementCopie enr = gp.enregistrement();
-                if (enr == null) { dire.accept("Copie impossible : furnidata pas encore chargée."); return; }
+                if (enr == null) { dire.accept("Copie impossible : liste des mobis pas encore chargée."); return; }
 
-                String quoi = (sols ? "sols" : "") + (murs ? (sols ? " + " : "") + "murs" : "")
+                String quoi = (sols ? "sols" : "") + (murs ? (sols ? " + " : "") + "muraux" : "")
                         + (wired ? " + wired" : "") + (complet ? " + floor" : "");
                 dire.accept("Copie de « " + nomFinal + " » (" + (complet ? "appart complet" : "zone " + lx + "×" + ly)
-                        + ", " + quoi + ")... ne touche pas à la salle.");
+                        + ", " + quoi + ")... ne touche pas à l'appart.");
                 // Comme avant : sans les sols, seulement les muraux ; sinon les sols de la zone.
                 EnregistrementCopie.Options opt = new EnregistrementCopie.Options();
                 opt.sols = !(!sols && murs);
@@ -1661,7 +1935,7 @@ public class OngletApparts {
                     if (choixAppart.getItems().contains(rel)) choixAppart.setValue(rel);
                 });
                 dire.accept("Appart « " + nomFinal + " » enregistré" + dansDossier(dest) + " : " + (fs == null ? 0 : fs.length()) + " sols, "
-                        + (ws == null ? 0 : ws.length()) + " murs, " + nWired + " réglages wired." + floor
+                        + (ws == null ? 0 : ws.length()) + " mural(aux), " + nWired + " réglages wired." + floor
                         + (eb.avertissement != null ? " " + eb.avertissement : ""));
             } catch (Throwable t) {
                 Journal.debug("copie : " + t);
@@ -1710,7 +1984,8 @@ public class OngletApparts {
                     }
                     List<HFloorItem> so = dedans ? s.getItems() : null;
                     List<HWallItem> mu = dedans ? s.getWallItems() : null;
-                    String sig = empreinte(salle, so, mu, furnidataPrete());
+                    // le catalogue BC qui arrive change la colonne « BC » : on recompte
+                    String sig = empreinte(salle, so, mu, furnidataPrete()) + (catalogueBcPret(gp) ? "/bc" : "");
                     if (reg.tic(sig, System.currentTimeMillis())) calculerSalle(gp, so, mu, dedans);
                     // Le nom arrive parfois apres les mobis : suivi a part, sans recalcul.
                     String n = texteNomSalle(gp);
@@ -1736,7 +2011,7 @@ public class OngletApparts {
         return salle + "/" + nSols + "/" + nMurs + "/" + Long.toHexString(somme) + (fd ? "/fd" : "");
     }
 
-    /** Cache type -> {nom, origine}, cle (typeId << 1 | mur). Rempli seulement furnidata prete. */
+    /** Cache type -> {nom, existe au BC}, cle (typeId << 1 | mur). Rempli seulement furnidata ET catalogue BC prets. */
     private final Map<Long, String[]> cacheTypes = new java.util.concurrent.ConcurrentHashMap<>();
 
     /** Suivi des prix pour la colonne Prix (fil atelier-suivi-salle seulement). */
@@ -1748,9 +2023,23 @@ public class OngletApparts {
         long k = ((long) typeId << 1) | (mur ? 1 : 0);
         String[] r = cacheTypes.get(k);
         if (r != null) return r;
-        r = new String[]{ nom(gp, cls(gp, typeId, mur), mur), origine(gp, typeId, mur) };
-        if (fd) cacheTypes.put(k, r);
+        r = new String[]{ nom(gp, cls(gp, typeId, mur), mur), existeAuBc(gp, cls(gp, typeId, mur), mur) };
+        if (fd && catalogueBcPret(gp)) cacheTypes.put(k, r);
         return r;
+    }
+
+    /**
+     * Pose depuis le Builders Club : le serveur donne a ces mobis de VRAIS ids
+     * dans la plage 0x7FFF0000.. (sols comme muraux). Nos marqueurs de grille
+     * et nos fantomes, fictifs, n'en sont pas.
+     */
+    static boolean poseDepuisBc(int id) {
+        return id >= Salle.ID_FICTIF_MIN && !Salle.idFictif(id);
+    }
+
+    private static boolean catalogueBcPret(Moteur gp) {
+        try { return gp != null && gp.getCatalog() != null && gp.getCatalog().pret(); }
+        catch (Throwable t) { return false; }
     }
 
     /** Compte la salle hors du fil JavaFX, puis met le tableau a jour. */
@@ -1758,7 +2047,8 @@ public class OngletApparts {
         if (!dedans) {
             Platform.runLater(() -> {
                 brutSalle.clear();
-                cptSalle.setText("Pas dans une salle");
+                majCompteBc(0);
+                majChiffres(0, 0, true);
                 majNomSalle();
                 majProprietaires();
                 filtrerSalle();
@@ -1769,19 +2059,24 @@ public class OngletApparts {
         if (!fd) cacheTypes.clear();
         Map<String, int[]> compte = new LinkedHashMap<>();
         Map<String, Integer> types = new HashMap<>();   // « nom|mur » -> typeId, pour le prix
-        int nSols = 0, nMurs = 0;
+        int nSols = 0, nMurs = 0, nBc = 0;
         if (sols != null) for (HFloorItem it : sols) {
             nSols++;
             String[] no = nomOrigine(gp, it.getTypeId(), false, fd);
-            cle(compte, no[0], no[1], poseur(it.getOwnerName()), false);
+            boolean bc = poseDepuisBc(it.getId());
+            if (bc) nBc++;
+            cle(compte, no[0], bc ? "BC" : INVENTAIRE, poseur(it.getOwnerName()), no[1], false);
             types.putIfAbsent(no[0] + "|sol", it.getTypeId());
         }
         if (murs != null) for (HWallItem it : murs) {
             nMurs++;
             String[] no = nomOrigine(gp, it.getTypeId(), true, fd);
-            cle(compte, no[0], no[1], poseur(it.getOwnerName()), true);
+            boolean bc = poseDepuisBc(it.getId());
+            if (bc) nBc++;
+            cle(compte, no[0], bc ? "BC" : INVENTAIRE, poseur(it.getOwnerName()), no[1], true);
             types.putIfAbsent(no[0] + "|mur", it.getTypeId());
         }
+        final int poseesBc = nBc;
         List<Ligne> lignes = new ArrayList<>();
         versLignes(compte, lignes);
         Map<String, Integer> prixConnus = new HashMap<>();
@@ -1804,8 +2099,8 @@ public class OngletApparts {
         Platform.runLater(() -> {
             brutSalle.clear();
             brutSalle.addAll(lignes);
-            cptSalle.setText(a + " sols · " + b + " murs · " + (a + b) + " mobis"
-                    + (fd ? "" : " (noms techniques : furnidata en chargement)"));
+            majCompteBc(poseesBc);
+            majChiffres(a, b, fd);
             majProprietaires();
             filtrerSalle();
         });
@@ -1846,7 +2141,7 @@ public class OngletApparts {
         Moteur gp = AtelierLauncher.moteur();
         JSONArray sols = o.optJSONArray("furni"), murs = o.optJSONArray("wallFurni");
         int nSols = sols == null ? 0 : sols.length(), nMurs = murs == null ? 0 : murs.length();
-        cptAppart.setText(nSols + " sols · " + nMurs + " murs · " + (nSols + nMurs) + " mobis");
+        cptAppart.setText(nSols + " sols · " + nMurs + (nMurs > 1 ? " muraux · " : " mural · ") + (nSols + nMurs) + " mobis");
 
         Map<String, int[]> compte = new LinkedHashMap<>();
         agreger(gp, sols, false, compte);
@@ -1867,21 +2162,14 @@ public class OngletApparts {
             if (w == null) continue;
             String c = w.optString("className", null);
             if (c == null || c.isEmpty()) c = w.optString("name", null);
-            Integer tid = null;
-            try {
-                Furnidata fd = gp.getFurniDataTools();
-                if (fd != null && fd.isReady())
-                    tid = mur ? fd.getWallTypeId(base(c)) : fd.getFloorTypeId(base(c));
-            } catch (Throwable ignored) { }
-            // Un appart enregistre ne retient pas qui avait pose quoi.
-            cle(compte, nom(gp, base(c), mur),
-                    tid == null ? INVENTAIRE : origine(gp, tid, mur), "—", mur);
+            // Un appart enregistre ne retient ni qui avait pose quoi, ni d'ou.
+            cle(compte, nom(gp, base(c), mur), INVENTAIRE, "—", existeAuBc(gp, base(c), mur), mur);
         }
     }
 
     private static void cle(Map<String, int[]> m, String nom, String origine,
-                            String proprietaire, boolean mur) {
-        int[] c = m.computeIfAbsent(nom + "\0" + origine + "\0" + proprietaire,
+                            String proprietaire, String auBc, boolean mur) {
+        int[] c = m.computeIfAbsent(nom + "\0" + origine + "\0" + proprietaire + "\0" + auBc,
                                     k -> new int[2]);
         c[mur ? 1 : 0]++;
     }
@@ -1900,18 +2188,20 @@ public class OngletApparts {
             return c != 0 ? c : a.getKey().compareTo(b.getKey());
         });
         for (Map.Entry<String, int[]> e : l) {
-            String[] p = e.getKey().split("\0", 3);
+            String[] p = e.getKey().split("\0", 4);
             String nom = p[0];
             String orig = p.length > 1 ? p[1] : "?";
             String pr   = p.length > 2 ? p[2] : "—";
+            String bc   = p.length > 3 ? p[3] : "?";
             if (e.getValue()[0] > 0)
-                sortie.add(new Ligne(nom, e.getValue()[0], "sol", orig, pr));
+                sortie.add(new Ligne(nom, e.getValue()[0], "sol", orig, pr, bc));
             if (e.getValue()[1] > 0)
-                sortie.add(new Ligne(nom, e.getValue()[1], "mur", orig, pr));
+                sortie.add(new Ligne(nom, e.getValue()[1], "mur", orig, pr, bc));
         }
     }
 
     private void filtrerSalle() {
+        majVide();
         String orig = oBc.isSelected() ? "BC" : oInv.isSelected() ? INVENTAIRE : null;
         String type = tSols.isSelected() ? "sol" : tMurs.isSelected() ? "mur" : null;
         String qui = choixProprio.getValue();
@@ -1956,7 +2246,7 @@ public class OngletApparts {
     /** Cle d'une ligne : avec ou sans la quantite (la selection suit le mobi). */
     static String cleLigne(Ligne l, boolean avecQuantite) {
         // Avec la quantite, aussi le prix : une ligne dont le prix arrive est remplacee.
-        return l.getNom() + "\0" + l.getType() + "\0" + l.getOrigine() + "\0" + l.getProprietaire()
+        return l.getNom() + "\0" + l.getType() + "\0" + l.getOrigine() + "\0" + l.getProprietaire() + "\0" + l.getAuBc()
                 + (avecQuantite ? "\0" + l.getQuantite() + "\0" + l.prix + "\0" + l.revision : "");
     }
 
@@ -1991,32 +2281,31 @@ public class OngletApparts {
 
     // ------------------------------------------------------------------ noms
 
+    /** Valeurs de « existe au BC ». */
+    static final String OUI = "Oui", NON = "Non";
+
     /**
-     * BC ou non, d'apres le drapeau isBC de la furnidata.
-     *
-     * La date d'expiration ne marchait pas : les murs posés depuis le BC ne
-     * l'ont pas toujours renseignée, et tout se retrouvait classé « inventaire ».
-     * isBC est une propriété du mobi lui-même, donc fiable.
+     * Le TYPE de mobi existe-t-il au catalogue Builders Club (on peut en poser
+     * d'autres) ? Comme la pose (OffresBc) : furnidata « bc » vrai ET produit
+     * dans le catalogue BC. Catalogue pas encore lu : « bcofferid » propre au
+     * mobi -> oui, sinon « ? ». Ne dit rien de l'origine de CE mobi-ci.
      */
-    private static String origine(Moteur gp, int typeId, boolean mur) {
+    static String existeAuBc(Moteur gp, String classe, boolean mur) {
         try {
-            Furnidata fd = gp.getFurniDataTools();
-            if (fd != null && fd.isReady()) {
-                String cls = mur ? fd.getWallItemName(typeId) : fd.getFloorItemName(typeId);
-                if (cls != null) {
-                    // FurniDetails est package-private : on passe par les
-                    // sous-classes publiques, qui heritent du champ isBC.
-                    if (mur) {
-                        Furnidata.Mobi d = fd.getWallItemDetails(cls);
-                        if (d != null) return d.isBC ? "BC" : INVENTAIRE;
-                    } else {
-                        Furnidata.Mobi d = fd.getFloorItemDetails(cls);
-                        if (d != null) return d.isBC ? "BC" : INVENTAIRE;
-                    }
-                }
+            Furnidata fd = gp == null ? null : gp.getFurniDataTools();
+            if (fd == null || !fd.isReady() || classe == null) return "?";
+            String c = base(classe);
+            Furnidata.Mobi d = mur ? fd.mur(c) : fd.sol(c);
+            if (d == null && c.contains("*")) d = mur ? fd.mur(c.substring(0, c.indexOf('*'))) : fd.sol(c.substring(0, c.indexOf('*')));
+            if (d == null) return "?";
+            if (!d.isBC) return NON;
+            CatalogueBc cat = gp.getCatalog();
+            if (cat != null && cat.pret()) {
+                CatalogueBc.Produit p = mur ? cat.unProduitMur(d.id) : cat.produitSol(d.id);
+                return p != null && p.offerId() > 0 ? OUI : NON;
             }
-        } catch (Throwable ignored) { }
-        return INVENTAIRE;
+            return d.bcOfferId > 0 && !OffresBc.partagee(fd, d) ? OUI : "?";
+        } catch (Throwable t) { return "?"; }
     }
 
     /** Origine affichee dans la colonne et comparee par le filtre. */
@@ -2065,26 +2354,99 @@ public class OngletApparts {
 
     // --------------------------------------------------------------- Discord
 
-    /** Format demande : "- Nom xQuantite", une ligne par mobi. */
+    /** Format de la liste BC : « Sols (n) » puis « Muraux (n) », une ligne « - Nom ×Quantite » par mobi. */
     private void copier(TableView<Ligne> t, String titre) {
         if (t.getItems().isEmpty()) { noteSalle("Rien à copier : la liste est vide."); return; }
         // Les lignes sont detaillees par type et par poseur ; pour le client on
         // regroupe par mobi, sinon un meme meuble pose par deux personnes
         // apparaitrait deux fois.
-        Map<String, Integer> parMobi = new LinkedHashMap<>();
-        for (Ligne l : t.getItems())
-            parMobi.merge(l.getNom(), l.getQuantite(), Integer::sum);
+        Map<String, Integer> sols = new TreeMap<>(ordreNoms()), murs = new TreeMap<>(ordreNoms());
+        for (Ligne l : t.getItems()) {
+            if (technique(l.classe)) continue;
+            ("mur".equals(l.getType()) ? murs : sols).merge(l.getNom(), l.getQuantite(), Integer::sum);
+        }
+        int nSols = 0, nMurs = 0;
+        for (int v : sols.values()) nSols += v;
+        for (int v : murs.values()) nMurs += v;
+        if (nSols + nMurs == 0) { noteSalle("Rien à copier : il n'y a que des mobis techniques."); return; }
+        StringBuilder sb = new StringBuilder();
+        section(sb, "Sols", sols, nSols, "\n");
+        section(sb, "Muraux", murs, nMurs, "\n");
+        ClipboardContent c = new ClipboardContent();
+        c.putString(sb.toString().replaceFirst("^\n", ""));
+        Clipboard.getSystemClipboard().setContent(c);
+        noteSalle(Ui.accorder("Liste copiée : " + (sols.size() + murs.size()) + " ligne(s), " + (nSols + nMurs) + " objet(s)."));
+    }
+
+    /**
+     * Mobis techniques laisses hors des listes copiees : dalles magiques,
+     * controleur invisible, dalle chaise invisible, cache zone.
+     */
+    static boolean technique(String classe) {
+        if (classe == null) return false;
+        String c = classe.toLowerCase(Locale.ROOT);
+        return c.startsWith("tile_stackmagic") || c.equals("conf_invis_control")
+                || c.equals("room_invisible_sit_tile") || c.equals("conf_area_hide");
+    }
+
+    // ------------------------------------------------------------ mobis BC
+
+    /** Chiffre « n BC » de l'en-tete (fil FX). */
+    private void majCompteBc(int n) {
+        if (compteBc == null) return;
+        compteBc.setText(n + " BC");
+        compteBc.getStyleClass().remove("chiffre-bc");
+        if (n > 0) compteBc.getStyleClass().add("chiffre-bc");
+    }
+
+    /**
+     * Liste des mobis de l'appart poses depuis le Builders Club (ids
+     * 0x7FFF0000..), regroupes par nom (Salle.nom), Sols puis Muraux, tries par
+     * nom, sans en-tete ni mobis techniques. Null hors d'une salle ou sans mobi BC.
+     * nb[0] recoit le nombre de mobis.
+     */
+    private static String listeBc(String fin, int[] nb) {
+        Map<String, Integer> sols = new TreeMap<>(ordreNoms()), murs = new TreeMap<>(ordreNoms());
+        for (HFloorItem it : Salle.sols())
+            if (it != null && poseDepuisBc(it.getId()) && !technique(Salle.classe(it.getTypeId(), false))) sols.merge(Salle.nom(it.getTypeId(), false), 1, Integer::sum);
+        for (HWallItem it : Salle.murs())
+            if (it != null && poseDepuisBc(it.getId()) && !technique(Salle.classe(it.getTypeId(), true))) murs.merge(Salle.nom(it.getTypeId(), true), 1, Integer::sum);
+        int nSols = 0, nMurs = 0;
+        for (int v : sols.values()) nSols += v;
+        for (int v : murs.values()) nMurs += v;
+        nb[0] = nSols + nMurs;
+        if (nb[0] == 0) return null;
 
         StringBuilder sb = new StringBuilder();
-        int total = 0;
-        for (Map.Entry<String, Integer> e : parMobi.entrySet()) {
-            sb.append("- ").append(e.getKey()).append(" x").append(e.getValue()).append('\n');
-            total += e.getValue();
-        }
+        section(sb, "Sols", sols, nSols, fin);
+        section(sb, "Muraux", murs, nMurs, fin);
+        return sb.substring(fin.length());
+    }
+
+    private static void section(StringBuilder sb, String titre, Map<String, Integer> m, int total, String fin) {
+        if (m.isEmpty()) return;
+        sb.append(fin).append(titre).append(" (").append(total).append(')').append(fin);
+        for (Map.Entry<String, Integer> e : m.entrySet())
+            sb.append("- ").append(e.getKey()).append(" ×").append(e.getValue()).append(fin);
+    }
+
+    /** Ordre alphabetique francais (accents, majuscules) ; jamais deux noms confondus. */
+    private static Comparator<String> ordreNoms() {
+        java.text.Collator c = java.text.Collator.getInstance(Locale.FRANCE);
+        c.setStrength(java.text.Collator.SECONDARY);
+        return (a, b) -> { int r = c.compare(a, b); return r != 0 ? r : a.compareTo(b); };
+    }
+
+    /** Bouton « Liste des mobis BC » : dans le presse-papiers, confirme dans le jeu. */
+    private void copierListeBc() {
+        if (!Salle.dansUneSalle()) { InfoJeu.dire("Entre dans un appart pour lister ses mobis BC."); return; }
+        int[] nb = {0};
+        String txt = listeBc("\n", nb);
+        if (txt == null) { InfoJeu.dire("Aucun mobi posé depuis le BC dans cet appart."); return; }
         ClipboardContent c = new ClipboardContent();
-        c.putString(sb.toString());
+        c.putString(txt);
         Clipboard.getSystemClipboard().setContent(c);
-        noteSalle("Liste copiée : " + parMobi.size() + " ligne(s), " + total + " objet(s).");
+        InfoJeu.dire(Ui.accorder("Liste de " + nb[0] + " mobi(s) BC copiée."));
     }
 
     // ---------------------------------------------------------------- apparts
@@ -2285,16 +2647,6 @@ public class OngletApparts {
         return r;
     }
 
-    /** Une ligne de filtre : son nom a gauche (largeur fixe), le choix a droite. */
-    private static HBox filtre(String nom, javafx.scene.Node choix) {
-        Label l = Ui.etiquette(nom);
-        l.setMinWidth(62); l.setPrefWidth(62);
-        HBox h = new HBox(8, l, choix);
-        h.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
-        HBox.setHgrow(choix, Priority.ALWAYS);
-        return h;
-    }
-
     private static javafx.scene.layout.Pane ligne(String etiquette, javafx.scene.Node... n) {
         javafx.scene.Node[] tout = new javafx.scene.Node[n.length + 1];
         tout[0] = Ui.etiquette(etiquette);
@@ -2317,7 +2669,7 @@ public class OngletApparts {
         TableColumn<Ligne, String> cn = new TableColumn<>("Mobi");
         cn.setCellValueFactory(new PropertyValueFactory<>("nom"));
         cn.setComparator(String.CASE_INSENSITIVE_ORDER);
-        cn.setMinWidth(120); cn.setPrefWidth(200); cn.setMaxWidth(4000);
+        cn.setMinWidth(90); cn.setPrefWidth(200); cn.setMaxWidth(4000);
         TableColumn<Ligne, Integer> cq = new TableColumn<>("Qté");
         cq.setCellValueFactory(new PropertyValueFactory<>("quantite"));
         cq.setStyle("-fx-alignment: CENTER-RIGHT;");
@@ -2332,10 +2684,20 @@ public class OngletApparts {
             }
         });
         fixe(ct, 50);
-        TableColumn<Ligne, String> co = new TableColumn<>("Origine");
-        co.setCellValueFactory(new PropertyValueFactory<>("origine"));
-        fixe(co, 78);
-        TableColumn<Ligne, String> cp = new TableColumn<>("À qui");
+        // « BC » : posé depuis le BC (badge plein) et existe au BC (coche), deux infos distinctes
+        TableColumn<Ligne, Ligne> co = new TableColumn<>();
+        Label teteBc = new Label("BC");
+        teteBc.setTooltip(bulle("« Posé BC » : posé depuis le Builders Club, disparaît sans abonnement. "
+                + "« Inv. » : posé depuis un inventaire.\n"
+                + "Coche : existe au BC. Croix : pas au BC. « ? » : catalogue BC pas encore lu."));
+        co.setGraphic(teteBc);
+        co.setCellValueFactory(c -> new javafx.beans.property.ReadOnlyObjectWrapper<>(c.getValue()));
+        co.setCellFactory(c -> new CelluleBc());
+        // tri : posés depuis le BC d'abord, puis ce qui existe au BC
+        co.setComparator(Comparator.comparingInt((Ligne l) -> l.estPoseBc() ? 0 : 1)
+                .thenComparingInt(l -> OUI.equals(l.getAuBc()) ? 0 : "?".equals(l.getAuBc()) ? 1 : 2));
+        fixe(co, 92);
+        TableColumn<Ligne, String> cp = new TableColumn<>("Poseur");
         cp.setCellValueFactory(new PropertyValueFactory<>("proprietaire"));
         cp.setComparator(String.CASE_INSENSITIVE_ORDER);
         cp.setMinWidth(80); cp.setPrefWidth(110); cp.setMaxWidth(2000);
@@ -2378,6 +2740,56 @@ public class OngletApparts {
             vue.setImage(i);
             setGraphic(i == null ? null : vue);
             setText(null);
+        }
+    }
+
+    /**
+     * Colonne « BC » : un badge pour l'origine de CE mobi (« Posé BC » plein,
+     * « Inv. » discret) et un signe pour l'existence du TYPE au BC (coche
+     * verte, croix grise, « ? »), avec une bulle qui dit les deux en clair.
+     */
+    private static final class CelluleBc extends TableCell<Ligne, Ligne> {
+        private final Label badge = new Label();
+        private final javafx.scene.shape.SVGPath signe = new javafx.scene.shape.SVGPath();
+        private final Label inconnu = new Label("?");
+        private final javafx.scene.layout.StackPane place = new javafx.scene.layout.StackPane(signe, inconnu);
+        private final HBox boite = new HBox(6, badge, place);
+        private final Tooltip aide = bulle("");
+        CelluleBc() {
+            boite.setAlignment(Pos.CENTER_LEFT);
+            badge.setMinWidth(Region.USE_PREF_SIZE);
+            signe.setFill(null);
+            signe.setStrokeWidth(2.2);
+            signe.setScaleX(0.6); signe.setScaleY(0.6);
+            place.setMinSize(16, 16); place.setPrefSize(16, 16); place.setMaxSize(16, 16);
+            inconnu.setStyle("-fx-text-fill: #8A857A; -fx-font-weight: bold;");
+            setAlignment(Pos.CENTER_LEFT);
+        }
+        @Override protected void updateItem(Ligne l, boolean vide) {
+            super.updateItem(l, vide);
+            setText(null);
+            if (vide || l == null) { setGraphic(null); setTooltip(null); return; }
+            boolean pose = l.estPoseBc();
+            badge.setText(pose ? "Posé BC" : "Inv.");
+            badge.setStyle(pose
+                    ? "-fx-background-color: #E8862A; -fx-text-fill: white; -fx-font-weight: bold; "
+                      + "-fx-font-size: 10.5px; -fx-padding: 1 5 1 5; -fx-background-radius: 8;"
+                    : "-fx-text-fill: #8A857A; -fx-font-size: 10.5px; -fx-padding: 1 5 1 5;");
+            String bc = l.getAuBc();
+            boolean oui = OUI.equals(bc), non = NON.equals(bc);
+            signe.setContent(oui ? "M5 12l5 5 9-10" : "M7 7l10 10 M17 7L7 17");
+            signe.setStroke(javafx.scene.paint.Color.web(oui ? "#3C9A4E" : "#A9A397"));
+            signe.setVisible(oui || non);
+            inconnu.setVisible(!oui && !non);
+            aide.setText((pose
+                    ? "Posé depuis le Builders Club : il disparaîtra si l'abonnement BC s'arrête, "
+                      + "et ne se ramasse pas dans l'inventaire."
+                    : "Posé depuis un inventaire : c'est un vrai mobi, il se ramasse.")
+                    + "\n" + (oui ? "Existe au BC : on peut en poser d'autres depuis le Builders Club."
+                    : non ? "N'existe pas au BC : impossible d'en poser d'autres depuis le Builders Club."
+                    : "Existe au BC : inconnu pour l'instant (catalogue BC pas encore lu)."));
+            setTooltip(aide);
+            setGraphic(boite);
         }
     }
 

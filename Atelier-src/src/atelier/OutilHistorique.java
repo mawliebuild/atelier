@@ -46,6 +46,7 @@ public final class OutilHistorique {
         enregistrer.setOnAction(e -> Historique.pause(!enregistrer.isSelected()));
 
         Button vider = new Button("Vider");
+        vider.getStyleClass().add("danger");                     // l'historique vide ne revient pas
         vider.setOnAction(e -> Historique.vider());
 
         liste.setPrefHeight(230);
@@ -61,7 +62,7 @@ public final class OutilHistorique {
             }
         });
 
-        Label aide = Ui.aide("Toute modification de la salle est enregistrée, qu'elle vienne du jeu "
+        Label aide = Ui.aide("Toute modification de l'appart est enregistrée, qu'elle vienne du jeu "
                 + "ou des outils de l'Atelier. Les changements faits en rafale (moins de 0,6 s "
                 + "d'écart) comptent pour une seule action. Raccourcis : Cmd/Ctrl+Z annule, "
                 + "Cmd/Ctrl+Maj+Z ou Cmd/Ctrl+Y rétablit — dans l'Atelier ET dans le jeu (Habbo au "
@@ -69,7 +70,7 @@ public final class OutilHistorique {
                 + "Le jeu ne permet pas de choisir la hauteur "
                 + "d'un déplacement : un mobi empilé peut revenir à une autre hauteur (signalé). "
                 + "Un mobi ramassé est reposé depuis l'inventaire. L'historique est vidé quand "
-                + "on change de salle.");
+                + "on change d'appart.");
 
         VBox contenu = new VBox(12,
                 Ui.bloc("Actions", resume, boutons),
@@ -122,8 +123,8 @@ public final class OutilHistorique {
 
     /** Message du suivi automatique de la salle (pas le resultat d'une action). Logique pure. */
     static boolean automatique(String m) {
-        return m == null || m.startsWith("Enregistré : ") || m.startsWith("Nouvelle salle")
-                || m.startsWith("Salle suivie") || m.startsWith("En attente");
+        return m == null || m.startsWith("Enregistré : ") || m.startsWith("Nouvel appart")
+                || m.startsWith("Appart suivi") || m.startsWith("En attente");
     }
 
     private static ScrollPane defiler(Pane p) {

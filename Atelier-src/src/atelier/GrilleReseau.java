@@ -253,7 +253,7 @@ final class GrilleReseau {
     private static void brancher(Moteur gp) {
         HMessage.Direction C = HMessage.Direction.TOCLIENT, S = HMessage.Direction.TOSERVER;
         for (String nom : new String[]{"RoomReady", "Objects", "FloorHeightMap"}) {
-            try { gp.intercept(C, nom, m -> { if (!affiches.isEmpty()) oublier("La salle a été rechargée : la grille a disparu."); }); }
+            try { gp.intercept(C, nom, m -> { if (!affiches.isEmpty()) oublier("L'appart a été rechargé : la grille a disparu."); }); }
             catch (Throwable t) { Journal.debug("grille : ecoute " + nom + " indisponible : " + t); }
         }
         try {

@@ -95,7 +95,7 @@ final class GroupeActions {
         int salle = Groupes.salleCourante();
         List<Set<Integer>> ids = Groupes.mobis(calqueId);
         List<GroupeCalcul.Element> els = elements(ids.get(0), ids.get(1));
-        if (els.isEmpty()) return Groupes.Resultat.refus("Aucun mobi de ce calque dans la salle.");
+        if (els.isEmpty()) return Groupes.Resultat.refus("Aucun mobi de ce calque dans l'appart.");
         return bougerTapis(t, salle, GroupeCalcul.cibles(els, dx, dy, Salle::hauteurSol), false, "déplacé", null, b -> "");
     }
 
@@ -190,7 +190,7 @@ final class GroupeActions {
         if (rbMurs[0] != null) mursOk[0] += rbMurs[0].murs.size();
         boolean arrete = b.arrete || t.arretee();
         if (b.sortie || !memeSalle(salle))
-            return new Groupes.Resultat(false, true, total, b.obtenus(), total - b.obtenus(), "Tu as quitté la salle pendant l'action.", null);
+            return new Groupes.Resultat(false, true, total, b.obtenus(), total - b.obtenus(), "Tu as quitté l'appart pendant l'action.", null);
         int reussis = b.reussis() + mursOk[0];
         String msg = b.texte(participe)
                 + (murs.isEmpty() ? "" : " Muraux : " + mursOk[0] + "/" + murs.size()
@@ -423,7 +423,7 @@ final class GroupeActions {
         if (centre == null) centre = GroupeCalcul.centrePivot(els);
         List<GroupeCalcul.Cible> cibles = GroupeCalcul.pivot(els, horaire, toutLeCalque, Salle::hauteurSol, centre);
         if (cibles.isEmpty())
-            return Groupes.Resultat.refus(els.isEmpty() ? "Aucun mobi de ce calque dans la salle."
+            return Groupes.Resultat.refus(els.isEmpty() ? "Aucun mobi de ce calque dans l'appart."
                     : "Aucun mobi de sol à pivoter (les muraux ne pivotent pas).");
         int muraux = els.size() - cibles.size();
         Journal.debug("calques : pivot " + (horaire ? "horaire" : "inverse") + ", "
@@ -459,7 +459,7 @@ final class GroupeActions {
         int q = ((quarts % 4) + 4) % 4;
         List<GroupeCalcul.Cible> cibles = GroupeCalcul.transformer(els, q, dx, dy, Salle::hauteurSol);
         if (cibles.isEmpty())
-            return Groupes.Resultat.refus(els.isEmpty() ? "Aucun mobi de ce calque dans la salle."
+            return Groupes.Resultat.refus(els.isEmpty() ? "Aucun mobi de ce calque dans l'appart."
                     : "Aucun mobi de sol à pivoter (les muraux ne pivotent pas).");
         int muraux = els.size() - cibles.size();
         Journal.debug("calques : deplacement avec pivot (" + q + " quart(s)), " + cibles.size() + " sol(s).");
@@ -508,7 +508,7 @@ final class GroupeActions {
         List<int[]> liste = new ArrayList<>();        // {id, mural}
         for (int id : sols) if (Salle.sol(id) != null) liste.add(new int[]{id, 0});
         for (int id : murs) if (Salle.mur(id) != null) liste.add(new int[]{id, 1});
-        if (liste.isEmpty()) return new Groupes.Resultat(true, false, 0, 0, 0, "Aucun de ses mobis n'était encore dans la salle.", null);
+        if (liste.isEmpty()) return new Groupes.Resultat(true, false, 0, 0, 0, "Aucun de ses mobis n'était encore dans l'appart.", null);
         int n = 0;
         boolean arrete = false;
         historiqueGrouper(true);
@@ -603,9 +603,9 @@ final class GroupeActions {
         int salle = Groupes.salleCourante();
         Moteur gp = Salle.gp();
         if (gp == null) return Groupes.Resultat.refus("L'Atelier n'est pas encore prêt.");
-        if (!Salle.furnidataPrete()) return Groupes.Resultat.refus("Furnidata pas encore chargée.");
+        if (!Salle.furnidataPrete()) return Groupes.Resultat.refus("Liste des mobis pas encore chargée.");
         List<GroupeCalcul.Element> els = elements(ids.get(0), ids.get(1));
-        if (els.isEmpty()) return Groupes.Resultat.refus("Aucun de ces mobis n'est dans la salle.");
+        if (els.isEmpty()) return Groupes.Resultat.refus("Aucun de ces mobis n'est dans l'appart.");
 
         // 1. ce qu'on pose (altitudes absolues d'arrivee)
         List<GroupeCalcul.Cible> cibles = calcul.apply(els);
@@ -667,7 +667,7 @@ final class GroupeActions {
         }
         boolean arrete = b.arrete || t.arretee();
         if (b.sortie || !memeSalle(salle))
-            return new Groupes.Resultat(false, true, voulus, 0, voulus, "Tu as quitté la salle pendant la pose.", null);
+            return new Groupes.Resultat(false, true, voulus, 0, voulus, "Tu as quitté l'appart pendant la pose.", null);
 
         // les nouveaux mobis -> nouveau calque
         List<Integer> nS = new ArrayList<>();
@@ -850,9 +850,9 @@ final class GroupeActions {
         int salle = Groupes.salleCourante();
         Moteur gp = Salle.gp();
         if (gp == null) return Groupes.Resultat.refus("L'Atelier n'est pas encore prêt.");
-        if (!Salle.furnidataPrete()) return Groupes.Resultat.refus("Furnidata pas encore chargée.");
+        if (!Salle.furnidataPrete()) return Groupes.Resultat.refus("Liste des mobis pas encore chargée.");
         List<GroupeCalcul.Element> els = elements(ids.get(0), ids.get(1));
-        if (els.isEmpty()) return Groupes.Resultat.refus("Aucun de ces mobis n'est dans la salle.");
+        if (els.isEmpty()) return Groupes.Resultat.refus("Aucun de ces mobis n'est dans l'appart.");
 
         // 1. ce qu'on pose : altitude au-dessus du sol le plus bas sous la copie
         List<GroupeCalcul.Cible> cibles = calcul.apply(els);
@@ -915,7 +915,7 @@ final class GroupeActions {
         } finally {
             historiqueGrouper(false);
         }
-        if (sortie) return new Groupes.Resultat(false, true, voulus, 0, voulus, "Tu as quitté la salle pendant la pose.", null);
+        if (sortie) return new Groupes.Resultat(false, true, voulus, 0, voulus, "Tu as quitté l'appart pendant la pose.", null);
 
         // 5. les nouveaux mobis -> nouveau calque
         List<Integer> nS = nouveaux(avantS, attendusSols, false), nM = nouveaux(avantM, attendusMurs, true);
@@ -1045,7 +1045,7 @@ final class GroupeActions {
      */
     static PoseCopie.Resultat poser(List<Generateur.Mobi> mobis, List<MurPose> murs, Generateur.Source source,
                                     Consumer<String> dire, java.util.function.BooleanSupplier stop, Runnable suivi) {
-        if (!Salle.dansUneSalle()) { dire.accept("Tu n'es pas dans une salle."); return null; }
+        if (!Salle.dansUneSalle()) { dire.accept("Tu n'es pas dans un appart."); return null; }
         Moteur gp = Salle.gp();
         if (gp == null || !Salle.furnidataPrete()) { dire.accept("L'Atelier n'est pas encore prêt."); return null; }
         if (PoseCopie.occupee()) {
@@ -1069,7 +1069,7 @@ final class GroupeActions {
         List<Generateur.Mobi> relatifs = new ArrayList<>();
         int id = 1;
         for (Generateur.Mobi m : mobis) {
-            if (fd.getFloorTypeId(m.classe) == null) { dire.accept("« " + m.classe + " » inconnu de la furnidata : pose annulée."); return null; }
+            if (fd.getFloorTypeId(m.classe) == null) { dire.accept("« " + m.classe + " » inconnu du jeu : pose annulée."); return null; }
             CopieAppart.MobiSol p = new CopieAppart.MobiSol(id++, m.classe, m.x - minX, m.y - minY,
                     Math.max(0, Generateur.arrondi(m.z)), m.rot & 7, m.etat);
             p.nom = nomSol(fd, m.classe);
@@ -1078,7 +1078,7 @@ final class GroupeActions {
         }
         for (int i = 0; i < murs.size(); i++) {
             MurPose w = murs.get(i);
-            if (fd.getWallTypeId(w.classe) == null) { dire.accept("« " + w.classe + " » (mural) inconnu de la furnidata : pose annulée."); return null; }
+            if (fd.getWallTypeId(w.classe) == null) { dire.accept("« " + w.classe + " » (mural) inconnu du jeu : pose annulée."); return null; }
             PositionMur rel = positions.get(i).deplacee(-minX, -minY);
             CopieAppart.MobiMur pw = new CopieAppart.MobiMur(id++, w.classe, rel, w.etat == null ? "" : w.etat);
             try {
@@ -1104,7 +1104,7 @@ final class GroupeActions {
                 && !PoseDalle.dalleUtilisable(Salle.etat(), fd, Generateur.Dalle.exigences(relatifs))) {
             Journal.debug("pose à la dalle : aucune dalle de la salle n'est libre (tapis en cours, mobis posés dessus) : "
                     + "une dalle neuve sera posée à part.");
-            dire.accept("Dalle magique : celles de la salle sont prises, une neuve est posée à part puis ramassée.");
+            dire.accept("Dalle magique : celles de l'appart sont prises, une neuve est posée à part puis ramassée.");
         } else if (!relatifs.isEmpty()) {
             List<int[]> trace = Generateur.Dalle.trace(relatifs, 0, 0, racine);
             int[] depart = new int[]{racine.getX() + relatifs.get(0).x, racine.getY() + relatifs.get(0).y};

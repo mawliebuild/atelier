@@ -73,7 +73,7 @@ public class OutilCompteur {
         racine = new VBox(12,
                 Zone.bloc(),
                 Ui.bloc("Portée", seulementZone,
-                        Ui.aide("Sans zone définie, c'est toute la salle qui est comptée.")),
+                        Ui.aide("Sans zone définie, c'est tout l'appart qui est compté.")),
                 Ui.bloc("Totaux", resume, details),
                 Ui.bloc("Types les plus présents", filtre, liste),
                 copier, Ui.ligne(actualiser),
@@ -199,20 +199,20 @@ public class OutilCompteur {
             details.setText("");
             liste.getItems().clear();
             derniereNote = null;
-            etat.setText(Salle.gp() == null ? "L'Atelier n'est pas encore prêt." : "Pas dans une salle.");
+            etat.setText(Salle.gp() == null ? "L'Atelier n'est pas encore prêt." : "Pas dans un appart.");
             return;
         }
         boolean change = dernier == null || dernier.signature != c.signature;
         dernier = c;
         resume.setText((c.zone ? "Zone " + Zone.minX() + "," + Zone.minY() + " → " + Zone.maxX() + "," + Zone.maxY()
-                : "Toute la salle") + " : " + (c.sols + c.murs) + " mobis");
+                : "Tout l'appart") + " : " + (c.sols + c.murs) + " mobis");
         details.setText(texteDetails(c));
         if (change) afficherTypes();
         // Pas d'heure ni de « mis a jour » : la ligne d'etat ne change que si
         // la remarque change, pour ne pas effacer le resultat d'une action (Copier).
         String note = "";
-        if (seulementZone.isSelected() && !Zone.definie()) note = "Aucune zone définie : toute la salle est comptée.";
-        if (!Salle.furnidataPrete()) note = "La furnidata n'est pas encore là : noms techniques, BC et rares inconnus. " + note;
+        if (seulementZone.isSelected() && !Zone.definie()) note = "Aucune zone définie : tout l'appart est compté.";
+        if (!Salle.furnidataPrete()) note = "La liste des mobis n'est pas encore là : noms techniques, BC et rares inconnus. " + note;
         note = note.trim();
         if (!note.equals(derniereNote)) { derniereNote = note; etat.setText(note); }
     }
@@ -223,7 +223,7 @@ public class OutilCompteur {
     private static String texteDetails(Comptage c) {
         StringBuilder sb = new StringBuilder();
         sb.append("Sols : ").append(c.sols).append(" (dont ").append(c.wired).append(" wired)\n");
-        sb.append("Murs : ").append(c.murs).append("\n");
+        sb.append("Muraux : ").append(c.murs).append("\n");
         sb.append("Wired : ").append(c.wired).append("\n");
         sb.append("Types différents : ").append(c.types.size()).append("\n");
         sb.append("Altitude max : ").append(Double.isNaN(c.altMax) ? "—" : Plan.fmt(c.altMax) + " — " + c.ouAltMax).append("\n");

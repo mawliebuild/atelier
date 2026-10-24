@@ -471,6 +471,19 @@ public final class Moteur extends ExtensionForm {
     private static final long LENT_NS = 30_000_000L;
     private final Map<String, Long> lentSignaleLe = new ConcurrentHashMap<>();
 
+    /** Chaque envoi de l'Atelier est note (MesureActions : ce qui part juste avant une pose lente). */
+    @Override
+    public boolean sendToServer(HPacket p) {
+        try { MesureActions.noteEnvoi(true, p); } catch (Throwable ignored) { }
+        return super.sendToServer(p);
+    }
+
+    @Override
+    public boolean sendToClient(HPacket p) {
+        try { MesureActions.noteEnvoi(false, p); } catch (Throwable ignored) { }
+        return super.sendToClient(p);
+    }
+
     @Override
     public void intercept(HMessage.Direction d, MessageListener l) {
         super.intercept(d, chrono(d, "tous les paquets", l));

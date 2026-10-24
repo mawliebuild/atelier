@@ -61,7 +61,8 @@ public class OngletGalerie {
 
     private final String css;
     /** La grille : des rangees de cartes de meme largeur, refaites quand la largeur change. */
-    private final VBox grille = new VBox(ECART);
+    /** Hauteurs des rangees calculees d'avance : rienDeCoupe n'y touche pas. */
+    private final VBox grille = Ui.laisserTel(new VBox(ECART));
     private final TextField recherche = new TextField();
     private final Label compteur = new Label();
     /** Tags existants qui contiennent le mot tape : un clic les met dans la recherche. */

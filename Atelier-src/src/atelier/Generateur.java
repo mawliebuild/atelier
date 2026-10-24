@@ -89,7 +89,7 @@ public final class Generateur {
         return modele(c, etatDe(it), Salle.hauteur(it));
     }
 
-    /** Modele d'apres un nom technique ; null s'il est inconnu de la furnidata. */
+    /** Modele d'apres un nom technique ; null s'il est inconnu du jeu. */
     public static Modele modele(String classe, String etat, double hauteur) {
         if (classe == null || classe.isBlank()) return null;
         classe = classe.trim();
@@ -167,7 +167,7 @@ public final class Generateur {
             if (t.isEmpty()) return;
             if (!Salle.furnidataPrete()) { dire(etat, "Les noms des mobis se chargent encore : encore un instant."); return; }
             Modele m = Generateur.modele(t, "0", courant != null && t.equals(courant.classe) ? courant.hauteur : 0);
-            if (m == null) { dire(etat, "« " + t + " » : nom technique inconnu de la furnidata."); return; }
+            if (m == null) { dire(etat, "« " + t + " » : nom technique inconnu du jeu."); return; }
             regler(m);
         }
 
@@ -235,8 +235,8 @@ public final class Generateur {
                                   HPoint racine, Consumer<String> dire) throws Exception {
         Moteur gp = Salle.gp();
         if (gp == null) { dire.accept("L'Atelier n'est pas encore prêt."); return false; }
-        if (!Salle.dansUneSalle()) { dire.accept("Tu n'es pas dans une salle."); return false; }
-        if (!Salle.furnidataPrete()) { dire.accept("Furnidata pas encore chargée."); return false; }
+        if (!Salle.dansUneSalle()) { dire.accept("Tu n'es pas dans un appart."); return false; }
+        if (!Salle.furnidataPrete()) { dire.accept("Liste des mobis pas encore chargée."); return false; }
         if (mobis == null || mobis.isEmpty()) { dire.accept("Rien à poser."); return false; }
         if (PoseCopie.occupee()) {
             dire.accept("L'Atelier est déjà en train de poser : attends la fin, ou tape :abort dans le jeu.");
@@ -252,7 +252,7 @@ public final class Generateur {
         int id = 1;
         for (Mobi m : mobis) {
             if (fd.getFloorTypeId(m.classe) == null) {
-                dire.accept("« " + m.classe + " » inconnu de la furnidata : pose annulée.");
+                dire.accept("« " + m.classe + " » inconnu du jeu : pose annulée.");
                 return false;
             }
             // origine ramenee a (0,0) : la pose se fait a racine + (x,y)
@@ -699,7 +699,7 @@ public final class Generateur {
             if (t == null) { dire.accept("Aucune dalle magique ne convient à ce mobi."); return null; }
             Integer type = Salle.gp() == null || Salle.gp().getFurniDataTools() == null ? null
                     : Salle.gp().getFurniDataTools().getFloorTypeId(t.classe());
-            if (type == null) { dire.accept("« " + t.classe() + " » inconnue de la furnidata."); return null; }
+            if (type == null) { dire.accept("« " + t.classe() + " » inconnue du jeu."); return null; }
             int[] e = empriseDalle(t);
             String taille = e[0] + "×" + e[1];
 
@@ -792,6 +792,12 @@ public final class Generateur {
         }
 
         private static final java.util.concurrent.atomic.AtomicInteger attentes = new java.util.concurrent.atomic.AtomicInteger();
+
+        /** Met fin a l'attente d'un clic en cours (attendreClic rend alors null) ; sans effet sinon. */
+        static void annulerClic() {
+            java.util.concurrent.CompletableFuture<HPoint> a = attente;
+            if (a != null) a.complete(null);
+        }
 
         static HPoint attendreClic(long delaiMs) {
             // grille et clics a travers les mobis pendant l'attente (GrilleVue.attente)

@@ -114,7 +114,7 @@ public final class EcartsDefaut {
         StringBuilder b = new StringBuilder();
         b.append("{\n  \"version\": 1,\n");
         b.append("  \"explication\": ").append(JSONObject.quote(
-                "Écarts par défaut des mobis muraux pour Murs › Aligner des murs. "
+                "Écarts par défaut des mobis muraux pour Poser des muraux. "
                 + "droite = pans de mur entre deux copies côte à côte, haut = pixels entre deux rangées. "
                 + "Un écart enregistré dans l'Atelier passe avant celui-ci.")).append(",\n");
         b.append("  \"ecarts\": [");

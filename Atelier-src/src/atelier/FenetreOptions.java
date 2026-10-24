@@ -47,9 +47,12 @@ final class FenetreOptions {
         Label etat = new Label("");
         etat.setWrapText(true);
         etat.setMaxWidth(Double.MAX_VALUE);
+        etat.setMinHeight(Region.USE_PREF_SIZE);     // toutes ses lignes
         etat.getStyleClass().add("etat-ligne");
         etat.visibleProperty().bind(etat.textProperty().isNotEmpty());
         etat.managedProperty().bind(etat.visibleProperty());
+        // la fenetre grandit avec le message, qui n'est jamais coupe
+        etat.textProperty().addListener((o, x, y) -> Platform.runLater(() -> { if (stage.isShowing()) stage.sizeToScene(); }));
         Button ok = new Button(action);
         ok.getStyleClass().add("primaire");
         ok.setDefaultButton(true);
@@ -61,17 +64,23 @@ final class FenetreOptions {
             else stage.close();
         });
 
-        VBox corps = new VBox(10);
+        // 340 px, mais jamais moins que ce qui ne peut pas ceder : elle s'elargit plutot que de rogner
+        VBox corps = new VBox(10) {
+            @Override protected double computePrefWidth(double h) {
+                return Math.max(340, computeMinWidth(h));
+            }
+        };
         corps.getChildren().addAll(contenu);
-        HBox boutons = new HBox(8, annuler, ok);
+        // les boutons passent a la ligne plutot que d'etre rognes
+        FlowPane boutons = new FlowPane(8, 6, annuler, ok);
         boutons.setAlignment(Pos.CENTER_RIGHT);
+        boutons.setRowValignment(javafx.geometry.VPos.CENTER);
         corps.getChildren().addAll(boutons, etat);
         corps.setStyle("-fx-padding: 12 14 14 14;");   // la feuille (.fenetre-corps) l'emporte sur setPadding
-        corps.setPrefWidth(340);
         corps.getStyleClass().add("fenetre-corps");
 
         // barre de titre facon Habbo
-        Label t = new Label(titre);
+        Label t = new Label(Ui.majuscule(titre));
         t.getStyleClass().add("fenetre-titre");
         Button croix = new Button();
         croix.setGraphic(Icones.trace(Icones.FERMER, "icone-fenetre"));
@@ -100,6 +109,7 @@ final class FenetreOptions {
         sc.setOnKeyPressed(e -> { if (e.getCode() == javafx.scene.input.KeyCode.ESCAPE) stage.close(); });
         stage.setScene(sc);
         Ui.majusculesAuto(corps);
+        Ui.rienDeCoupe(corps);
         stage.show();
         stage.centerOnScreen();
     }

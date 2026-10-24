@@ -4,7 +4,6 @@ import gearth.extensions.parsers.HFloorItem;
 import gearth.extensions.parsers.HInventoryItem;
 import gearth.extensions.parsers.HPoint;
 import gearth.extensions.parsers.HProductType;
-import gearth.protocol.HMessage;
 import gearth.protocol.HPacket;
 
 import javafx.geometry.Pos;
@@ -98,6 +97,27 @@ final class TrocVente {
         return new Choix(vitrine, List.copyOf(echangeables.subList(0, n)), max);
     }
 
+    /**
+     * Vitrine seule : pas de vitrine en place, pas de Builders Club, rien a
+     * deposer, mais un exemplaire pour la vitrine. Logique pure.
+     */
+    static boolean vitrineSeule(int possedes, boolean bc, boolean vitrineEnPlace, int max) {
+        return possedes > 0 && !bc && !vitrineEnPlace && max <= 0;
+    }
+
+    /**
+     * La quantite qu'on peut demander : le maximum vendable, plus l'exemplaire
+     * pris pour la vitrine parmi les echangeables (hors BC, pas de vitrine en
+     * place). Logique pure.
+     */
+    static int quantiteMax(int echangeables, int max) { return Math.max(max, Math.min(echangeables, max + 1)); }
+
+    /** La phrase sous la quantite quand la vitrine est prise dans le lot ; null sinon. Logique pure. */
+    static String phraseVitrineDuLot(int q, int max) {
+        if (max < 1 || q <= max) return null;
+        return "Le dernier servira de vitrine : " + (max > 1 ? max + " seront vendus." : "1 sera vendu.");
+    }
+
     /** « Trône » -> « Trônes » (premier mot) au-dela d'un exemplaire. Logique pure. */
     static String pluriel(String nom, int n) {
         if (nom == null || nom.isBlank() || n < 2) return nom;
@@ -120,7 +140,10 @@ final class TrocVente {
     private static CalqueFenetre pose;
     private static volatile boolean venteEnCours = false;
 
-    static final String CONFIG_POSEE = "La config troc est posée. Clique « Vendre au troc » sur un mobi pour le mettre en vente.";
+    /** Une vente est en cours (vitrine posee, depot pas fini) : ne pas ramasser de vitrine. */
+    static boolean venteEnCours() { return venteEnCours; }
+
+    static final String CONFIG_POSEE = "La boutique troc est posée. Clique « Vendre au troc » sur un mobi pour le mettre en vente.";
 
     /** Ouvre la fenetre de vente pour le mobi d'inventaire « id ». Fil JavaFX. */
     static void ouvrir(int id, List<HInventoryItem> inventaire) {
@@ -128,11 +151,17 @@ final class TrocVente {
         if (venteEnCours) { Journal.erreur("Une vente en troc est déjà en cours."); return; }
         Moteur gp = Salle.gp();
         if (gp == null || !Salle.furnidataPrete()) { Journal.erreur("L'Atelier n'est pas encore prêt."); return; }
-        if (!Salle.dansUneSalle()) { Journal.erreur("Entre d'abord dans la salle de ton troc."); return; }
+        if (!Salle.dansUneSalle()) { Journal.erreur("Entre d'abord dans l'appart de ton troc."); return; }
         // pose de la config en cours : sa fenetre revient devant
         if (pose != null && pose.ouverte() && WiredCollage.occupe()) { pose.montrer(); return; }
+        if (WiredCollage.occupe()) { Journal.erreur("Une pose est en cours : attends qu'elle se termine."); return; }
+        TrocCoffres.Coffres cs = TrocCoffres.dansLaSalle();
+        boolean wired = ConfigTroc.wiredEnPlace();
+        // les wired de vente sont la, un coffre manque : l'Atelier le pose depuis l'inventaire, puis la vente
+        if (wired && !cs.complets()) { completerCoffres(id, inventaire); return; }
         // pas de config (ou ramassee : coffres seuls, sans les wired de vente) : la fenetre de pose
-        if (!TrocCoffres.dansLaSalle().complets() || !ConfigTroc.wiredEnPlace()) {
+        if (!cs.complets() || !wired) {
+            ConfigTroc.diagnostic("Vendre au troc");
             if (ouverte != null) ouverte.fermer();
             fenetrePose(inventaire);
             return;
@@ -151,7 +180,7 @@ final class TrocVente {
         }
         int type = it.getTypeId();
         String classe = Salle.classe(type, false);
-        if (classe == null) { Journal.erreur("Ce mobi est inconnu de la furnidata."); return; }
+        if (classe == null) { Journal.erreur("Ce mobi est inconnu du jeu."); return; }
         String nom = Salle.nom(type, false);
         List<Exemplaire> possedes = new ArrayList<>();
         for (HInventoryItem x : inventaire)
@@ -165,7 +194,28 @@ final class TrocVente {
         fenetre(type, classe, nom, possedes, offre, enPlace, tout.max());
     }
 
-    private static String css() {
+    private static volatile boolean coffresEnCours = false;
+
+    /** Pose les coffres qui manquent (TrocPoseCoffres), puis rouvre la vente de ce mobi. Fil JavaFX. */
+    private static void completerCoffres(int id, List<HInventoryItem> inventaire) {
+        if (coffresEnCours) return;
+        coffresEnCours = true;
+        Salle.tache("troc-coffres", () -> {
+            try {
+                TrocPoseCoffres.Resultat r = TrocPoseCoffres.completer(inventaire);
+                if (!r.ok()) { Journal.erreur(r.erreur()); return; }
+                if (r.poses() > 0)
+                    Journal.succes(Ui.accorder(r.poses() + " coffre(s) posé(s) depuis ton inventaire pour la boutique troc."));
+                javafx.application.Platform.runLater(() -> {
+                    if (TrocCoffres.dansLaSalle().complets()) ouvrir(id, inventaire);
+                });
+            } catch (Throwable t) {
+                Journal.erreur("Pose des coffres de la boutique troc interrompue", t);
+            } finally { coffresEnCours = false; }
+        });
+    }
+
+    static String css() {
         try {
             java.net.URL u = gearth.GEarth.class.getResource("/gearth/ui/themes/G-Earth/styling.css");
             return u == null ? null : u.toExternalForm();
@@ -204,21 +254,30 @@ final class TrocVente {
         HBox tete = new HBox(10, image, noms);
         tete.setAlignment(Pos.CENTER_LEFT);
 
-        String origine = enPlace ? "Ta vitrine est déjà dans la salle : son prix sera mis à jour."
+        // rien a mettre en stock (un seul exemplaire, ou aucun echangeable) : il est pose en vitrine seule, avec son prix
+        boolean seule = vitrineSeule(possedes.size(), offre != null, enPlace, max);
+        String origine = enPlace ? "Ta vitrine est déjà dans l'appart : son prix sera mis à jour."
                 : offre != null ? "La vitrine sera posée depuis le Builders Club : tout peut être vendu."
-                : Ui.accorder("Un exemplaire sert de vitrine : " + max + " à vendre au plus.");
-        Label note = Ui.discret(origine + (enPlace ? "" : " Après Vendre, clique dans le jeu la case de la vitrine."));
+                : seule ? (possedes.size() == 1 ? "Tu en possèdes un : il sera posé en vitrine avec son prix, rien n'est mis en stock."
+                        : "Aucun n'est échangeable : un exemplaire sera posé en vitrine avec son prix, rien n'est mis en stock.")
+                : "Un exemplaire sert de vitrine.";
+        Label note = Ui.discret(origine + (enPlace ? "" : seule
+                ? " Après « Poser la vitrine », clique dans le jeu la case de la vitrine."
+                : " Après Vendre, clique dans le jeu la case de la vitrine."));
         note.setWrapText(true);
 
         // ---- quantite (raccourcis 1, 10, tout), prix, total
-        int depart = Math.max(max, 0);
-        Spinner<Integer> quantite = new Spinner<>(Math.min(1, max), depart, depart);
+        // par defaut le MAXIMUM, vitrine comprise quand elle est prise parmi les echangeables :
+        // la vente met alors en stock ce qui est vraiment vendable (une phrase le dit)
+        int limite = quantiteMax(echangeables, max);
+        int depart = Math.max(limite, 0);
+        Spinner<Integer> quantite = new Spinner<>(Math.min(1, limite), depart, depart);
         quantite.setEditable(true);
         quantite.setPrefWidth(96);
-        quantite.setDisable(max <= 0);
+        quantite.setDisable(limite <= 0);
         HBox rapides = new HBox(4);
         for (int k : new int[]{1, 10}) {
-            if (k >= max) continue;
+            if (k >= limite) continue;
             Button b = new Button(String.valueOf(k));
             b.setFocusTraversable(false);
             b.setOnAction(e -> quantite.getValueFactory().setValue(k));
@@ -226,11 +285,28 @@ final class TrocVente {
         }
         Button tout = new Button("Tout");
         tout.setFocusTraversable(false);
-        tout.setDisable(max <= 0);
-        tout.setOnAction(e -> quantite.getValueFactory().setValue(max));
+        tout.setDisable(limite <= 0);
+        tout.setOnAction(e -> quantite.getValueFactory().setValue(limite));
         rapides.getChildren().add(tout);
         HBox ligneQuantite = new HBox(6, quantite, rapides);
         ligneQuantite.setAlignment(Pos.CENTER_LEFT);
+        Label vitrineDuLot = Ui.discret("");
+        vitrineDuLot.setWrapText(true);
+        vitrineDuLot.managedProperty().bind(vitrineDuLot.visibleProperty());
+        Runnable majVitrineDuLot = () -> {
+            int q;
+            try { q = Integer.parseInt(quantite.getEditor().getText().trim()); } catch (NumberFormatException e) { q = 0; }
+            String t = phraseVitrineDuLot(q, max);
+            vitrineDuLot.setText(t == null ? "" : t);
+            boolean vis = t != null;
+            if (vitrineDuLot.isVisible() != vis) { vitrineDuLot.setVisible(vis); f.ajuster(); }
+        };
+        quantite.getEditor().textProperty().addListener((o, x, y) -> majVitrineDuLot.run());
+        quantite.valueProperty().addListener((o, x, y) -> majVitrineDuLot.run());
+        String t0 = phraseVitrineDuLot(depart, max);
+        vitrineDuLot.setText(t0 == null ? "" : t0);
+        vitrineDuLot.setVisible(t0 != null);
+        VBox blocQuantite = new VBox(3, ligneQuantite, vitrineDuLot);
 
         ConfigTroc.Vitrine enPlaceV = Salle.salleId() == -1 ? null : ConfigTroc.vitrineDe(Salle.salleId(), type);
         int prixDepart = enPlaceV != null && enPlaceV.prix() > 0 ? enPlaceV.prix() : ConfigTroc.prixPropose(type);
@@ -242,7 +318,7 @@ final class TrocVente {
         total.setStyle("-fx-font-weight: bold;");
         Runnable majTotal = () -> {
             try {
-                int q = Integer.parseInt(quantite.getEditor().getText().trim());
+                int q = Math.min(Integer.parseInt(quantite.getEditor().getText().trim()), Math.max(max, 1));   // vendables seulement
                 int p = Integer.parseInt(prix.getText().trim());
                 total.setText(q < 1 || p < 1 ? "—" : q + " × " + p + " = " + ((long) q * p) + (q * (long) p > 1 ? " crédits" : " crédit"));
             } catch (NumberFormatException e) { total.setText("—"); }
@@ -254,9 +330,12 @@ final class TrocVente {
         GridPane g = new GridPane();
         g.setHgap(10);
         g.setVgap(6);
-        g.addRow(0, Ui.etiquette("Quantité"), ligneQuantite);
-        g.addRow(1, Ui.etiquette("Prix à l'unité"), lignePrix);
-        g.addRow(2, Ui.etiquette("Total"), total);
+        if (seule) g.addRow(0, Ui.etiquette("Prix à l'unité"), lignePrix);     // pas de quantite ni de total
+        else {
+            g.addRow(0, Ui.etiquette("Quantité"), blocQuantite);
+            g.addRow(1, Ui.etiquette("Prix à l'unité"), lignePrix);
+            g.addRow(2, Ui.etiquette("Total"), total);
+        }
 
         // ---- config de la salle : la variable « prix » (les coffres y sont)
         Label config = Ui.discret("");
@@ -268,22 +347,25 @@ final class TrocVente {
             if (ConfigTroc.idPrix(2500) != null || Salle.salleId() != salleOuverte) return;
             javafx.application.Platform.runLater(() -> {
                 if (ouverte != f || !f.ouverte()) return;
-                config.setText("La variable « prix » manque dans cette salle : la config troc est incomplète.");
+                config.setText("La variable « prix » manque dans cet appart : la boutique troc est incomplète.");
                 config.setVisible(true);
                 f.ajuster();
             });
         });
 
         Runnable vendre = () -> {
-            int q, p;
-            try { q = Integer.parseInt(quantite.getEditor().getText().trim()); }   // texte tape, pas encore valide
-            catch (NumberFormatException e) { f.dire("Quantité invalide."); return; }
+            int q = 0, p;
+            if (!seule) {
+                try { q = Integer.parseInt(quantite.getEditor().getText().trim()); }   // texte tape, pas encore valide
+                catch (NumberFormatException e) { f.dire("Quantité invalide."); return; }
+            }
             try { p = Integer.parseInt(prix.getText().trim()); }
             catch (NumberFormatException e) { f.dire("Prix invalide : un nombre entier de crédits."); return; }
-            if (max <= 0) { f.dire("Aucun exemplaire à vendre."); return; }
-            if (q < 1 || q > max) { f.dire(Ui.accorder("Quantité entre 1 et " + max + ".")); return; }
+            if (!seule && max <= 0) { f.dire("Aucun exemplaire à vendre."); return; }
+            if (!seule && (q < 1 || q > limite)) { f.dire(Ui.accorder("Quantité entre 1 et " + limite + ".")); return; }
+            if (!seule) q = Math.min(q, max);            // la vitrine prise dans le lot n'est pas mise en stock
             if (p < 1) { f.dire("Le prix doit être d'au moins 1 crédit."); return; }
-            if (!TrocCoffres.dansLaSalle().complets()) { f.dire("Pas de config troc dans cette salle : rouvre « Vendre au troc » pour la poser."); return; }
+            if (!TrocCoffres.dansLaSalle().complets() || !ConfigTroc.wiredEnPlace()) { f.dire("Pas de boutique troc dans cet appart : rouvre « Vendre au troc » pour la poser."); return; }
             f.fermer();
             Vente v = new Vente(Salle.salleId(), type, classe, nom, p, q, possedes, offre);
             venteEnCours = true;
@@ -294,8 +376,10 @@ final class TrocVente {
             });
         };
         Button annuler = CalqueFenetre.bouton("Annuler", false, f::fermer);
-        Button ok = CalqueFenetre.bouton(Icones.TROC, "Vendre", null, true, vendre);
-        ok.setDisable(max <= 0);
+        Button ok = CalqueFenetre.bouton(Icones.TROC, seule ? "Poser la vitrine" : "Vendre",
+                seule ? "Pose ton exemplaire en vitrine, avec son prix affiché ; rien n'est mis en stock." : null, true, vendre);
+        ok.setDisable(max <= 0 && !seule);
+        ok.setCursor(javafx.scene.Cursor.HAND);
         // Entree depuis les champs aussi (le Spinner garde la touche pour lui)
         f.stage().getScene().addEventFilter(KeyEvent.KEY_PRESSED, e -> {
             if (e.getCode() == KeyCode.ENTER && !ok.isDisabled()) { e.consume(); vendre.run(); }
@@ -324,12 +408,17 @@ final class TrocVente {
      * Ce qui manque dans l'inventaire pour poser la config : les coffres (ils
      * ne sont pas au Builders Club). null si rien ne manque. Logique pure.
      */
-    static String coffresManquants(Set<String> classes) {
-        boolean m = false, c = false;
+    static String coffresManquants(Set<String> classes) { return coffresManquants(classes, new TrocCoffres.Coffres(0, 0)); }
+
+    /** Pareil, les coffres deja dans l'appart (repris par la pose) ne manquent pas. Logique pure. */
+    static String coffresManquants(Set<String> classes, TrocCoffres.Coffres enSalle) {
+        boolean m = enSalle.mobis() != 0, c = enSalle.credits() != 0;
         for (String k : TrocCoffres.CLASSES_MOBIS) m |= classes.contains(k);
         for (String k : TrocCoffres.CLASSES_CREDITS) c |= classes.contains(k);
         if (m && c) return null;
-        String quoi = !m && !c ? "un coffre à mobis et un coffre à crédits" : !m ? "un coffre à mobis" : "un coffre à crédits";
+        String cm = "un coffre à mobis (« " + TrocPoseCoffres.nomCoffre(TrocCoffres.COFFRE_MOBIS) + " »)";
+        String cc = "un coffre à crédits (« " + TrocPoseCoffres.nomCoffre(TrocCoffres.COFFRE_CREDITS) + " »)";
+        String quoi = !m && !c ? cm + " et " + cc : !m ? cm : cc;
         return "Il te faut " + quoi + " dans ton inventaire : les coffres ne sont pas au Builders Club. "
                 + "Après l'achat, ferme et rouvre l'inventaire du jeu.";
     }
@@ -345,21 +434,26 @@ final class TrocVente {
         pose = f;
         f.surFermeture(() -> { if (ouverte == f) ouverte = null; if (pose == f) pose = null; });
 
-        Label explication = new Label("Pour vendre ici, la salle a besoin de la config troc (deux coffres et "
+        Label explication = new Label("Pour vendre ici, l'appart a besoin de la boutique troc (deux coffres et "
                 + "les wired de vente). Pose-la d'abord, une seule fois.");
         explication.setWrapText(true);
         explication.managedProperty().bind(explication.visibleProperty());
         Set<String> classes = classesSol(inventaire);
-        String manque = inventaire == null || inventaire.isEmpty() ? null : coffresManquants(classes);
+        TrocCoffres.Coffres enSalle = TrocCoffres.dansLaSalle();
+        if (enSalle.mobis() != 0 || enSalle.credits() != 0)
+            explication.setText(explication.getText() + " " + (enSalle.complets() ? "Les deux coffres déjà dans l'appart sont repris."
+                    : enSalle.mobis() != 0 ? "Le coffre à mobis déjà dans l'appart est repris." : "Le coffre à crédits déjà dans l'appart est repris."));
+        String manque = inventaire == null || inventaire.isEmpty() ? null : coffresManquants(classes, enSalle);
         Label manqueLbl = Ui.discret(manque == null ? "" : manque);
         manqueLbl.setWrapText(true);
         manqueLbl.managedProperty().bind(manqueLbl.visibleProperty());
         manqueLbl.setVisible(manque != null);
 
         // les wired viennent surtout du BC, les coffres de l'inventaire
-        WiredCollage.Panneau suivi = new WiredCollage.Panneau().sourceDefaut(1).court(true);
+        // source automatique, sans menu : le BC s'il a le mobi (les wired), sinon l'inventaire (les coffres)
+        WiredCollage.Panneau suivi = new WiredCollage.Panneau().sourceFixe(2).court(true);
         Button annuler = CalqueFenetre.bouton("Fermer", false, f::fermer);
-        Button poser = CalqueFenetre.bouton(Icones.COLLER, "Poser la config troc",
+        Button poser = CalqueFenetre.bouton(Icones.COLLER, "Poser la boutique troc",
                 "Aperçu ici, puis clic dans le jeu sur la case de départ de la ligne de piles.", true, null);
         poser.setDefaultButton(false);       // Entree reste a Confirmer de l'aperçu
         poser.setDisable(manque != null);
@@ -383,6 +477,8 @@ final class TrocVente {
         });
         int salle = Salle.salleId();
         suivi.surAnnuler(accueil);
+        // apres Confirmer : la consigne est dans le jeu et l'avancement dans le bandeau, la fenetre se ferme
+        suivi.surLancement(f::fermer);
         suivi.surBilan((ok, bilan) -> apresPose(f, salle, ok, bilan, accueil));
         // la fenetre suit la hauteur du panneau (aperçu, progression)
         suivi.noeud().heightProperty().addListener((o, a, b) -> f.ajuster());
@@ -404,7 +500,7 @@ final class TrocVente {
                 try { inv2 = new ArrayList<>(gp.getInventory().getInventoryItems()); }
                 catch (Throwable t) { continue; }
                 Set<String> c2 = classesSol(inv2);
-                if (coffresManquants(c2) == null) {
+                if (coffresManquants(c2, TrocCoffres.dansLaSalle()) == null) {
                     javafx.application.Platform.runLater(() -> {
                         classes.clear();
                         classes.addAll(c2);
@@ -418,34 +514,55 @@ final class TrocVente {
         });
     }
 
+    /** Le nombre de mobis poses, lu au debut du bilan du collage (« [Arrêté. ]12 / 20 … ») ; 0 sinon. Logique pure. */
+    static int posesDuBilan(String bilan) {
+        if (bilan == null) return 0;
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("^(?:Arrêté\\. )?(\\d+) / ").matcher(bilan);
+        try { return m.find() ? Integer.parseInt(m.group(1)) : 0; } catch (NumberFormatException e) { return 0; }
+    }
+
     /**
      * Fin de la pose (bilan du collage, dit ici une seule fois) : la config
      * est cherchee jusqu'a ce qu'elle soit vue ; vue, la fenetre se ferme et
      * le jeu dit que c'est bon. Sinon le bilan (ou ce qui manque) est dit.
      */
     private static void apresPose(CalqueFenetre f, int salle, boolean ok, String bilan, Runnable accueil) {
-        boolean posee = ok || (bilan != null && bilan.contains("posé(s) en ("));
+        boolean posee = ok || posesDuBilan(bilan) > 0;
         if (!posee || (bilan != null && bilan.startsWith("Arrêté"))) {            // rien de pose (refus, pas de clic) ou arret voulu
             WiredCollage.direBilan(ok, bilan);
             javafx.application.Platform.runLater(accueil);
             return;
         }
-        // quelque chose a ete pose : on laisse le temps aux coffres d'apparaitre et a la variable d'etre creee
-        javafx.application.Platform.runLater(() -> f.dire("Recherche de la config troc dans la salle…"));
+        // quelque chose a ete pose : on laisse le temps aux coffres d'apparaitre et a la variable
+        // d'etre creee ; l'avancement est dans le bandeau du haut (la fenetre est deja fermee)
+        javafx.application.Platform.runLater(f::fermer);
+        Avancement.Suivi av = Avancement.debut("Boutique troc");
+        av.texte("Recherche de la boutique troc dans l'appart…").part(-1);
         Salle.tache("troc-config-posee", () -> {
-            ConfigTroc.Etat e = ConfigTroc.attendreConfig(salle, 12_000, () -> false);
-            if (e.complete()) {
-                if (!ok) Journal.info("Config troc : " + bilan);
-                Journal.succes(CONFIG_POSEE);
-                javafx.application.Platform.runLater(f::fermer);
-                return;
+            try {
+                ConfigTroc.Etat e = ConfigTroc.attendreConfig(salle, 12_000, () -> false);
+                if (!e.complete()) {
+                    ConfigTroc.diagnostic("après la pose");
+                    av.fin(Avancement.Issue.ECHEC);
+                    if (!ok) WiredCollage.direBilan(false, bilan);
+                    else Journal.erreur("La pose est finie, mais la boutique troc n'est pas vue dans l'appart. " + e.texte());
+                    return;
+                }
+                // coffres deja dans l'appart, repris : les wired sont relies a eux (rien si deja bon)
+                av.texte("Liaison des wired aux coffres…");
+                TrocPoseCoffres.Resultat lien = TrocPoseCoffres.relier();
+                if (!lien.ok()) {
+                    av.fin(Avancement.Issue.ECHEC);
+                    Journal.erreur("La boutique troc est posée, mais " + Character.toLowerCase(lien.erreur().charAt(0)) + lien.erreur().substring(1));
+                    return;
+                }
+                if (!ok && lien.relies() == 0) Journal.debug("Boutique troc : " + bilan);
+                av.fin(Avancement.Issue.REUSSI);
+                Journal.succes(CONFIG_POSEE);                      // un seul message
+            } catch (Throwable t) {
+                av.fin(Avancement.Issue.ECHEC);
+                Journal.erreur("Recherche de la boutique troc interrompue", t);
             }
-            if (!ok) WiredCollage.direBilan(false, bilan);
-            else Journal.erreur("La pose est finie, mais la config troc n'est pas vue dans la salle. " + e.texte());
-            javafx.application.Platform.runLater(() -> {
-                f.dire(e.texte());
-                accueil.run();
-            });
         });
     }
 
@@ -455,75 +572,115 @@ final class TrocVente {
                  List<Exemplaire> possedes, OffresBc.Offre offre) { }
 
     private static void vendre(Vente v) {
-        Consumer<String> dire = InfoJeu::consigne;
-        if (Salle.salleId() != v.salle()) { Journal.erreur("Tu as changé de salle : vente annulée."); return; }
+        if (Salle.salleId() != v.salle()) { Journal.erreur("Tu as changé d'appart : vente annulée."); return; }
         TrocCoffres.Coffres c = TrocCoffres.dansLaSalle();
-        if (!c.complets()) { Journal.erreur("Pas de config troc dans cette salle : clique « Vendre au troc » sur un mobi pour la poser."); return; }
+        if (!c.complets()) { Journal.erreur("Pas de boutique troc dans cet appart : clique « Vendre au troc » sur un mobi pour la poser."); return; }
         String idPrix = ConfigTroc.idPrix(3000);
-        if (idPrix == null) { Journal.erreur("Variable « prix » introuvable dans cette salle : la config troc est-elle complète ?"); return; }
+        if (idPrix == null) { Journal.erreur("Variable « prix » introuvable dans cet appart : la boutique troc est-elle complète ?"); return; }
 
         ConfigTroc.Vitrine vitrine = ConfigTroc.vitrineDe(v.salle(), v.type());
         Choix ch = choisir(v.possedes(), v.offre() != null, vitrine != null, v.quantite());
-        if (ch.aDeposer().isEmpty()) { Journal.erreur("Aucun exemplaire échangeable à vendre."); return; }
+        boolean seule = v.quantite() == 0;                 // vitrine seule : rien a deposer, voulu
+        if (ch.aDeposer().isEmpty() && !seule) { Journal.erreur("Aucun exemplaire échangeable à vendre."); return; }
 
         boolean nouvelle = vitrine == null;
         if (nouvelle) {
-            vitrine = poserVitrine(v, ch);
+            vitrine = poserVitrine(v, ch, seule);
             if (vitrine == null) return;                    // erreur deja dite
         }
 
         // le prix sur la vitrine : creer la variable (nouvelle vitrine) ou changer sa valeur
         Canal canal = Canal.duMoteur();
-        HPacket p = nouvelle ? PoseOutils.variableSol(vitrine.id(), idPrix, v.prix())
-                : new HPacket("WiredSetObjectVariableValue", HMessage.Direction.TOSERVER, 0, vitrine.id(), idPrix, v.prix(), 0);
+        // meme paquet pour creer ou changer : variable de l'utilisatrice, (0, id, var, valeur, 1) comme le client
+        HPacket p = PoseOutils.variableSol(vitrine.id(), idPrix, v.prix());
         if (canal == null || !PoseOutils.envoyerVariable(canal, p)) {
-            Journal.erreur("Le prix n'a pas pu être donné à la vitrine.");
+            // la vitrine reste (jamais ramassee en silence) : marquee seule, le prix se change dans l'onglet
+            if (nouvelle) ConfigTroc.vitrineSeule(v.salle(), vitrine.id(), true);
+            Journal.erreur(nouvelle ? "La vitrine est posée, mais son prix n'a pas pu être réglé : change-le dans Troc › Ma boutique troc. "
+                    + "Rien n'a été mis en stock." : "Le prix n'a pas pu être donné à la vitrine.");
             return;
         }
         ConfigTroc.prixVitrine(v.salle(), vitrine.id(), v.prix());
         ConfigTroc.dernierPrix(v.type(), v.prix());
 
+        // vitrine seule : posee avec son prix, c'est tout (ca se voit dans le jeu : pas de message)
+        if (seule) return;
+
         List<Integer> ids = new ArrayList<>();
         for (Exemplaire e : ch.aDeposer()) ids.add(e.inventaire());
-        if (ids.size() > 100) dire.accept(Ui.accorder("Dépôt de " + ids.size() + " mobi(s) dans le coffre…"));
-        String err = TrocCoffres.deposer(c.mobis(), ids, dire);
+        // l'avancement du depot : dans le bandeau du haut seulement
+        Avancement.Suivi av = Avancement.debut("Vente au troc");
+        av.texte(Ui.accorder("Dépôt de " + ids.size() + " mobi(s) dans le coffre…")).part(-1);
+        String err;
+        try { err = TrocCoffres.deposer(c.mobis(), ids, t -> av.texte(t)); }
+        catch (RuntimeException x) { av.fin(Avancement.Issue.ECHEC); throw x; }
+        av.fin(err == null ? Avancement.Issue.REUSSI : Avancement.Issue.ECHEC);
         if (err != null) {
             Journal.erreur(err + (nouvelle ? " La vitrine sera ramassée si le coffre n'a pas ce mobi." : ""));
             return;
         }
+        // la vitrine a maintenant du stock : ramassee comme les autres quand il sera vide
+        if (vitrine.seule()) ConfigTroc.vitrineSeule(v.salle(), vitrine.id(), false);
         Journal.succes(bilan(v.nom(), ids.size(), v.prix()));
     }
 
+    /** Le mobi apparu depuis « avant » : de ce type, ou de cette classe, ou sur cette case ; 0 sinon. */
+    private static int nouvelleVitrine(Set<Integer> avant, int type, String classe, int x, int y) {
+        int memeType = 0, surCase = 0;
+        for (HFloorItem it : Salle.sols()) {
+            if (avant.contains(it.getId())) continue;
+            boolean ici = it.getTile().getX() == x && it.getTile().getY() == y;
+            String c = Salle.classe(it.getTypeId(), false);
+            boolean type0 = it.getTypeId() == type || (c != null && c.equals(classe));
+            if (type0 && ici) return it.getId();
+            if (type0 && memeType == 0) memeType = it.getId();
+            if (ici && surCase == 0) surCase = it.getId();
+        }
+        return memeType != 0 ? memeType : surCase;
+    }
+
     /** Pose une nouvelle vitrine sur la case cliquee ; null (erreur dite) si elle n'apparait pas. */
-    private static ConfigTroc.Vitrine poserVitrine(Vente v, Choix ch) {
+    private static ConfigTroc.Vitrine poserVitrine(Vente v, Choix ch, boolean seule) {
         boolean bc = v.offre() != null;
         if (!bc && ch.vitrine() == null) { Journal.erreur("Pas d'exemplaire pour la vitrine."); return null; }
-        InfoJeu.consigne("Clique dans le jeu la case où poser la vitrine.");
-        Empreinte.Boite emp = new Empreinte.Boite().sol(v.classe(), 0, 0, 0);
-        HPoint caseVitrine = Generateur.Dalle.attendreClic(120_000, emp.largeur(), emp.profondeur());
-        if (caseVitrine == null) { Journal.erreur("Pas de clic dans le jeu en 2 minutes : vente annulée."); return null; }
-        if (Salle.salleId() != v.salle()) { Journal.erreur("Tu as changé de salle : vente annulée."); return null; }
-
-        PoseOutils.Signaux.installer();
+        // l'etat d'avant est pris AVANT le clic : si le jeu pose lui-meme le mobi au clic, son
+        // ObjectAdd peut arriver avant notre envoi ; pris apres, la vitrine passait pour ancienne
         Set<Integer> avant = new HashSet<>();
         for (HFloorItem it : Salle.sols()) avant.add(it.getId());
+        InfoJeu.consigne("Clique dans le jeu la case où poser la vitrine.");
+        // aperçu du mobi sur la case cliquee, Tourner, Poser, croix (TrocApercu)
+        TrocApercu.Choix choix = TrocApercu.choisir(v.type(), v.classe(), v.nom(), 120_000);
+        if (Salle.salleId() != v.salle()) { Journal.erreur("Tu as changé d'appart : vente annulée."); return null; }
+        if (choix == null) { Journal.erreur("Pas de clic dans le jeu en 2 minutes : vente annulée."); return null; }
+        if (choix.annule()) return null;                     // la croix ou Echap : voulu, rien a dire
+        int rot = choix.rot();
+
+        PoseOutils.Signaux.installer();
         long t0 = System.currentTimeMillis();
-        int x = caseVitrine.getX(), y = caseVitrine.getY();
-        HPacket pose = bc ? PoseOutils.poseSolBc(v.offre(), x, y, 0)
-                : PoseOutils.poseSolInventaire(ch.vitrine().pose(), x, y, 0);
+        int x = choix.x(), y = choix.y();
+        HPacket pose = bc ? PoseOutils.poseSolBc(v.offre(), x, y, rot)
+                : PoseOutils.poseSolInventaire(ch.vitrine().pose(), x, y, rot);
+        Journal.debug("Troc : vitrine envoyée en (" + x + "," + y + ") r" + rot + ", " + (bc ? "BC " + v.offre()
+                : "inventaire " + ch.vitrine().pose() + " (placement " + ch.vitrine().inventaire() + ")") + ", type " + v.type()
+                + ", " + avant.size() + " mobis avant.");
         Salle.envoyerEspace(pose);
         int[] id = {0};
-        PoseOutils.attendre(() -> {
-            for (HFloorItem it : Salle.sols())
-                if (!avant.contains(it.getId()) && it.getTypeId() == v.type()) { id[0] = it.getId(); return true; }
-            return false;
-        }, 5000, null);
+        // le nouveau mobi : meme type, ou meme classe, ou sur la case cliquee (un type mal lu ne
+        // doit pas faire croire a un echec) ; jusqu'a 12 s (serveur lent, confirmation BC dans le jeu)
+        PoseOutils.attendre(() -> { id[0] = nouvelleVitrine(avant, v.type(), v.classe(), x, y); return id[0] != 0; }, 12_000, null);
         if (id[0] == 0) {
+            StringBuilder vus = new StringBuilder();
+            for (HFloorItem it : Salle.sols())
+                if (!avant.contains(it.getId()))
+                    vus.append(vus.length() == 0 ? "" : ", ").append(it.getId()).append(" type ").append(it.getTypeId())
+                            .append(" (").append(it.getTile().getX()).append(",").append(it.getTile().getY()).append(")");
+            Journal.debug("Troc : vitrine pas vue en 12 s ; nouveaux mobis : " + (vus.length() == 0 ? "aucun" : vus) + ".");
             String r = PoseOutils.Signaux.raisonPose(t0, x, y);
-            Journal.erreur("La vitrine n'a pas pu être posée" + (r == null ? " (case occupée ?)" : " : " + r) + ". Vente annulée.");
+            Journal.erreur("La vitrine n'a pas été vue dans l'appart" + (r == null ? "" : " : " + r) + ". Vente annulée.");
             return null;
         }
-        ConfigTroc.Vitrine vit = new ConfigTroc.Vitrine(id[0], v.type(), bc, v.prix());
+        Journal.debug("Troc : vitrine vue, id " + id[0] + " en " + (System.currentTimeMillis() - t0) + " ms.");
+        ConfigTroc.Vitrine vit = new ConfigTroc.Vitrine(id[0], v.type(), bc, v.prix(), seule);
         ConfigTroc.ajouterVitrine(v.salle(), vit);
         return vit;
     }

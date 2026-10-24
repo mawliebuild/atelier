@@ -80,7 +80,8 @@ public class OutilEscalier {
         pipette.setOnAction(e -> {
             attentePipette = !attentePipette;
             pipette.setText(attentePipette ? "Annuler la pipette" : "Pipette");
-            InfoJeu.consigne(attentePipette ? "Clique un petit bloc dans le jeu pour prendre sa couleur." : "Pipette annulée.");
+            if (attentePipette) InfoJeu.consigne("Clique un petit bloc dans le jeu pour prendre sa couleur.");
+            else Journal.debug("escalier : pipette annulée.");
         });
         Salle.surClicMobi(it -> {
             if (!attentePipette) return;
@@ -242,7 +243,7 @@ public class OutilEscalier {
         double h = hauteurMobi.getValue();
         double derniere = Generateur.arrondi((marches.getValue() - 1) * montee.getValue());
         StringBuilder sb = new StringBuilder();
-        sb.append(p.size()).append(" mobi(s) nécessaires\n");
+        sb.append(p.size()).append(" mobi(s) nécessaire(s)\n");
         sb.append(String.format(Locale.ROOT, "Dernière marche posée à %.2f", derniere));
         if (h > 0) sb.append(String.format(Locale.ROOT, ", sommet ≈ %.2f", derniere + h));
         int longueur = (marches.getValue() - 1) * pas.getValue() + 1;
@@ -250,7 +251,7 @@ public class OutilEscalier {
         if (remplir.isSelected() && h <= 0) sb.append("\n⚠ Remplir dessous : indique la hauteur du mobi.");
         if (!m.empilable) sb.append("\n⚠ Ce mobi n'est pas empilable : les marches hautes risquent d'échouer.");
         if (p.size() > 300) sb.append("\n⚠ Beaucoup de mobis : la pose sera longue.");
-        apercu.setText(sb.toString());
+        apercu.setText(Ui.accorder(sb.toString()));
     }
 
     // ------------------------------------------------------------ pose

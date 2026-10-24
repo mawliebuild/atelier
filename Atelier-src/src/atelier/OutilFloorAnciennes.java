@@ -341,7 +341,7 @@ public final class OutilFloorAnciennes {
         for (int x = 0; x < W; x++) for (int y = 0; y < L; y++)
             if (m.h[x][y] == r.base && !(x == px && y == py)) r.casesBase++;
         for (int v : r.marches.values()) r.casesMarches += v;
-        if (r.inconnus > 0) r.notes.add(r.inconnus + " mobi(s) inconnu(s) de la furnidata : comptés 1×1");
+        if (r.inconnus > 0) r.notes.add(r.inconnus + " mobi(s) inconnu(s) du jeu : comptés 1×1");
         if (r.dx != 0 || r.dy != 0) r.notes.add("plan décalé de " + r.dx + "," + r.dy + " (x0,y0) : les mobis gardent leur place relative");
 
         // --- meme format que OngletApparts.copierSalleVersAppart

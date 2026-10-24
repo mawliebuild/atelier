@@ -43,6 +43,9 @@ public final class Icones {
             + "a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09"
             + "a1.65 1.65 0 0 0-1.51 1z";
     public static final String OEIL       = "M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z M12 9a3 3 0 1 0 0.01 0z";
+    /** Une dalle isometrique en pointilles sous un oeil : Visibilite zone (cacher le sol et les mobis d'une zone). */
+    public static final String ZONE_VISIBLE = "M3 16l3.15 -1.4 M8.4 13.6l3.6 -1.6 M12 12l3.15 1.4 M17.4 14.4l3.6 1.6 M21 16l-3.15 1.4 M15.6 18.4l-3.6 1.6 M12 20l-3.15 -1.4 M6.6 17.6l-3.6 -1.6"
+            + " M4 6.5s3-3.5 8-3.5 8 3.5 8 3.5-3 3.5-8 3.5-8-3.5-8-3.5z M12 5.3a1.2 1.2 0 1 0 0.01 0z";
     public static final String OEIL_FERME = "M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z M4 20L20 4";
     public static final String PLUS       = "M12 5v14 M5 12h14";
     public static final String CURSEUR    = "M5 3l14 8-6 2-2 6z";
@@ -148,6 +151,9 @@ public final class Icones {
     /** Une croix (grille de 24) : retirer d'une liste. */
     public static final String RETIRER    = "M7 7l10 10 M17 7L7 17";
 
+    /** Un calendrier coche : les taches quotidiennes du jeu. */
+    public static final String TACHES     = "M4 5h16v15H4z M4 9h16 M8 3v4 M16 3v4 M8.5 14.5l2.5 2.5 4.5-5";
+
     private Icones() { }
 
     /**
@@ -167,7 +173,7 @@ public final class Icones {
         javafx.scene.Node g = petit(chemin);
         SVGPath p = (SVGPath) ((javafx.scene.Group) g).getChildren().get(0);
         Runnable teinte = () -> p.setStroke(javafx.scene.paint.Color.web(
-                b.getStyleClass().contains("primaire") ? "#FFFFFF" : "#5A564C"));
+                b.getStyleClass().contains("primaire") || b.getStyleClass().contains("danger") ? "#FFFFFF" : "#5A564C"));
         teinte.run();
         b.getStyleClass().addListener((javafx.collections.ListChangeListener<String>) c -> teinte.run());
         b.setGraphic(g);

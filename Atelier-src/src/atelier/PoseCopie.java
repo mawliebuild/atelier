@@ -65,7 +65,7 @@ final class PoseCopie {
             int etats = (sols == null ? 0 : sols.etatsFaux.size()) + (murs == null ? 0 : murs.etatsFaux);
             if (etats > 0) b.append(", ").append(PoseOutils.nombre(etats, "état faux", "états faux"));
             if (sols != null && sols.dallePosee && !sols.dalleRamassee)
-                b.append(", la dalle magique est restée dans la salle (ramasse-la à la main)");
+                b.append(", la dalle magique est restée dans l'appart (ramasse-la à la main)");
             if (wired != null && wired.attendus > 0) {
                 b.append(" ; ").append(PoseOutils.nombre(wired.confirmes.size(), "wired réglé", "wired réglés"))
                         .append(" sur ").append(wired.attendus);
@@ -138,13 +138,17 @@ final class PoseCopie {
         if (copie == null || coin == null) { r.raison = "rien à poser"; return r; }
         r.voulus = copie.sols.size() + copie.murs.size();
         if (m == null || m.canal() == null) { r.raison = "l'Atelier n'est pas encore prêt"; return r; }
-        if (!Salle.dansUneSalle()) { r.raison = "tu n'es pas dans une salle"; return r; }
-        if (!Salle.furnidataPrete()) { r.raison = "furnidata pas encore chargée"; return r; }
+        if (!Salle.dansUneSalle()) { r.raison = "tu n'es pas dans un appart"; return r; }
+        if (!Salle.furnidataPrete()) { r.raison = "liste des mobis pas encore chargée"; return r; }
         if (r.voulus == 0) { r.raison = "rien à poser"; return r; }
         if (!OCCUPEE.compareAndSet(false, true)) { r.raison = "une autre pose n'est pas finie"; return r; }
 
         arret = false;
         r.lancee = true;
+        // barre commune : l'etape en cours (sols, wired, muraux), Arreter = :abort
+        Avancement.Suivi av = Avancement.debut("Pose avec la dalle magique", PoseCopie::arreter).part(-1);
+        Consumer<String> dire0 = dire;
+        dire = t -> { av.texte(Avancement.nomDe(t)); dire0.accept(t); };
         int salle0 = Salle.salleId();
         BooleanSupplier fin = () -> arret || (stop != null && stop.getAsBoolean()) || Salle.salleId() != salle0;
         for (int type : Generateur.Dalle.typesDalles()) Historique.ignorerType(type, 30 * 60_000L);
@@ -173,6 +177,10 @@ final class PoseCopie {
             OCCUPEE.set(false);
         }
         if (suivi != null) try { suivi.run(); } catch (Throwable ignored) { }
+        av.texte(null);
+        if (r.obtenus() == 0 && !r.arrete) av.fin(Avancement.Issue.ECHEC);
+        else av.fin(Avancement.issue(r.texte()) == Avancement.Issue.ECHEC ? Avancement.Issue.PARTIEL
+                : r.obtenus() < r.voulus || r.arrete ? Avancement.Issue.PARTIEL : Avancement.issue(r.texte()));
         Journal.debug("pose de la copie : " + r.texte());
         return r;
     }
@@ -183,7 +191,7 @@ final class PoseCopie {
         EtatSalle salle = m.getFloorState();
         Map<String, String> tableVariables = new HashMap<>();
         PoseDalle pd = m.poseDalle();
-        if (pd == null) { r.raison = "furnidata pas encore chargée"; return; }
+        if (pd == null) { r.raison = "liste des mobis pas encore chargée"; return; }
 
         // 1. les sols, hauteurs decalees comme avant (sol le plus bas sous la copie - ancre)
         if (!c.sols.isEmpty()) {

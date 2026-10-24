@@ -50,10 +50,12 @@ public final class OngletDocumentation {
         c(jeu, MAC ? "OPT+SHIFT+C" : "CMD+SHIFT+C", "Mode Construction, panneau des calques actif : copier le calque.");
         c(jeu, MAC ? "OPT+SHIFT+V" : "CMD+SHIFT+V", "Coller le calque copié (dans le même appart : à sa place puis Déplacer ; ailleurs : collage complet).");
         c(jeu, "Échap", "Pendant un déplacement lancé par " + touche("OPT") + "+clic : lâcher le mobi, il reste où il était.");
-        c(jeu, "OPT+Clic", "Prendre ou déplacer un mobi (commande du jeu) ; sert aussi à choisir les mobis muraux de Déplacer un mur (fenêtre ouverte, chaque clic en ajoute un ou le retire).");
+        c(jeu, "OPT+Clic", "Prendre ou déplacer un mobi (commande du jeu) ; sert aussi à choisir les mobis muraux de Déplacer un mural (fenêtre ouverte, chaque clic en ajoute un ou le retire).");
         c(jeu, "Clic", "Sur une dalle magique : la sélectionner (comme dans le jeu normal).");
         c(jeu, "Double-clic", "Sur un mobi posé sur une dalle magique : changer son état (le double-clic traverse la dalle).");
-        c(jeu, "Clic", "Inventaire du jeu, « Vendre au troc » : quantité et prix (Entrée vend, Échap annule), puis un clic sur une case du jeu pose la vitrine.");
+        c(jeu, "Clic", "Inventaire du jeu, « Vendre au troc » : quantité et prix (Entrée vend, Échap annule), puis un clic sur une case du jeu y montre la vitrine en aperçu ; un autre clic la déplace.");
+        c(jeu, "↑ | → | ↓ | ←", "Fenêtre Vitrine ouverte : déplacer l'aperçu de la vitrine d'une case (Maj : 5 cases). Aussi dans le jeu (Habbo au premier plan, chat vide).");
+        c(jeu, "Entrée | Échap", "Fenêtre Vitrine ouverte : Entrée pose la vitrine (avec la rotation choisie par Tourner), Échap annule la vente. Aussi dans le jeu.");
 
         Section chat = section("Commandes du chat", "À taper dans le chat du jeu : le message n'est pas envoyé.");
         c(chat, ":h 2,5", "Hauteur fixe des dalles magiques (de 0 à 40, virgule ou point).");
@@ -68,6 +70,20 @@ public final class OngletDocumentation {
         c(fen, "CMD+C | CMD+V", "Panneau des calques actif : copier / coller le calque.");
         c(fen, "Double-clic", "Sur la barre de titre : réduire la fenêtre.");
 
+        Section menus = section("Barre du haut", "Les rubriques en haut du jeu (Valeur, Troc, Réglages…).");
+        c(menus, "Survol", "Sur une rubrique : une liste se déroule dessous, sans clic, avec ses sous-rubriques (ou seulement son nom si elle n'en a pas). Glisser d'une rubrique à l'autre change de liste ; elle se ferme quand la souris quitte la rubrique et la liste.");
+        c(menus, "Clic", "Sur une sous-rubrique de la liste : ouvrir la fenêtre sur cette partie seule (titre « Rubrique › Sous-rubrique »).");
+        c(menus, "Clic", "Sur la rubrique elle-même : ouvrir ou fermer sa fenêtre entière, comme avant.");
+        c(menus, "Échap", "Fermer la liste déroulée (aussi dans le jeu).");
+
+        Section liens = section("Liens d'apparts", "Apparts › Liens d'apparts : les apparts retenus, rangés par rubrique.");
+        c(liens, "Double-clic", "Sur un appart : y aller (comme « Y aller »).");
+        c(liens, "Glisser", "Un appart sur le nom d'une rubrique : l'y ranger, à la fin. Sur un autre appart : le placer juste avant ou après lui (un trait bleu montre où), dans la même rubrique ou une autre.");
+        c(liens, "Clic droit", "Sur un appart : y aller, le renommer, le ranger, copier son lien, le retirer (« Annuler » le remet pendant quelques secondes).");
+        c(liens, "Clic droit", "Sur le nom d'une rubrique : la renommer, la monter, la descendre ou la retirer (« Annuler » la remet).");
+        c(liens, "Clic", "Sur le nom d'une rubrique : la replier ou la déplier (retenu d'une fois sur l'autre).");
+        c(liens, "Entrée", "Dans « Numéro ou lien » (lien « Ajouter par numéro ou lien… ») : l'ajouter.");
+
         Section calques = section("Panneau des calques", "Liste des calques, à gauche du jeu.");
         c(calques, MAC ? "Suppr | Retour arrière" : "Suppr", "Supprimer les calques choisis et ramasser leurs mobis (" + touche("CMD") + "+Z les remet).");
         c(calques, "CMD+E", "Fusionner les calques choisis.");
@@ -77,9 +93,10 @@ public final class OngletDocumentation {
         c(calques, "Glisser", "Changer l'ordre des calques.");
         c(calques, "Double-clic", "Sur la barre du panneau : le replier ou le déplier.");
         c(calques, "Entrée", "Dans le filtre par nom : transformer le texte en étiquette.");
-        c(calques, "Clic", "Remplir une zone, après le choix de la zone : un clic sur un mobi de la salle le prend comme modèle (au lieu de le poser depuis l'inventaire).");
+        c(calques, "Clic", "Remplir une zone, après le choix de la zone : un clic sur un mobi de l'appart le prend comme modèle (au lieu de le poser depuis l'inventaire).");
         c(calques, "Clic", "Remplacer dans une zone, bouton Pipette : un clic sur un mobi de la zone choisit le type à remplacer.");
-        c(calques, "Clic", "Escalier, bouton Pipette : un clic sur un petit bloc de la salle choisit sa couleur (re-clique le bouton pour annuler).");
+        c(calques, "Clic", "Rangée Masquer, bouton Sol : cacher le sol de tout l'appart chez toi seulement ; les mobis restent visibles et les clics passent aux cases derrière (re-clique pour le remontrer, il revient aussi en changeant d'appart).");
+        c(calques, "Clic", "Escalier, bouton Pipette : un clic sur un petit bloc de l'appart choisit sa couleur (re-clique le bouton pour annuler).");
         c(calques, "↑ | → | ↓ | ←", "Fenêtre Déplacer, Dupliquer ou Coller ouverte : déplacer l'aperçu d'une case, comme un clic sur la flèche (↑ = ↗, → = ↘, ↓ = ↙, ← = ↖). Aussi dans le jeu (Habbo au premier plan, chat vide).");
         c(calques, "SHIFT+Flèche", "Même chose, de 5 cases d'un coup.");
         c(calques, "↑ | → | ↓ | ←", "Fenêtre Photo de référence ouverte : déplacer la photo d'un pixel (Maj : 10 pixels). Aussi avec les boutons flèches de la fenêtre (Maj-clic : 10 pixels), et dans le jeu (Habbo au premier plan, chat vide).");
@@ -99,7 +116,21 @@ public final class OngletDocumentation {
         c(modeFloor, "CMD+Z", WindowsClavier.texte("Annuler le dernier changement du floor (pas des mobis)."));
         c(modeFloor, "CMD+SHIFT+Z | CMD+Y", WindowsClavier.texte("Rétablir le changement du floor annulé."));
 
-        Section plan = section("Plan de l'appart", "Plan de la salle et mesure.");
+        // Raccourcis choisis par l'utilisatrice : rien de fixe a montrer, on dit ou les choisir.
+        Section zone = section("Visibilité zone", "Mode Construction, menu de droite, icône Visibilité zone (une dalle sous un œil).");
+        c(zone, "Clic | Clic", "« Nouvelle zone » : cliquer les deux coins dans le jeu (le clic vise la case, même derrière un mobi). La grille s'affiche pendant le choix.");
+        c(zone, "Clic", "« Masquer » / « Afficher » sur une zone : la cacher (sol et mobis cachés chez toi seulement, les clics passent aux cases derrière) ou la rendre visible. « Tout masquer » et « Tout afficher » agissent sur toutes les zones. En revenant dans l'appart, toutes les zones sont de nouveau visibles.");
+        c(zone, "Double-clic", "Sur le nom d'une zone (ou son crayon) : le renommer ; Entrée valide.");
+        c(zone, "Survol", "Sur la carte d'une zone : ses mobis sont mis en valeur dans le jeu et son rectangle est dessiné en bleu au sol (même masquée). La souris sortie, tout s'efface.");
+        c(zone, "Clic | Clic", "Sur la carte d'une zone, hors des boutons et du nom : la garder en valeur (bord bleu), puis l'enlever. Le survol d'une autre carte la remplace le temps du survol.");
+        c(zone, "Clic | Clic", "Corbeille d'une zone : un premier clic l'arme (rouge), un second dans les 3 secondes la supprime.");
+        c(zone, "Ton raccourci", ("Dans le jeu (Habbo au premier plan, barre de chat vide) : masquer ou rendre visible la zone. "
+                + "Ces raccourcis n'existent pas d'origine : c'est toi qui les choisis, zone par zone, avec le bouton « Raccourci » de la zone, "
+                + "puis l'appui voulu (lettre ou chiffre avec " + (MAC ? "⌘, ⌃ ou ⌥" : "Ctrl ou Alt") + ", ou F1 à F12). Ils sont propres à toi et à l'appart de la zone ; "
+                + "un raccourci déjà pris par l'Atelier ou par une autre zone est refusé."));
+        c(zone, "Échap | Retour arrière", "Pendant le choix du raccourci : Échap annule, Retour arrière retire le raccourci de la zone.");
+
+        Section plan = section("Plan de l'appart", "Plan de l'appart et mesure.");
         c(plan, "Molette", "Zoomer.");
         c(plan, "Glisser", "Déplacer le plan.");
         c(plan, "SHIFT+Glisser", "Choisir un rectangle comme zone de travail.");
@@ -115,7 +146,7 @@ public final class OngletDocumentation {
         c(galerie, "Molette | Pincer", "Zoomer dans la photo.");
         c(galerie, "Glisser", "Se déplacer dans la photo.");
         c(galerie, "Double-clic", "Passer de « ajustée » à 100 %.");
-        c(galerie, "Clic droit", "Ouvrir, taguer, déplacer, supprimer une photo, l'enregistrer sur l'ordi, ou l'utiliser comme photo de référence sur la salle.");
+        c(galerie, "Clic droit", "Ouvrir, taguer, déplacer, supprimer une photo, l'enregistrer sur l'ordi, ou l'utiliser comme photo de référence sur l'appart.");
         c(galerie, "Glisser", "Une photo sur une autre : changer l'ordre ; des images depuis " + (MAC ? "le Finder" : "l'Explorateur") + " : les ajouter.");
         // Mac : Cmd+Ctrl+Maj+4 copie une zone ; Windows : Win+Maj+S (Outil Capture d'écran) aussi.
         c(galerie, MAC ? "CMD+CTRL+SHIFT+4" : "Win+SHIFT+S", "Capture d'écran copiée, puis « Coller une image » pour l'ajouter.");
@@ -136,14 +167,22 @@ public final class OngletDocumentation {
         c(copies, "Glisser", "Une copie sur un dossier, ou sur le chemin en haut : l'y ranger (son aperçu la suit). Une zone reste dans « Zones », un appart dans « Apparts ».");
         c(copies, "Clic", "Sur un aperçu : l'agrandir.");
 
+        // Clics seulement : memes gestes sur Mac et Windows
+        Section taches = section("Tâches quotidiennes", "Icône calendrier de la barre du haut : les 3 tâches du jour (Missions > Tâches quotidiennes).");
+        c(taches, "Clic", "« Faire les tâches » : l'Atelier fait celles qui ne coûtent rien (souvent chez Ness, :roomid 45273021), réclame les récompenses ; tu restes là où la dernière tâche t'a menée. L'avancement s'affiche dans le jeu.");
+        c(taches, "Clic", "« Arrêter » : interrompt les tâches en cours.");
+        c(taches, "Clic", "« Actualiser » : redemande la liste du jour au jeu.");
+        c(taches, "Clic", "Les tâches qui font dépenser (crédits, duckets, diamants, effet à acheter) ne sont jamais faites : « Impossible (dépense) ». Celles marquées « À faire soi-même » montrent leur consigne ; quand tu en fais une, le mobi double-cliqué est retenu pour la prochaine fois.");
+
         Section barres = section("Barres","Barre du haut et barres en bas à droite du jeu.");
         c(barres, "Glisser", "Déplacer la barre (un simple clic garde son effet habituel).");
         c(barres, "Clic droit", "Remettre la barre à sa place.");
         c(barres, "Clic", "Sur la petite flèche : réduire ou déplier la barre.");
 
         Section autres = section("Autres", "Champs de saisie.");
-        c(autres, "Double-clic", "Patrimoine : sur un prix, le modifier (Entrée valide, Échap annule, vide = prix automatique).");
+        c(autres, "Double-clic", "Valeur › Valeur de mes mobis : sur un prix, le modifier (Entrée valide, Échap annule, vide = prix automatique).");
         c(autres, "Entrée", "Couleur de décor : appliquer le code couleur tapé.");
+        c(autres, "Clic droit", "Valeur › Mes dépenses : sur un mouvement, le retirer de la liste.");
     }
 
     /** Nom d'une touche a la facon du systeme. */
@@ -210,8 +249,10 @@ public final class OngletDocumentation {
     }
 
     private static Node ligne(Commande k) {
-        HBox touches = new HBox(4);
+        // une combinaison longue passe a la ligne dans sa colonne, sans deborder sur le texte
+        javafx.scene.layout.FlowPane touches = new javafx.scene.layout.FlowPane(4, 3);
         touches.setAlignment(Pos.CENTER_LEFT);
+        touches.setPrefWrapLength(190);
         String[] alts = k.touches().split("\\s*\\|\\s*");
         for (int a = 0; a < alts.length; a++) {
             if (a > 0) touches.getChildren().add(petit("ou"));

@@ -58,6 +58,7 @@ public class BarreOutils implements Ancrage.Ancrable {
 
     /** Mode Construction : la petite barre annuler / retablir apparait, a droite de celle-ci. */
     public void construction(boolean on) {
+        InterfaceJeu.construction(on);   // interface du jeu masquee (si choisie) dans ce mode seulement
         if (on) { stageHistorique.show(); stageHistorique.sizeToScene(); collerHistorique(); }
         else stageHistorique.hide();
     }
@@ -91,8 +92,8 @@ public class BarreOutils implements Ancrage.Ancrable {
             b.getStyleClass().add("barre-bouton");
             b.setFocusTraversable(false);
             b.setUserData(m.cle);
-            b.setOnAction(e -> surChoix.accept(m.cle));
-            survol(b, m.nom);
+            b.setOnAction(e -> { fermerListe(); surChoix.accept(m.cle); });
+            survolMenu(b, m);
             boutons.add(b);
             barre.getChildren().add(b);
         }
@@ -125,7 +126,20 @@ public class BarreOutils implements Ancrage.Ancrable {
         survol(retablir, "Rétablir   Cmd+Maj+Z");
         // A part, comme les petites barres du bas : sa propre fenetre, collee a
         // droite de la barre du haut, visible seulement en mode Construction.
-        historique = new HBox(5, annuler, retablir);
+        // Oeil : masquer / remontrer les encadres du jeu (porte-monnaie, groupe,
+        // « Promouvoir »...) pendant le mode Construction. Pas de setDisable :
+        // un bouton desactive n'aurait plus de bulle pour dire pourquoi.
+        Button oeil = new Button();
+        oeil.getStyleClass().add("barre-bouton");
+        oeil.setFocusTraversable(false);
+        oeil.setCursor(javafx.scene.Cursor.HAND);
+        oeil.setOnAction(e -> { if (InterfaceJeu.disponible()) { InterfaceJeu.basculer(); majOeil(oeil); } });
+        survol(oeil, () -> !InterfaceJeu.disponible()
+                ? "Indisponible pour l'instant : ferme Habbo puis rouvre-le pour avoir le jeu modifié à jour."
+                : InterfaceJeu.masquee() ? "Remontrer l'interface du jeu"
+                : "Masquer l'interface du jeu (crédits, infos de l'appart…)");
+        majOeil(oeil);
+        historique = new HBox(5, annuler, retablir, oeil);
         historique.setAlignment(Pos.CENTER_LEFT);
         historique.getStyleClass().add("barre");
         HBox racineH = new HBox(historique);
@@ -143,6 +157,7 @@ public class BarreOutils implements Ancrage.Ancrable {
         Runnable maj = () -> Platform.runLater(() -> {
             annuler.setDisable(!Historique.peutAnnuler());
             retablir.setDisable(!Historique.peutRetablir());
+            majOeil(oeil);
         });
         Historique.ecouter(maj);
         javafx.animation.Timeline t = new javafx.animation.Timeline(
@@ -172,6 +187,12 @@ public class BarreOutils implements Ancrage.Ancrable {
         scene.setFill(Color.TRANSPARENT);
         if (css != null) scene.getStylesheets().add(css);
         stage.setScene(scene);
+        // Echap (barre active) ferme le menu deroulant ; glisser la barre aussi.
+        scene.addEventFilter(javafx.scene.input.KeyEvent.KEY_PRESSED, e -> {
+            if (e.getCode() == javafx.scene.input.KeyCode.ESCAPE && deroulant.isShowing()) { fermerListe(); e.consume(); }
+        });
+        racine.addEventFilter(javafx.scene.input.MouseEvent.MOUSE_DRAGGED, e -> fermerListe());
+        construireListe(css);
 
         BarrePremierPlan.menu(stage);
         BarrePremierPlan.menu(stageHistorique);
@@ -211,6 +232,7 @@ public class BarreOutils implements Ancrage.Ancrable {
         }
         survol(fleche, reduite ? "Déplier le menu" : "Réduire le menu");
         bulle.hide();
+        fermerListe();
         if (stage.isShowing()) { stage.sizeToScene(); recentrer(); }
     }
 
@@ -224,10 +246,24 @@ public class BarreOutils implements Ancrage.Ancrable {
 
     // ---------------------------------------------------------------- bulle
 
+    /** Icone de l'oeil : ouvert si l'interface du jeu est visible, barre si elle est masquee ; pale si indisponible. */
+    private static void majOeil(Button oeil) {
+        boolean m = InterfaceJeu.masquee();
+        String trace = m ? Icones.OEIL_FERME : Icones.OEIL;
+        if (!trace.equals(oeil.getUserData())) {
+            oeil.setGraphic(Icones.trace(trace, "icone-barre"));
+            oeil.setUserData(trace);
+        }
+        oeil.setOpacity(InterfaceJeu.disponible() ? 1 : 0.4);
+    }
+
     /** Bulle sous le bouton, sans delai ni animation. */
-    private void survol(Region b, String nom) {
+    private void survol(Region b, String nom) { survol(b, () -> nom); }
+
+    /** Bulle dont le texte est relu a chaque survol (il change avec l'etat du bouton). */
+    private void survol(Region b, java.util.function.Supplier<String> nom) {
         b.setOnMouseEntered(e -> {
-            bulleTexte.setText(WindowsClavier.texte(nom));
+            bulleTexte.setText(WindowsClavier.texte(nom.get()));
             Bounds r = b.localToScreen(b.getBoundsInLocal());
             if (r == null) return;
             bulle.show(stage, r.getMinX(), r.getMaxY() + 6);
@@ -235,6 +271,114 @@ public class BarreOutils implements Ancrage.Ancrable {
         });
         b.setOnMouseExited(e -> bulle.hide());
         b.addEventHandler(javafx.scene.input.MouseEvent.MOUSE_PRESSED, e -> bulle.hide());
+    }
+
+    // -------------------------------------------------------- menu deroulant
+
+    /**
+     * Au survol d'une rubrique a plusieurs volets, ses sous-rubriques
+     * s'ouvrent dessous, sans clic, comme une barre de menus de Mac : glisser
+     * d'une rubrique a l'autre change de liste. La liste se ferme 250 ms apres
+     * que la souris a quitte la rubrique et la liste (le temps d'y descendre),
+     * avec Echap, ou au clic sur la rubrique. Une rubrique a un seul volet a
+     * la meme liste, avec seulement son nom.
+     */
+    private final Popup deroulant = new Popup();
+    private final javafx.scene.layout.VBox liste = new javafx.scene.layout.VBox(0);
+    private ToggleButton deroule;
+    private final javafx.animation.PauseTransition fermeture =
+            new javafx.animation.PauseTransition(javafx.util.Duration.millis(250));
+    /** Echap lu au clavier du systeme : le jeu a le focus pendant le survol (Mac et Windows). */
+    private final javafx.animation.Timeline echap = new javafx.animation.Timeline(
+            new javafx.animation.KeyFrame(javafx.util.Duration.millis(50), e -> {
+                if (ToucheOption.echap()) fermerListe();
+            }));
+    private java.util.function.BiConsumer<String, Integer> surSousChoix = (c, i) -> { };
+
+    /** Clic dans la liste : (cle du menu, n° de la sous-rubrique). */
+    public void surSousChoix(java.util.function.BiConsumer<String, Integer> c) { surSousChoix = c; }
+
+    private void construireListe(String css) {
+        liste.getStyleClass().add("deroulant");
+        liste.setFillWidth(true);
+        liste.setOnMouseEntered(e -> fermeture.stop());
+        liste.setOnMouseExited(e -> fermeture.playFromStart());
+        deroulant.getContent().add(liste);
+        deroulant.setAutoHide(false);
+        deroulant.setHideOnEscape(true);
+        deroulant.setOnHidden(e -> { deroule = null; echap.stop(); fermeture.stop(); });
+        if (css != null && deroulant.getScene() != null) deroulant.getScene().getStylesheets().add(css);
+        fermeture.setOnFinished(e -> fermerListe());
+        echap.setCycleCount(javafx.animation.Animation.INDEFINITE);
+    }
+
+    /** Ferme le menu deroulant s'il est ouvert. */
+    public void fermerListe() {
+        fermeture.stop();
+        if (deroulant.isShowing()) deroulant.hide();
+        deroule = null;
+    }
+
+    private void survolMenu(ToggleButton b, Navigation.Menu m) {
+        b.setOnMouseEntered(e -> {
+            fermeture.stop();
+            java.util.List<String> sous = m.sousRubriques();
+            // un seul volet : la meme liste, avec seulement le nom de la rubrique
+            if (sous.size() < 2) sous = java.util.List.of();
+            bulle.hide();
+            if (deroule == b && deroulant.isShowing()) return;
+            ouvrirListe(b, m, sous);
+        });
+        b.setOnMouseExited(e -> {
+            bulle.hide();
+            if (deroulant.isShowing()) fermeture.playFromStart();
+        });
+        b.addEventHandler(javafx.scene.input.MouseEvent.MOUSE_PRESSED, e -> { bulle.hide(); fermerListe(); });
+    }
+
+    private void ouvrirListe(ToggleButton b, Navigation.Menu m, java.util.List<String> sous) {
+        Bounds r = b.localToScreen(b.getBoundsInLocal());
+        if (r == null) return;
+        javafx.geometry.Rectangle2D ecran = javafx.stage.Screen.getScreensForRectangle(
+                        r.getMinX(), r.getMinY(), Math.max(1, r.getWidth()), Math.max(1, r.getHeight()))
+                .stream().findFirst().orElse(javafx.stage.Screen.getPrimary()).getVisualBounds();
+
+        liste.getChildren().clear();
+        HBox tete = new HBox(7, Icones.petite(m.icone, 14, true), new Label(m.nom));
+        tete.setAlignment(Pos.CENTER_LEFT);
+        tete.getStyleClass().add("deroulant-titre");
+        liste.getChildren().add(tete);
+        for (int i = 0; i < sous.size(); i++) {
+            final int n = i;
+            liste.getChildren().add(ligne(sous.get(i), null, () -> surSousChoix.accept(m.cle, n)));
+        }
+        // jamais plus large que l'ecran : les intitules passent a la ligne
+        liste.setMaxWidth(ecran.getWidth() - 16);
+
+        // Toujours re-montre : il passe ainsi au-dessus d'un bandeau (Avancement) pose sous la barre.
+        if (deroulant.isShowing()) deroulant.hide();
+        deroule = b;
+        deroulant.show(stage, r.getMinX(), r.getMaxY() + 4);
+        double w = deroulant.getWidth(), h = deroulant.getHeight();
+        double x = Math.max(ecran.getMinX() + 8, Math.min(r.getMinX(), ecran.getMaxX() - w - 8));
+        double y = r.getMaxY() + 4;
+        if (y + h > ecran.getMaxY() - 8) y = Math.max(ecran.getMinY() + 8, r.getMinY() - h - 4);
+        deroulant.setX(x);
+        deroulant.setY(y);
+        echap.playFromStart();
+    }
+
+    /** Une ligne cliquable de la liste ; icone : un trace d'Icones, ou null. */
+    private Button ligne(String texte, String icone, Runnable action) {
+        Button l = new Button(texte);
+        l.getStyleClass().add("deroulant-ligne");
+        if (icone != null) { l.setGraphic(Icones.petite(icone, 14, true)); l.setGraphicTextGap(7); }
+        l.setAlignment(Pos.CENTER_LEFT);
+        l.setMaxWidth(Double.MAX_VALUE);
+        l.setWrapText(true);
+        l.setFocusTraversable(false);
+        l.setOnAction(e -> { fermerListe(); action.run(); });
+        return l;
     }
 
     // ------------------------------------------------------------ placement
@@ -272,13 +416,17 @@ public class BarreOutils implements Ancrage.Ancrable {
         t.start();
     }
 
-    /** « 331 sols · 17 murs | 348 mobis » (logique pure, testee a part). */
+    /** « 331 sols · 17 muraux | 348 mobis » (logique pure, testee a part). */
     static String resume(int sols, int murs) {
-        return n(sols, "sol") + " · " + n(murs, "mur") + " | " + n(sols + murs, "mobi");
+        return n(sols, "sol") + " · " + n(murs, "mural", "muraux") + " | " + n(sols + murs, "mobi");
     }
 
     private static String n(int n, String mot) {
-        return n + " " + mot + (n > 1 ? "s" : "");
+        return n(n, mot, mot + "s");
+    }
+
+    private static String n(int n, String un, String plusieurs) {
+        return n + " " + (n > 1 ? plusieurs : un);
     }
 
     private void majResume() {
@@ -294,7 +442,7 @@ public class BarreOutils implements Ancrage.Ancrable {
                 niveau = "ok"; nom = "Connectée"; sous = "";
             } else {
                 String n = NomSalle.nomValide(gp);
-                if (n == null || n.isEmpty()) n = "Salle";
+                if (n == null || n.isEmpty()) n = "Appart";
                 // getItems/getWallItems recopient toute la salle : une fois chacun.
                 java.util.List<?> so = s.getItems(), mu = s.getWallItems();
                 int sols = (so == null) ? 0 : so.size();

@@ -87,8 +87,10 @@ public class EcranConnexion {
         // --- corps ---
         message.getStyleClass().add("connexion-message");
         message.setWrapText(true);
+        message.setMinHeight(Region.USE_PREF_SIZE);
         detail.getStyleClass().add("connexion-detail");
         detail.setWrapText(true);
+        detail.setMinHeight(Region.USE_PREF_SIZE);
         action.getStyleClass().addAll("button", "primaire", "connexion-action");
         action.setMaxWidth(Double.MAX_VALUE);
         action.setDefaultButton(true);

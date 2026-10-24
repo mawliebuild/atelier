@@ -237,6 +237,7 @@ public class Fenetre implements Ancrage.Ancrable {
     public void montrer(String nom, Region contenu, Button info) {
         titre.setText(nom);
         if (info == null) aide.getChildren().clear(); else aide.getChildren().setAll(info);
+        ajusterTitre.run();
         if (suivie != null) suivie.heightProperty().removeListener(surHauteur);
         suivie = contenu;
         suivie.heightProperty().addListener(surHauteur);
@@ -279,7 +280,11 @@ public class Fenetre implements Ancrage.Ancrable {
         });
         barreTitre.setOnMouseReleased(e -> memoriserPlace());
         barreTitre.setOnMouseClicked(e -> { if (e.getClickCount() == 2) reduire(); });
+        // un titre long rapetisse plutot que de passer sous « i », « − » et la croix
+        ajusterTitre = Ui.titreQuiTient(titre, barreTitre, boutons);
     }
+
+    private Runnable ajusterTitre = () -> { };
 
     private static Button bouton(String icone, String classe) {
         Button b = new Button();

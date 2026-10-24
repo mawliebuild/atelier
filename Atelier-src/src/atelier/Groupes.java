@@ -95,7 +95,7 @@ public final class Groupes {
         }
         public int total() { return sols + murs; }
         @Override public String toString() {
-            return sols + " sol(s), " + murs + " mur(s)" + (absents > 0 ? ", " + absents + " absent(s)" : "")
+            return sols + " sol(s), " + murs + " mural(aux)" + (absents > 0 ? ", " + absents + " absent(s)" : "")
                     + (wired > 0 ? ", " + wired + " wired" : "") + (inconnus > 0 ? ", " + inconnus + " inconnu(s)" : "");
         }
     }
@@ -117,9 +117,9 @@ public final class Groupes {
         }
         public int total() { return sols + murs; }
         @Override public String toString() {
-            return sols + " sol(s), " + murs + " mur(s)"
+            return sols + " sol(s), " + murs + " mural(aux)"
                     + (horsPlan > 0 ? ", " + horsPlan + " hors du plan" : "")
-                    + (mursIllisibles > 0 ? ", " + mursIllisibles + " mur(s) illisible(s)" : "")
+                    + (mursIllisibles > 0 ? ", " + mursIllisibles + " mural(aux) illisible(s)" : "")
                     + (casesOccupees > 0 ? ", " + casesOccupees + " case(s) d'arrivée occupée(s)" : "");
         }
     }
@@ -131,6 +131,8 @@ public final class Groupes {
         public final String message;
         /** Duplication : id du nouveau calque (null sinon). */
         public final String nouveauCalque;
+        /** Duree de l'action (ms), posee a la fin par la Tache ; -1 inconnue. */
+        public volatile long duree = -1;
         Resultat(boolean ok, boolean arrete, int voulus, int reussis, int echecs, String message, String nouveau) {
             this.ok = ok; this.arrete = arrete; this.voulus = voulus; this.reussis = reussis; this.echecs = echecs;
             this.message = message; this.nouveauCalque = nouveau;
@@ -160,22 +162,64 @@ public final class Groupes {
         public boolean enCours() { return !finie; }
         public Resultat resultat() { return resultat; }
 
+        /** La barre de progression de l'Atelier (Avancement), ouverte au premier pas. */
+        private volatile Avancement.Suivi suivi;
+
+        private synchronized Avancement.Suivi suivi() {
+            Avancement.Suivi s = suivi;
+            if (s == null) suivi = s = Avancement.debut(libelle(nom), this::arreter);
+            return s;
+        }
+
         /** Progression (au plus ~8 fois par seconde, sauf la derniere). */
         void progres(int fait, int total, String texte) {
             long t = System.currentTimeMillis();
             if (fait < total && t - dernier < 120) return;
             dernier = t;
+            Avancement.Suivi s = suivi();
+            String etape = Avancement.nomDe(texte);
+            s.texte(etape.equalsIgnoreCase(s.nom) ? null : etape);
+            if (total > 0) s.compte(fait, total);
             fx(() -> p.progres(fait, total, texte));
         }
 
-        void dire(String texte) { dernier = System.currentTimeMillis(); fx(() -> p.progres(-1, -1, texte)); }
+        void dire(String texte) {
+            dernier = System.currentTimeMillis();
+            suivi().texte(texte);
+            fx(() -> p.progres(-1, -1, texte));
+        }
+
+        private final long debut = System.currentTimeMillis();
 
         void finir(Resultat r) {
+            if (r.duree < 0) r.duree = System.currentTimeMillis() - debut;
             resultat = r;
             finie = true;
+            Avancement.Suivi s = suivi;
+            if (s != null) {
+                if (!r.ok && !r.arrete && r.reussis == 0) s.fin(Avancement.Issue.ECHEC);
+                else s.fin(r.reussis, r.echecs, r.arrete);
+            }
             Journal.debug("calques : " + nom + " : " + r.message);
             fx(() -> p.fin(r));                // le panneau dit le resultat (CalqueActions.resultat) : pas de second message
             prevenir();
+        }
+    }
+
+    /** Nom de l'action, pour la barre de progression. */
+    static String libelle(String nom) {
+        switch (nom == null ? "" : nom) {
+            case "supprimer": return "Suppression";
+            case "masquer":   return "Masquage";
+            case "afficher":  return "Réaffichage";
+            case "dupliquer": return "Duplication";
+            case "miroir":    return "Miroir";
+            case "pivoter":   return "Rotation";
+            case "hauteur":   return "Changement de hauteur";
+            case "deplacer":  return "Déplacement";
+            case "ramasser":  return "Ramassage";
+            case "coller":    return "Collage";
+            default:          return Ui.majuscule(nom == null ? "Action" : nom);
         }
     }
 
@@ -630,7 +674,7 @@ public final class Groupes {
         installer();
         Tache t = new Tache("supprimer", prog);
         List<String> l = new ArrayList<>(new LinkedHashSet<>(ids));
-        if (salle() == -1) { t.finir(Resultat.refus("Tu n'es pas dans une salle.")); return t; }
+        if (salle() == -1) { t.finir(Resultat.refus("Tu n'es pas dans un appart.")); return t; }
         // le verrou est pris AVANT de toucher au plan : lancer() ne peut plus refuser
         // apres coup (calques partis, mobis ni ramasses ni reaffiches)
         if (!occupe.compareAndSet(false, true)) { t.finir(Resultat.refus("Une autre action sur les calques est en cours.")); return t; }
@@ -638,7 +682,7 @@ public final class Groupes {
         List<String> noms = new ArrayList<>();
         synchronized (V) {
             GroupeModele.Plan p = plan();
-            if (p == null) { occupe.set(false); t.finir(Resultat.refus("Tu n'es pas dans une salle.")); return t; }
+            if (p == null) { occupe.set(false); t.finir(Resultat.refus("Tu n'es pas dans un appart.")); return t; }
             String refus = p.refusSuppression(l);
             if (refus != null) { occupe.set(false); t.finir(Resultat.refus(refus)); return t; }
             for (String id : l) {
@@ -828,7 +872,7 @@ public final class Groupes {
     private static Tache visibilite(String id, boolean masquer, Progression prog) {
         installer();
         Tache t = new Tache(masquer ? "masquer" : "afficher", prog);
-        if (salle() == -1) { t.finir(Resultat.refus("Tu n'es pas dans une salle.")); return t; }
+        if (salle() == -1) { t.finir(Resultat.refus("Tu n'es pas dans un appart.")); return t; }
         if (SOL.equals(id)) {
             t.finir(Resultat.refus("Le sol ne peut pas être masqué : le jeu ne sait pas le cacher sans casser les clics."));
             return t;
@@ -1120,7 +1164,7 @@ public final class Groupes {
         Tache t = new Tache(nom, p);
         String refus = null;
         if (GroupeModele.estDecor(calqueId)) refus = "Ce calque peut seulement être masqué ou affiché.";
-        else if (salle() == -1) refus = "Tu n'es pas dans une salle.";
+        else if (salle() == -1) refus = "Tu n'es pas dans un appart.";
         else if (calqueId != null && info(calqueId) == null) refus = "Calque introuvable.";
         else if (modifie && calqueId != null) refus = refusVerrou(calqueId);
         if (refus == null && !verrouPris && !occupe.compareAndSet(false, true))

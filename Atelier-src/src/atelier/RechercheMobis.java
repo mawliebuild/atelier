@@ -160,7 +160,7 @@ final class RechercheMobis {
         ScrollPane sp = new ScrollPane(v);
         sp.setFitToWidth(true);
         sp.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
-        Tab t = new Tab("Recherche de mobis", sp);
+        Tab t = new Tab("Trouver au troc", sp);
         t.setClosable(false);
         majBoutons();
         return t;
@@ -387,6 +387,8 @@ final class RechercheMobis {
         Platform.runLater(() -> preparerCartes(cibles));
         int visites_ = 0, refus = 0, sansReponse = 0;
         boolean echecEntree = false, arrete = false;
+        Avancement.Suivi suivi = Avancement.debut("Recherche de mobis", () -> arret.set(true)).part(0);
+        av = suivi;
         Random hasard = new Random();
         RechercheReseau.actif = true;
         try {
@@ -450,12 +452,18 @@ final class RechercheMobis {
             }
         } catch (Throwable t) {
             Journal.debug("recherche : " + t);
+            suivi.fin(Avancement.Issue.ECHEC);
+            av = null;
             Ui.erreur(etat, "Recherche interrompue : " + t.getClass().getSimpleName() + ".");
             Platform.runLater(this::finir);
             return;
         } finally {
             RechercheReseau.actif = false;
         }
+        av = null;
+        suivi.texte(null);
+        suivi.fin(echecEntree ? Avancement.Issue.ECHEC
+                : arrete || refus + sansReponse > 0 ? Avancement.Issue.PARTIEL : Avancement.Issue.REUSSI);
 
         int trouves = 0;
         Set<Integer> avec = new HashSet<>();
@@ -486,7 +494,12 @@ final class RechercheMobis {
         while (System.currentTimeMillis() < fin && !arret.get()) Salle.sommeil(Math.min(150, fin - System.currentTimeMillis()));
     }
 
+    /** La tournee dans la barre commune de l'Atelier (bandeau du haut, en jouant). */
+    private volatile Avancement.Suivi av;
+
     private void dire(String texte, double part) {
+        Avancement.Suivi a = av;
+        if (a != null) a.texte(texte).part(Math.max(0, Math.min(1, part)));
         Platform.runLater(() -> {
             if (arret.get() && !texte.startsWith("Retour")) return;
             progression.setText(texte);

@@ -145,7 +145,7 @@ final class RemplacerZone {
             boolean garder = garderEtat.isSelected();
             enCours = true;
             for (Button b : tous) b.setDisable(true);
-            arreter.setVisible(true);
+            // le bouton Arreter est celui de la barre de progression (fenetre et bandeau)
             Salle.tache("remplacer-zone", () -> {
                 try { remplacer(cibles, m, src, garder, f); }
                 finally {
@@ -204,7 +204,7 @@ final class RemplacerZone {
         if (gp == null) return null;
         Integer type = null;
         try { type = gp.getFurniDataTools().getFloorTypeId(m.classe); } catch (Throwable ignored) { }
-        if (type == null) return "« " + m.classe + " » inconnu de la furnidata.";
+        if (type == null) return "« " + m.classe + " » inconnu du jeu.";
         if (src != Generateur.Source.INVENTAIRE) {
             boolean bc = false;
             try { CatalogueBc cat = gp.getCatalog(); bc = cat != null && cat.getFloorProduct(type) != null; } catch (Throwable ignored) { }
@@ -227,6 +227,16 @@ final class RemplacerZone {
                                   boolean garder, CalqueFenetre f) {
         arretRamassage = false;
         arretPose = false;
+        Avancement.Suivi av = Avancement.debut("Remplacement", () -> {
+            if (phase == 1) arretRamassage = true; else arretPose = true;
+        });
+        f.suivre(av);
+        try { remplacer(cibles, m, src, garder, av); }
+        catch (RuntimeException | Error e) { av.fin(Avancement.Issue.ECHEC); throw e; }
+    }
+
+    private static void remplacer(List<HFloorItem> cibles, Generateur.Modele m, Generateur.Source src,
+                                  boolean garder, Avancement.Suivi av) {
         List<Ancien> anciens = new ArrayList<>();
         for (HFloorItem it : cibles) if (it.getTile() != null) anciens.add(new Ancien(it));
         List<Integer> ids = new ArrayList<>();
@@ -246,8 +256,7 @@ final class RemplacerZone {
                     if (arretRamassage || !Salle.dansUneSalle()) break;
                     Salle.espacer();
                     Salle.envoyer(PoseOutils.ramassage(id, false, false));     // comme le client
-                    int fait = ++k, total = encore.size();
-                    Platform.runLater(() -> f.dire("Ramassage : " + fait + "/" + total));
+                    av.texte(passe > 1 ? "Ramassage (2e passe)" : "Ramassage").compte(++k, encore.size());
                 }
                 Salle.envoiFait();
                 PoseDirecte.suivre(() -> { int r = 0; for (int id : encore) if (PoseTapis.encoreLa(id)) r++; return r; }, 800, 3000);
@@ -260,6 +269,7 @@ final class RemplacerZone {
         for (Ancien a : anciens) if (PoseTapis.encoreLa(a.id)) restes++; else partis.add(a);
         if (restes > 0 && !arretRamassage) Salle.signalerRefus("ramassage", restes);
         if (partis.isEmpty()) {
+            av.fin(arretRamassage ? Avancement.Issue.PARTIEL : Avancement.Issue.ECHEC);
             Journal.erreur(Ui.accorder("Rien n'a été ramassé" + (restes > 0 ? " (" + restes + " mobi(s) refusé(s) par le jeu)" : "") + "."));
             return;
         }
@@ -272,7 +282,7 @@ final class RemplacerZone {
             sols.add(new PoseDirecte.Sol(m.classe, a.x, a.y, a.z, a.rot, etat));
         }
         PoseDirecte.Resultat r = PoseDirecte.poser(sols, List.of(), src, x -> { }, () -> arretPose,
-                (fait, total) -> Platform.runLater(() -> f.dire("Pose : " + fait + "/" + total)));
+                (fait, total) -> av.texte("Pose").compte(fait, total));
         int refuses = r.solsRefuses.size(), manquants = Math.max(0, r.manquants - refuses);
         String fin = r.sols.size() + " mobi(s) remplacé(s)";
         if (manquants > 0) fin += ", " + manquants + " manquant(s) (ni dans l'inventaire ni au BC selon la source)";
@@ -281,6 +291,7 @@ final class RemplacerZone {
         if (r.hauteursFausses > 0) fin += ", " + r.hauteursFausses + " hauteur(s) à reprendre";
         if (arretPose || arretRamassage) fin += " (arrêté)";
         fin = Ui.accorder(fin + ".");
+        av.fin(r.sols.size(), manquants + refuses + restes + r.hauteursFausses, arretPose || arretRamassage);
         if (r.sols.isEmpty()) Journal.erreur(fin); else Journal.succes(fin);
     }
 }

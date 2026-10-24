@@ -10,7 +10,13 @@ import gearth.protocol.HPacket;
  *
  *   « atelier:empreinte=l;p;RRGGBB;op[;h] »          l x p cases, la case survolee en coin (x, y min)
  *   « atelier:empreinte=coin;x;y;RRGGBB;op[;h] »     du coin (x, y) jusqu'a la case survolee
- *   « atelier:empreinte=0 »                           efface
+ *   « atelier:empreinte=0 »                           efface (la zone fixe aussi)
+ *   « atelier:empreinte=zone;x0;y0;x1;y1;RRGGBB;op[;h] »  rectangle FIXE de (x0, y0) a (x1, y1)
+ *   « atelier:empreinte=zone;0 »                      efface la zone fixe seule
+ *
+ * La zone fixe (survol d'une carte de Visibilite zone) ne suit pas la souris ;
+ * l'empreinte qui suit la souris (choix d'une zone, pose...) a la priorite :
+ * tant qu'elle est montree, zone() n'envoie rien.
  *
  * Rien n'est envoye si le client installe ne connait pas ces messages.
  * effacer() est toujours sur (sans effet si rien n'est affiche) ; l'empreinte
@@ -39,6 +45,19 @@ final class Empreinte {
 
     static final String EFFACE = "atelier:empreinte=0";
 
+    /** Zone fixe : le bleu de l'Atelier, bord franc et fond a moitie transparent. */
+    static final String COULEUR_ZONE = "3E86AC";
+    static final int OPACITE_ZONE = 40;
+    static final String EFFACE_ZONE = "atelier:empreinte=zone;0";
+
+    static String messageZone(int x0, int y0, int x1, int y1, int h) {
+        return "atelier:empreinte=zone;" + Math.min(x0, x1) + ";" + Math.min(y0, y1) + ";" + Math.max(x0, x1) + ";"
+                + Math.max(y0, y1) + ";" + COULEUR_ZONE + ";" + OPACITE_ZONE + suffixe(h);
+    }
+
+    /** Salle ou la zone fixe est affichee, -1 : rien. */
+    private static volatile int zoneAffichee = -1;
+
     private static String suffixe(int h) { return h > 0 ? ";" + h : ""; }
 
     // ------------------------------------------------------------ envoi
@@ -48,6 +67,7 @@ final class Empreinte {
         if (!sait()) return;
         int salle = Salle.salleId();
         if (salle == -1) return;
+        effacerZone();
         if (envoyer(messageTaille(l, p, hauteurCourante()))) marquer(salle);
     }
 
@@ -58,13 +78,37 @@ final class Empreinte {
         if (salle == -1) return;
         int h = Salle.hauteurSol(x, y);
         if (h < 0) h = hauteurCourante();
+        effacerZone();
         if (envoyer(messageCoin(x, y, h))) marquer(salle);
+    }
+
+    /**
+     * Rectangle fixe des cases (x0, y0) a (x1, y1), qui ne suit pas la souris.
+     * Sans effet si le client ne connait pas cette forme, hors appart, ou si
+     * l'empreinte qui suit la souris est montree (elle a la priorite).
+     */
+    static synchronized void zone(int x0, int y0, int x1, int y1) {
+        if (!ClientModifie.saitEmpreinteZone()) return;
+        int salle = Salle.salleId();
+        if (salle == -1 || affichee == salle) return;
+        int h = Salle.hauteurSol(Math.min(x0, x1), Math.min(y0, y1));
+        if (h < 0) h = hauteurCourante();
+        if (envoyer(messageZone(x0, y0, x1, y1, h))) zoneAffichee = salle;
+    }
+
+    /** Efface la zone fixe seule ; sans effet si elle n'est pas affichee. */
+    static synchronized void effacerZone() {
+        int a = zoneAffichee;
+        if (a == -1) return;
+        zoneAffichee = -1;
+        if (Salle.salleId() == a) envoyer(EFFACE_ZONE);
     }
 
     /** Efface l'empreinte ; sans effet si rien n'est affiche. */
     static synchronized void effacer() {
         if (affichee == -1) return;
         affichee = -1;
+        zoneAffichee = -1;                                   // « =0 » efface aussi la zone fixe
         if (Salle.salleId() != -1) envoyer(EFFACE);
     }
 

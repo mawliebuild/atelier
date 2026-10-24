@@ -64,13 +64,13 @@ public class OutilDeplacer {
     public Tab construire() {
         // fenetre ouverte : les muraux choisis restent en valeur dans le jeu (surligner)
         MiseEnValeur.fournir("murs-deplacer", OutilDeplacer::jetonsRepli);
-        nomSel = Ui.valeur("Aucun mur sélectionné");
+        nomSel = Ui.valeur("Aucun mural choisi");
         codeSel = new TextField();
         codeSel.setStyle("-fx-font-family: monospace;");
         codeSel.setMaxWidth(Double.MAX_VALUE);
         codeSel.setPromptText(":w=21,25 l=3,-257 r");
         codeSel.setOnAction(e -> appliquerCode());   // Entree applique le code
-        codeSel.setTooltip(bulle("Position du mur. Modifie-la puis Entrée pour y envoyer le mur."));
+        codeSel.setTooltip(bulle("Position du mural. Modifie-la puis Entrée pour y envoyer le mural."));
 
         pasPosition = spin(1);
         pasDecalage = spin(1);
@@ -87,19 +87,19 @@ public class OutilDeplacer {
         pivoter.setTooltip(bulle("Passer le mobi sur l'autre face du mur (gauche ↔ droite)"));
         pivoter.setOnAction(e -> pivoter());
 
-        Button dupliquer = new Button("Dupliquer ce mur");
+        Button dupliquer = new Button("Dupliquer ce mural");
         dupliquer.getStyleClass().add("primaire");
         dupliquer.setMaxWidth(Double.MAX_VALUE);
         dupliquer.setGraphic(Icones.petite(Icones.DUPLIQUER, 16, true));
         dupliquer.setGraphicTextGap(7);
-        dupliquer.setTooltip(bulle("Poser une copie de ce mur à la position du code ci-dessus"));
+        dupliquer.setTooltip(bulle("Poser une copie de ce mural à la position du code ci-dessus"));
         dupliquer.setOnAction(e -> dupliquer());
 
         etat = Ui.etat();
 
         // --- selection de plusieurs muraux
         parType = new CheckBox("Tous ceux de ce type");
-        parType.setTooltip(bulle("Un clic sur un mural choisit tous les muraux de la salle du même type "
+        parType.setTooltip(bulle("Un clic sur un mural choisit tous les muraux de l'appart du même type "
                 + "(même poster pour les posters). Un nouveau clic les retire. Un clic sur un autre type l'ajoute aussi : "
                 + "plusieurs types peuvent être choisis ensemble."));
         parType.selectedProperty().addListener((o, a, oui) -> { if (oui) toutLeTypeDuChoisi(); });
@@ -138,7 +138,7 @@ public class OutilDeplacer {
 
         // Les prerequis disparaissent une fois remplis : le nom du mobi choisi
         // doit donc rester visible ici.
-        VBox v = new VBox(12, Ui.bloc("Mur choisi", nomSel, codeSel, parType, enteteSel, defilSel,
+        VBox v = new VBox(12, Ui.bloc("Mural choisi", nomSel, codeSel, parType, enteteSel, defilSel,
                 Ui.aide("Option+clic sur d'autres muraux, de n'importe quel type, pour les ajouter : "
                         + "ils se déplacent tous ensemble.")),
                 commandes, secondaires, commeAvant, etat);
@@ -157,7 +157,7 @@ public class OutilDeplacer {
         majAffichage();
         suivreFenetre();
 
-        Tab t = new Tab("Déplacer un mur", sp);
+        Tab t = new Tab("Déplacer un mural", sp);
         t.setClosable(false);
         return t;
     }
@@ -255,7 +255,7 @@ public class OutilDeplacer {
         secondaires.setDisable(!actif);
         codeSel.setDisable(!actif);
         if (!actif) {
-            nomSel.setText("Aucun mur sélectionné");
+            nomSel.setText("Aucun mural choisi");
             nomSel.getStyleClass().setAll("label", "etat-absent");
             codeSel.setText("");
             return;
@@ -508,7 +508,7 @@ public class OutilDeplacer {
      */
     private Function<PositionMur, String> decalageDuCode() {
         SelectionMur.Mur ref = reference();
-        if (ref == null) { echec("Aucun mur sélectionné."); return null; }
+        if (ref == null) { echec("Aucun mural choisi."); return null; }
         String code = codeSel.getText() == null ? "" : codeSel.getText().trim();
         PositionMur c, r;
         try { c = PositionMur.lire(code); }
@@ -528,11 +528,11 @@ public class OutilDeplacer {
     /** Pose une copie de chaque mural choisi : celle de la reference au code, les autres du meme decalage. */
     private void dupliquer() {
         List<SelectionMur.Mur> choisis = cibles();
-        if (choisis.isEmpty()) { echec("Aucun mur sélectionné."); return; }
+        if (choisis.isEmpty()) { echec("Aucun mural choisi."); return; }
         Moteur gp = AtelierLauncher.moteur();
         if (gp == null) { echec("L'Atelier n'est pas encore prêt."); return; }
         for (SelectionMur.Mur m : choisis)
-            if (m.typeId < 0) { echec("Type du mur inconnu : refais un Option + clic sur le mur."); return; }
+            if (m.typeId < 0) { echec("Type du mural inconnu : refais un Option + clic sur le mural."); return; }
         Function<PositionMur, String> f = decalageDuCode();
         if (f == null) return;
 
@@ -556,7 +556,7 @@ public class OutilDeplacer {
                 for (SelectionMur.Mur m : choisis) {
                     String pos = SelectionMur.positionActuelle(m, FRAICHEUR);
                     PositionMur p = pos == null ? null : PositionMur.lireOuNull(pos);
-                    if (p == null) { rates++; raison = "plus dans la salle"; continue; }
+                    if (p == null) { rates++; raison = "plus dans l'appart"; continue; }
                     Salle.espacer();
                     PoseMur.Resultat r = PoseMur.poser(gp, m.typeId, m.etat, f.apply(p), src, deja);
                     if (r.ok) ok++; else { rates++; raison = r.detail; }
@@ -591,7 +591,7 @@ public class OutilDeplacer {
      */
     private void bouger(Function<PositionMur, String> cible) {
         List<SelectionMur.Mur> choisis = cibles();
-        if (choisis.isEmpty()) { echec("Aucun mur sélectionné."); return; }
+        if (choisis.isEmpty()) { echec("Aucun mural choisi."); return; }
         Moteur gp = AtelierLauncher.moteur();
         if (gp == null) { echec("L'Atelier n'est pas encore prêt."); return; }
         // un mobi d'un calque verrouille ne bouge pas
@@ -629,8 +629,8 @@ public class OutilDeplacer {
                 Historique.grouper(false);
             }
             if (absents == 0 && ok == choisis.size()) reussi(ok + " mural(aux) déplacé(s).");
-            else if (absents > 0) echec(ok + " mural(aux) déplacé(s), " + absents + " introuvable(s) dans la salle.");
-            else echec("Déplacement arrêté : tu as changé de salle (" + ok + " mural(aux) déplacé(s)).");
+            else if (absents > 0) echec(ok + " mural(aux) déplacé(s), " + absents + " introuvable(s) dans l'appart.");
+            else echec("Déplacement arrêté : tu as changé d'appart (" + ok + " mural(aux) déplacé(s)).");
         });
     }
 

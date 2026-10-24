@@ -34,12 +34,18 @@ final class CalqueFenetre {
     private final Stage stage = new Stage();
     private final Label titre = new Label();
     private final VBox contenu = new VBox(8);
-    private final HBox boutons = new HBox(6);
+    /** Boutons du bas : ils passent a la ligne plutot que d'etre rognes (« Arr… »). */
+    private final javafx.scene.layout.FlowPane boutons = new javafx.scene.layout.FlowPane(6, 6);
     private final Label etat = Ui.etat();
+    /** Progression de l'action lancee ici (et les « 3 / 10 » de la ligne d'etat). */
+    private final Avancement.Barre avancement = new Avancement.Barre().pour(etat);
     private final Window proche;
     private Runnable surFermeture = () -> { };
     private double prisX, prisY;
     private boolean deplacee = false;
+
+    /** Largeur de base du corps. */
+    private static final double LARGEUR = 300;
 
     CalqueFenetre(String css, String titreTexte, Window proche) {
         this.proche = proche;
@@ -70,11 +76,18 @@ final class CalqueFenetre {
         });
 
         boutons.setAlignment(Pos.CENTER_RIGHT);
+        boutons.setRowValignment(javafx.geometry.VPos.CENTER);
         boutons.managedProperty().bind(boutons.visibleProperty());
-        VBox corps = new VBox(10, contenu, etat, boutons);
+        avancement.visibleProperty().addListener((o, a, b) -> ajuster());
+        // 300 px, mais jamais moins que ce qui ne peut pas ceder (une rangee de fleches) :
+        // la fenetre s'elargit plutot que de rogner.
+        VBox corps = new VBox(10, contenu, avancement, etat, boutons) {
+            @Override protected double computePrefWidth(double h) {
+                return Math.max(LARGEUR, computeMinWidth(h));
+            }
+        };
         // en style : la feuille (.fenetre-corps, padding 0 2 2 2) l'emporterait sur setPadding
         corps.setStyle("-fx-padding: 12 14 14 14;");
-        corps.setPrefWidth(300);
         corps.getStyleClass().add("fenetre-corps");
 
         VBox cadre = new VBox(barre, corps);
@@ -101,6 +114,7 @@ final class CalqueFenetre {
     void contenu(Node... n) {
         contenu.getChildren().setAll(n);
         Ui.majusculesAuto(contenu);
+        Ui.rienDeCoupe(contenu);
         ajuster();
     }
 
@@ -108,14 +122,18 @@ final class CalqueFenetre {
     void boutons(Node... b) {
         boutons.getChildren().setAll(b);
         Ui.majusculesAuto(boutons);
+        Ui.rienDeCoupe(boutons);
         ajuster();
     }
 
     /** Ligne d'etat : progression, ce qui va se passer. Vide = rien. */
     void dire(String s) {
-        etat.setText(s == null ? "" : WindowsClavier.texte(Ui.majuscule(s)));
+        etat.setText(s == null ? "" : Ui.majuscule(Ui.accorder(s)));   // pas de « (s) » ; touches selon la plateforme
         ajuster();
     }
+
+    /** La barre de progression de la fenetre montre cette action (null : plus rien). */
+    void suivre(Avancement.Suivi s) { avancement.suivre(s); }
 
     void surFermeture(Runnable r) { surFermeture = r == null ? () -> { } : r; }
 
@@ -242,7 +260,7 @@ final class CalqueFenetre {
 
     /** Bulle qui s'affiche vite au survol. */
     static Tooltip bulle(String texte) {
-        Tooltip t = new Tooltip(WindowsClavier.texte(Ui.majuscule(texte)));
+        Tooltip t = new Tooltip(Ui.majuscule(Ui.accorder(texte)));
         t.setShowDelay(Duration.millis(150));
         t.setHideDelay(Duration.millis(80));
         t.setShowDuration(Duration.seconds(30));

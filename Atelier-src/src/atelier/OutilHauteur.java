@@ -55,8 +55,9 @@ public class OutilHauteur {
     /** Le champ Hauteur, mis a jour quand la hauteur vient de « :h » dans le chat. */
     private static Spinner<Double> champ;
     private static Button couvrirAppart, couvrirZone, ramasser;
-    private static ProgressBar barre;
-    private static HBox ligneProgres;
+    /** Progression de l'action en cours (barre commune de l'Atelier). */
+    private static final Avancement.Barre barreAv = new Avancement.Barre();
+    private static volatile Avancement.Suivi suivi;
     /** Chantier en cours : true = seulement dans la zone (Zone), sinon tout l'appart. */
     private static volatile boolean zoneSeule = false;
 
@@ -131,23 +132,11 @@ public class OutilHauteur {
         couvrirZone.setOnAction(e -> { if (!occupe) choisirZone(); });
         ramasser = Icones.sur(new Button("Ramasser les dalles"), Icones.RAMASSER);
         ramasser.setMaxWidth(Double.MAX_VALUE);
+        ramasser.getStyleClass().add("danger");                  // sans retour : rouge
         ramasser.setOnAction(e -> { if (!occupe) file.submit(OutilHauteur::ramasserTout); });
         Zone.ecouter(OutilHauteur::suivreZone);
 
-        // --- progression : barre + Arreter, seulement pendant une action
-        barre = new ProgressBar(ProgressBar.INDETERMINATE_PROGRESS);
-        barre.setMaxWidth(Double.MAX_VALUE);
-        HBox.setHgrow(barre, Priority.ALWAYS);
-        Button arreter = Icones.sur(new Button("Arrêter"), Icones.ARRET);
-        arreter.setMinWidth(Region.USE_PREF_SIZE);
-        arreter.setOnAction(e -> {
-            if (occupe) arret = true;
-            else if (regle) reglage.incrementAndGet();      // le reglage en cours s'arrete au tour suivant
-            progres("Arrêt demandé…", -1);
-        });
-        ligneProgres = new HBox(8, barre, arreter);
-        ligneProgres.setAlignment(Pos.CENTER_LEFT);
-        ligneProgres.setVisible(false); ligneProgres.setManaged(false);
+        // --- progression : barre + Arreter, seulement pendant une action (Avancement)
 
         VBox v = new VBox(12,
                 Ui.bloc("Hauteur fixe",
@@ -159,7 +148,7 @@ public class OutilHauteur {
                                 + "et y restent quand tu la changes.")),
                 Ui.bloc("Dalles magiques",
                         couvrirAppart, couvrirZone, ramasser,
-                        ligneProgres, etat,
+                        barreAv, etat,
                         Ui.aide("« Couvrir » pose des dalles magiques sur toutes les cases libres "
                                 + "(8×8 d'abord, puis plus petites pour suivre la forme), prises au catalogue BC "
                                 + "(ton inventaire n'est pas touché). « Couvrir une zone » : clique deux points "
@@ -259,13 +248,13 @@ public class OutilHauteur {
 
     /** Resultat reussi d'une action : un message (Journal : jeu + console), la progression disparait. */
     static void bilan(String s) {
-        finProgres();
+        finProgres(s);
         Journal.succes(s);
     }
 
     /** Resultat en echec : un message d'erreur (Journal), la progression disparait. */
     static void echec(String s) {
-        finProgres();
+        finProgres(s);
         Journal.erreur(s);
     }
 
@@ -274,19 +263,34 @@ public class OutilHauteur {
      * faite (0..1), ou negative pour une barre sans fin connue.
      */
     private static void progres(String phase, double part) {
-        String t = Ui.majuscule(phase);
-        Platform.runLater(() -> {
-            if (ligneProgres != null) { ligneProgres.setVisible(true); ligneProgres.setManaged(true); }
-            if (barre != null) barre.setProgress(part < 0 ? ProgressBar.INDETERMINATE_PROGRESS : Math.min(1, part));
-            if (etat != null) etat.setText(t);
-        });
+        Avancement.Suivi s = suivi;
+        if (s == null || s.finie()) {
+            suivi = s = Avancement.debut("Dalles magiques", OutilHauteur::arreter);
+            barreAv.suivre(s);
+        }
+        s.texte(phase.replaceAll("[….]+$", ""));
+        s.part(part);
     }
 
+    /** Bouton Arreter de la barre : l'action en cours s'arrete au tour suivant. */
+    private static void arreter() {
+        if (occupe) arret = true;
+        else if (regle) reglage.incrementAndGet();      // le reglage en cours s'arrete au tour suivant
+    }
+
+    /** Fin sans bilan ecrit (reglage de hauteur, erreur) : la barre se termine d'apres l'arret. */
     private static void finProgres() {
-        Platform.runLater(() -> {
-            if (ligneProgres != null) { ligneProgres.setVisible(false); ligneProgres.setManaged(false); }
-            if (etat != null) etat.setText("");
-        });
+        Avancement.Suivi s = suivi;
+        if (s != null) { suivi = null; s.fin(s.arretDemande() ? Avancement.Issue.PARTIEL : Avancement.Issue.REUSSI); }
+        Platform.runLater(() -> { if (etat != null) etat.setText(""); });
+    }
+
+    /** La barre passe a la couleur du resultat (vert, orange, rouge), puis s'efface. */
+    private static void finProgres(String bilan) {
+        Avancement.Suivi s = suivi;
+        suivi = null;
+        if (s != null) s.fin(bilan);
+        Platform.runLater(() -> { if (etat != null) etat.setText(""); });
     }
 
     static boolean occupe() { return occupe; }
@@ -383,7 +387,7 @@ public class OutilHauteur {
             //    sont ramassees d'abord : le nouveau tapis part d'un sol propre.
             int dejaLa = viderAvantPose(salle);
             if (arret || Salle.salleId() != salle) {
-                if (Salle.salleId() != salle) echec("Pose interrompue : tu as changé de salle.");
+                if (Salle.salleId() != salle) echec("Pose interrompue : tu as changé d'appart.");
                 else bilan("Arrêté avant la pose : " + dejaLa + " dalle(s) ramassée(s).");
                 return;
             }
@@ -518,7 +522,7 @@ public class OutilHauteur {
                     + (detail.length() > 0 ? " " + detail : "");
             Journal.info(fin);
             String lieu = zoneSeule ? "toute la zone" : "tout l'appart";
-            if (partie) echec("Pose interrompue : tu as changé de salle (" + poses + " dalle(s) posée(s)).");
+            if (partie) echec("Pose interrompue : tu as changé d'appart (" + poses + " dalle(s) posée(s)).");
             else if (raisonArret != null)
                 echec((poses == 0 ? "Aucune dalle posée : " : poses + " dalle(s) posée(s), puis arrêt : ") + raisonArret + ".");
             else if (arret) bilan("Pose arrêtée : " + poses + " dalle(s) posée(s).");
@@ -527,6 +531,9 @@ public class OutilHauteur {
             else if (libres > 0) bilan(poses + " dalle(s) posée(s), " + libres + " case(s) restée(s) sans dalle.");
             else bilan(poses + " dalle(s) posée(s), " + lieu + " est couvert" + (zoneSeule ? "e." : "."));
         } catch (Throwable t) {
+            Avancement.Suivi s = suivi;
+            suivi = null;
+            if (s != null) s.fin(Avancement.Issue.ECHEC);
             Journal.erreur("Pose des dalles interrompue", t);
         } finally {
             for (int type : types) Historique.ignorerType(type, 2500);
@@ -617,7 +624,7 @@ public class OutilHauteur {
         String m = HauteurLogique.messageReglage(texte(h), true, ids.size(), deja, ratees, verrou);
         // Une autre hauteur demandee entre-temps : c'est elle qui donnera le message.
         if (!dire || reglage.get() != demande) Journal.info(m);
-        else if (ratees > 0) Journal.erreur(m);
+        else if (ratees > 0) { finProgres(m); Journal.erreur(m); }
         else Journal.succes(m);
     }
 
@@ -702,7 +709,7 @@ public class OutilHauteur {
             });
             int n = fait[0];
             if (Salle.salleId() != salle) {
-                echec("Ramassage interrompu : tu as changé de salle (" + n + " / " + ids.size() + ").");
+                echec("Ramassage interrompu : tu as changé d'appart (" + n + " / " + ids.size() + ").");
                 return;
             }
             Salle.sommeil(300);

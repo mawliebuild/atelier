@@ -142,9 +142,22 @@ public final class Salle {
         try {
             Furnidata fd = gp().getFurniDataTools();
             String n = mural ? fd.getWallItemDetails(c).name : fd.getFloorItemDetails(c).name;
-            if (n != null && !n.isBlank()) return n;
+            if (n != null && !n.isBlank() && !nomManquant(n)) return n;
         } catch (Throwable ignored) { }
-        return c;
+        return nomDeClasse(c);
+    }
+
+    /** Traduction absente de la furnidata : le jeu y laisse sa cle (« hweenc26_gallerywall name »). */
+    static boolean nomManquant(String n) {
+        String t = n.trim();
+        return t.matches("(?i)\\S+ (name|desc)") || t.matches("(?i)\\S*_\\S*");
+    }
+
+    /** Nom lisible tire du nom technique : « hweenc26_gallerywall » -> « Hweenc26 gallerywall ». */
+    static String nomDeClasse(String c) {
+        if (c == null || c.isBlank()) return c;
+        String t = c.replace('*', ' ').replace('_', ' ').trim().replaceAll("\\s+", " ");
+        return t.isEmpty() ? c : Character.toUpperCase(t.charAt(0)) + t.substring(1);
     }
 
     public static Furnidata.Mobi details(String classe) {

@@ -261,6 +261,118 @@ public final class RaccourcisGlobaux {
         reenregistrer();
     }
 
+    // ------------------------------------------- raccourcis choisis (zones)
+
+    /**
+     * Un raccourci choisi par l'utilisatrice (Visibilite zone) : touche = lettre
+     * minuscule « a ».. « z », chiffre de la rangee « 0 ».. « 9 », ou « F1 ».. « F12 » ;
+     * mods = Carbon.CMD / MAJ / OPTION / CTRL. Sous Windows, CMD veut dire Ctrl
+     * (comme dans la Documentation) et OPTION veut dire Alt.
+     */
+    public record Choisi(String touche, int mods) { }
+
+    /** Ids 64..127 : un par raccourci choisi, dans l'ordre de la liste donnee. */
+    static final int CHOISI = 64, CHOISIS_MAX = 64;
+    private static volatile List<Choisi> choisis = List.of();
+    private static volatile java.util.function.IntConsumer surChoisi = i -> { };
+
+    /**
+     * Les raccourcis choisis a prendre dans le jeu (liste vide = aucun), et ce
+     * qu'ils font : action recoit l'indice dans la liste (hors fil JavaFX).
+     * Comme les autres : Habbo devant et chat vide seulement.
+     */
+    public static void choisis(List<Choisi> l, java.util.function.IntConsumer action) {
+        List<Choisi> c = l == null ? List.of() : List.copyOf(l.subList(0, Math.min(l.size(), CHOISIS_MAX)));
+        surChoisi = action == null ? i -> { } : action;
+        if (c.equals(choisis)) return;
+        choisis = c;
+        Journal.debug("raccourcis globaux : raccourcis de zone = " + c.size());
+        reenregistrer();
+    }
+
+    /** Touches fixes de la rangee des chiffres (Mac kVK_ANSI_0..9) et F1..F12 (kVK_F1..F12). */
+    static final int[] MAC_RANGEE = {29, 18, 19, 20, 21, 23, 22, 26, 28, 25};
+    static final int[] MAC_F = {122, 120, 99, 118, 96, 97, 98, 100, 101, 109, 103, 111};
+    /** Mac : kVK_ANSI_A..Z, si la disposition clavier ne se lit pas (QWERTY suppose). */
+    static final int[] MAC_LETTRES = {0, 11, 8, 2, 14, 3, 5, 4, 34, 38, 40, 37, 46, 45, 31, 35, 12, 15, 1, 17, 32, 9, 13, 7, 16, 6};
+
+    /** Numero de F1..F12 (1..12), 0 sinon. */
+    static int numeroF(String t) {
+        if (t == null || !t.matches("F([1-9]|1[0-2])")) return 0;
+        return Integer.parseInt(t.substring(1));
+    }
+
+    /** Code physique Mac de la touche choisie (traduire : disposition active, ou null) ; -1 si inconnue. */
+    static int codeMac(String t, IntFunction<String> traduire) {
+        int f = numeroF(t);
+        if (f > 0) return MAC_F[f - 1];
+        if (t == null || t.length() != 1) return -1;
+        char c = t.charAt(0);
+        if (c >= '0' && c <= '9') return MAC_RANGEE[c - '0'];
+        if (c < 'a' || c > 'z') return -1;
+        Integer code = traduire == null ? null : codePour(c, traduire);
+        return code != null ? code : MAC_LETTRES[c - 'a'];
+    }
+
+    /** Code VK Windows de la touche choisie ; -1 si inconnue. */
+    static int codeWindows(String t) {
+        int f = numeroF(t);
+        if (f > 0) return 0x70 + f - 1;                       // VK_F1..
+        if (t == null || t.length() != 1) return -1;
+        char c = t.charAt(0);
+        if (c >= '0' && c <= '9') return c;                   // VK_0..VK_9 : rangee des chiffres
+        if (c < 'a' || c > 'z') return -1;
+        return WindowsClavier.vkPour(c);
+    }
+
+    /** Modificateurs Mac (Carbon) vers Windows (MOD_*) : Cmd et Ctrl = Ctrl, Option = Alt. */
+    static int modsWindows(int mods) {
+        int r = 0;
+        if ((mods & (Carbon.CMD | Carbon.CTRL)) != 0) r |= WindowsClavier.MOD_CONTROL;
+        if ((mods & Carbon.OPTION) != 0) r |= WindowsClavier.MOD_ALT;
+        if ((mods & Carbon.MAJ) != 0) r |= WindowsClavier.MOD_SHIFT;
+        return r;
+    }
+
+    /** Les raccourcis choisis a enregistrer, {id, code, modificateurs} (Mac ou Windows). */
+    private static List<int[]> raccourcisChoisis(boolean windows, IntFunction<String> traduire) {
+        List<int[]> r = new java.util.ArrayList<>();
+        List<Choisi> l = choisis;
+        for (int i = 0; i < l.size(); i++) {
+            Choisi c = l.get(i);
+            int code = windows ? codeWindows(c.touche()) : codeMac(c.touche(), traduire);
+            if (code < 0) continue;
+            r.add(new int[]{CHOISI + i, code, windows ? modsWindows(c.mods()) : c.mods()});
+        }
+        return r;
+    }
+
+    /**
+     * Le raccourci est-il deja pris par l'Atelier dans le jeu (ou par le
+     * systeme) ? Renvoie ce qui le prend, null s'il est libre. Memes touches
+     * que raccourcis(...) / raccourcisWindows(...) ci-dessus.
+     */
+    public static String prisParAtelier(String t, int mods, boolean windows) {
+        if (t == null) return "touche inconnue";
+        int cmd = Carbon.CMD, maj = Carbon.MAJ, opt = Carbon.OPTION, ctrl = Carbon.CTRL;
+        if (windows && (mods & ctrl) != 0) mods = (mods & ~ctrl) | cmd;   // une seule touche Ctrl sous Windows
+        boolean lettre = !t.startsWith("F");
+        if (lettre && (mods & (cmd | ctrl | opt)) == 0)
+            return "il faut une touche " + (windows ? "Ctrl ou Alt" : "⌘, ⌃ ou ⌥") + " avec une lettre ou un chiffre (sinon elle ne s'écrit plus dans le chat)";
+        if (windows && (mods & cmd) != 0 && (mods & opt) != 0) return "Ctrl + Alt, c'est AltGr sur un clavier français";
+        if (windows && (mods & opt) != 0 && (mods & maj) != 0 && (mods & cmd) == 0) return "Alt + Maj change la langue du clavier sous Windows";
+        if (windows && t.equals("F4") && (mods & opt) != 0) return "Alt + F4 ferme la fenêtre";
+        if (t.equals("z") && (mods == cmd || mods == (cmd | maj) || mods == ctrl || mods == (ctrl | maj))) return "Annuler / Rétablir";
+        if (t.equals("y") && (mods == cmd || mods == ctrl)) return "Rétablir";
+        if (t.equals("c") && mods == opt) return "mode calque";
+        if (t.equals("g") && mods == opt) return "grille des cases";
+        int copie = windows ? (cmd | maj) : (opt | maj);
+        if ((t.equals("c") || t.equals("v")) && mods == copie) return "copier / coller un calque";
+        if (mods == cmd && "qwhmcvxa".contains(t) && t.length() == 1)
+            return "raccourci du système (copier, coller, quitter...)";
+        return null;
+    }
+
     private static void reenregistrer() {
         if (WIN) { Windows.appliquer(); return; }
         try {
@@ -462,7 +574,19 @@ public final class RaccourcisGlobaux {
 
     private static volatile long derniereEntree = 0;
 
+    private static volatile long dernierChoisi = 0;
+
     private static void declencher(int id) {
+        if (id >= CHOISI && id < CHOISI + CHOISIS_MAX) {
+            long now = System.currentTimeMillis();
+            if (now - dernierChoisi < 250) return;          // rebond
+            dernierChoisi = now;
+            int i = id - CHOISI;
+            Journal.debug("raccourci jeu : raccourci de zone " + i);
+            java.util.function.IntConsumer a = surChoisi;
+            Salle.tache("raccourci-zone", () -> a.accept(i));
+            return;
+        }
         int dir = flecheDirection(id);
         if (dir >= 0 || id == FLECHE_ENTREE || id == FLECHE_PAVE || id == FLECHE_ECHAP) {
             Fleches h = surFleches;
@@ -590,6 +714,11 @@ public final class RaccourcisGlobaux {
             int[][] r = voulu ? raccourcisWindows(WindowsClavier.vkPour('z'), WindowsClavier.vkPour('y'),
                     WindowsClavier.vkPour('c'), WindowsClavier.vkPour('v'), WindowsClavier.vkPour('g'),
                     pVoulu, calquesVoulu, collerVoulu, floorVoulu, surFleches != null) : new int[0][];
+            if (voulu) {
+                List<int[]> tout = new java.util.ArrayList<>(List.of(r));
+                tout.addAll(raccourcisChoisis(true, null));
+                r = tout.toArray(new int[0][]);
+            }
             WindowsClavier.raccourcis(r, RaccourcisGlobaux::declencher);
             enregistres = r.length > 0;
         }
@@ -714,7 +843,7 @@ public final class RaccourcisGlobaux {
         private static Lib lib;
         private static CF cf;
         private static Gestionnaire gestionnaire;          // garde en vie (sinon ramasse par le GC)
-        private static final Pointer[] refs = new Pointer[64];
+        private static final Pointer[] refs = new Pointer[CHOISI + CHOISIS_MAX];
         static boolean enregistresAlors() { return enregistres; }
 
         static int ostype(String s) {
@@ -777,8 +906,9 @@ public final class RaccourcisGlobaux {
         static void enregistrer() {
             if (!voulu || enregistres || !charger()) return;
             int z = ANSI_Z, y = ANSI_Y, p = ANSI_P, c = ANSI_C, v = ANSI_V, g = ANSI_G;
+            IntFunction<String> d = null;
             try {
-                IntFunction<String> d = disposition();
+                d = disposition();
                 if (d != null) {
                     Integer cz = codePour('z', d), cy = codePour('y', d), cp = codePour('s', d);
                     Integer cc = codePour('c', d), cv = codePour('v', d), cg = codePour('g', d);
@@ -792,7 +922,10 @@ public final class RaccourcisGlobaux {
             } catch (Throwable t) {
                 Journal.debug("raccourcis : disposition clavier illisible, QWERTY suppose (" + t + ")");
             }
-            int[][] r = raccourcis(z, y, p, c, v, g, pVoulu, calquesVoulu, collerVoulu, floorVoulu, surFleches != null);
+            List<int[]> tout = new java.util.ArrayList<>(List.of(
+                    raccourcis(z, y, p, c, v, g, pVoulu, calquesVoulu, collerVoulu, floorVoulu, surFleches != null)));
+            tout.addAll(raccourcisChoisis(false, d));          // zones : touches choisies par l'utilisatrice
+            int[][] r = tout.toArray(new int[0][]);
             int ok = 0;
             for (int[] k : r) {
                 EventHotKeyID.ByValue id = new EventHotKeyID.ByValue();

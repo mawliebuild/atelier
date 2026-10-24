@@ -58,7 +58,7 @@ public class OngletCollageWired {
     public Tab construire() {
         // ------------------------------------------------ 1. copier
         nomCopie = new TextField();
-        nomCopie.setPromptText("Nom (par défaut : la salle et la date)");
+        nomCopie.setPromptText("Nom (par défaut : l'appart et la date)");
         nomCopie.setMaxWidth(Double.MAX_VALUE);
         avecCibles = new CheckBox("Copier aussi les mobis choisis par ces wired");
         avecCibles.setSelected(true);
@@ -132,7 +132,7 @@ public class OngletCollageWired {
         liste = new ListView<>();
         liste.setPrefHeight(250);
         liste.setMinHeight(150);
-        Label vide = new Label("Aucune config pour l'instant : copie des wired au-dessus.");
+        Label vide = new Label("Aucune copie pour l'instant : copie des wired au-dessus.");
         vide.setWrapText(true);
         vide.getStyleClass().add("aide-vide");
         liste.setPlaceholder(vide);
@@ -166,11 +166,11 @@ public class OngletCollageWired {
         cptListe = new Label("");
         cptListe.getStyleClass().add("salle-compte");
         cptListe.setWrapText(true);
-        Button renommer = Icones.seul(Icones.CRAYON, "Renommer la config");
+        Button renommer = Icones.seul(Icones.CRAYON, "Renommer la copie");
         renommer.setOnAction(e -> renommer());
-        Button supprimer = Icones.seul(Icones.CORBEILLE, "Supprimer la config (définitif)");
+        Button supprimer = Icones.seul(Icones.CORBEILLE, "Supprimer la copie (définitif)");
         supprimer.setOnAction(e -> supprimer());
-        Button apercu = Icones.seul(Icones.CAPTURE, "Reprendre l'aperçu : nouvelle photo des wired de la config "
+        Button apercu = Icones.seul(Icones.CAPTURE, "Reprendre l'aperçu : nouvelle photo des wired de la copie "
                 + "choisie, dans l'appart où elle a été copiée.");
         apercu.getTooltip().setWrapText(true);
         apercu.getTooltip().setMaxWidth(300);
@@ -180,7 +180,7 @@ public class OngletCollageWired {
         coller.setMaxWidth(Double.MAX_VALUE);
         coller.setOnAction(e -> {
             String nom = liste.getSelectionModel().getSelectedItem();
-            if (nom == null) { InfoJeu.consigne("Choisis d'abord une config dans la liste."); return; }
+            if (nom == null) { InfoJeu.consigne("Choisis d'abord une copie dans la liste."); return; }
             WiredCollage.collerDans(nom, null, suiviCollage);
         });
         for (Button b : new Button[]{coller, renommer, supprimer, apercu})
@@ -208,12 +208,12 @@ public class OngletCollageWired {
                 suiviCopie.noeud(),
                 Ui.bloc("Réglages de la copie",
                         nomCopie, avecCibles,
-                        Ui.aide("Sans nom, la copie prend celui de la salle et la date. Une copie existante "
+                        Ui.aide("Sans nom, la copie prend celui de l'appart et la date. Une copie existante "
                                 + "n'est jamais écrasée. Une photo est prise à chaque copie.")),
-                Ui.bloc("Mes configs wired",
+                Ui.bloc("Mes copies de wired",
                         liste, sousListe, ligneRenommer, ligneSupprimer,
                         Ui.aide("Clique un aperçu pour l'agrandir. Les icônes sous la liste renomment, "
-                                + "reprennent la photo ou suppriment la config choisie.")),
+                                + "reprennent la photo ou suppriment la copie choisie.")),
                 Ui.bloc("Coller",
                         coller,
                         suiviCollage.noeud(),
@@ -226,7 +226,7 @@ public class OngletCollageWired {
         ScrollPane sp = new ScrollPane(v);
         sp.setFitToWidth(true);
         sp.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
-        Tab t = new Tab("Copier / coller la config", sp);
+        Tab t = new Tab("Copier des wired", sp);
         t.setClosable(false);
         // la fenetre se ferme ou passe a autre chose : le choix des cases s'arrete
         t.selectedProperty().addListener((o, a, b) -> { if (!b) arreterModeCases(false); });
@@ -265,7 +265,7 @@ public class OngletCollageWired {
 
     private void basculerModeCases() {
         if (modeCases) { arreterModeCases(true); return; }
-        if (!Salle.dansUneSalle()) { Journal.erreur("Tu n'es pas dans une salle."); return; }
+        if (!Salle.dansUneSalle()) { Journal.erreur("Tu n'es pas dans un appart."); return; }
         verifierSalle();
         modeCases = true;
         choixCasesActif = true;
@@ -315,7 +315,7 @@ public class OngletCollageWired {
 
     /** Zone en deux clics : toutes les piles de wired dedans s'ajoutent. */
     private void choisirZone() {
-        if (!Salle.dansUneSalle()) { Journal.erreur("Tu n'es pas dans une salle."); return; }
+        if (!Salle.dansUneSalle()) { Journal.erreur("Tu n'es pas dans un appart."); return; }
         verifierSalle();
         zoneDemandee = true; deuxiemeDit = false;
         Zone.demarrerChoix();
@@ -419,7 +419,7 @@ public class OngletCollageWired {
     private void majCptListe() {
         if (cptListe == null) return;
         int n = liste.getItems().size();
-        cptListe.setText(n == 0 ? "" : Ui.accorder(n + " config(s) wired"));
+        cptListe.setText(n == 0 ? "" : Ui.accorder(n + " copie(s) de wired"));
     }
 
     /** Les lignes « renommer » et « supprimer », cachees jusqu'au clic sur leur icone. */
@@ -444,7 +444,7 @@ public class OngletCollageWired {
         questionSupprimer.setWrapText(true);
         questionSupprimer.setMinHeight(Region.USE_PREF_SIZE);
         Button oui = new Button("Supprimer");
-        oui.getStyleClass().add("primaire");
+        oui.getStyleClass().add("danger");                       // sans retour : rouge
         Button non = new Button("Annuler");
         non.setOnAction(e -> montrer(ligneSupprimer, false));
         oui.setOnAction(e -> validerSuppression());
@@ -479,7 +479,7 @@ public class OngletCollageWired {
         String err = WiredCollage.renommer(nom, n);
         if (err != null) { Journal.erreur(err); return; }
         String nouveau = WiredCollage.nettoyer(n);
-        if (!nouveau.equals(nom)) Journal.succes("« " + nom + " » renommée en « " + nouveau + " ».");
+        if (!nouveau.equals(nom)) Journal.debug("collage wired : « " + nom + " » renommée en « " + nouveau + " ».");
         charger(nouveau);
     }
 
@@ -496,7 +496,7 @@ public class OngletCollageWired {
         montrer(ligneSupprimer, false);
         if (nom == null) return;
         if (!WiredCollage.supprimer(nom)) { Journal.erreur("Impossible de supprimer « " + nom + " »."); return; }
-        Journal.succes("Config « " + nom + " » supprimée.");
+        Journal.debug("collage wired : copie « " + nom + " » supprimée.");   // elle disparait de la liste
         liste.getSelectionModel().clearSelection();
         charger(null);
     }
@@ -508,12 +508,12 @@ public class OngletCollageWired {
         List<Integer> ids = new ArrayList<>();
         for (Integer id : WiredCollage.idsDe(nom)) if (Salle.sol(id) != null) ids.add(id);
         if (ids.isEmpty()) {
-            Journal.erreur("Les wired de « " + nom + " » ne sont pas dans cette salle : va dans l'appart où tu l'as copiée.");
+            Journal.erreur("Les wired de « " + nom + " » ne sont pas dans cet appart : va dans l'appart où tu l'as copiée.");
             return;
         }
         Salle.tache("wired-apercu", () -> {
             String err = ApercuMobis.prendre(WiredCollage.fichierPng(nom), ids);
-            if (err == null) Journal.succes("Aperçu de « " + nom + " » repris.");
+            if (err == null) Journal.debug("collage wired : aperçu de « " + nom + " » repris.");   // il se voit dans le jeu
             else Journal.erreur(err);
             Platform.runLater(() -> { vignettes.clear(); liste.refresh(); });
         });

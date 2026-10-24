@@ -139,8 +139,8 @@ final class PoseMuraux {
         Bilan b = new Bilan();
         if (stop == null) stop = () -> false;
         if (copie == null || copie.murs.isEmpty()) return b;
-        if (!salle.dansUneSalle()) { b.erreur = "pas dans une salle"; return b; }
-        if (furnidata == null || !furnidata.pret()) { b.erreur = "furnidata pas prête"; return b; }
+        if (!salle.dansUneSalle()) { b.erreur = "pas dans un appart"; return b; }
+        if (furnidata == null || !furnidata.pret()) { b.erreur = "liste des mobis pas prête"; return b; }
         b.avertissement = comparerDisposition(copie, coin);
         PoseOutils.Signaux.installer();              // raisons de refus du serveur (avertissement BC...)
 
@@ -153,7 +153,7 @@ final class PoseMuraux {
             if (stop.getAsBoolean() || !salle.dansUneSalle()) { b.arrete = stop.getAsBoolean(); break; }
             String etat = m.etat != null ? m.etat : "";
             Integer type = furnidata.typeMur(m.classe);
-            if (type == null) { b.manquants.add(m.classe + " (inconnu de la furnidata)"); continue; }
+            if (type == null) { b.manquants.add(m.classe + " (inconnu du jeu)"); continue; }
             PositionMur voulue = new PositionMur(m.position.x() + coin.getX(), m.position.y() + coin.getY(),
                     m.position.decalageX(), m.position.decalageY(), m.position.cote(), m.position.altitude());
             String ou = voulue.toString();
@@ -541,7 +541,7 @@ final class PoseMuraux {
             return "Le floor de cette copie a été reconstitué : il n'est pas exactement celui d'origine"
                     + (exposes.isEmpty() ? "." : ", " + PoseOutils.nombre(exposes.size(), "mural peut", "muraux peuvent")
                     + " être à une autre hauteur.");
-        return "La salle n'a pas la forme de la salle d'origine" + (origine.modele != null ? " (modèle " + origine.modele + ")" : "")
+        return "L'appart n'a pas la forme de l'appart d'origine" + (origine.modele != null ? " (modèle " + origine.modele + ")" : "")
                 + " : des muraux peuvent être décalés.";
     }
 

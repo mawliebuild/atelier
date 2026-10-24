@@ -340,7 +340,7 @@ public final class Capture {
                     if (x < x0) x0 = x; if (x > x1) x1 = x;
                     if (y < y0) y0 = y; if (y > y1) y1 = y;
                 }
-        if (x1 < 0) throw new IllegalStateException("Aucune salle trouvée dans l'image (rien que le fond).");
+        if (x1 < 0) throw new IllegalStateException("Aucun appart trouvé dans l'image (rien que le fond).");
 
         if (!r.garderFond) {
             boolean[] ext = exterieur(salle, w, h);
@@ -742,9 +742,9 @@ public final class Capture {
 
     /** NomDeLaSalle_aaaa-mm-jj_hh-mm-ss.ext, sans caractere interdit. */
     public static File nomDeFichier(String salle, Format f) {
-        String base = (salle == null || salle.isBlank()) ? "Salle" : salle;
+        String base = (salle == null || salle.isBlank()) ? "Appart" : salle;
         base = base.replaceAll("[\\\\/:*?\"<>|\\p{Cntrl}]", "").replaceAll("\\s+", " ").trim();
-        if (base.isEmpty()) base = "Salle";
+        if (base.isEmpty()) base = "Appart";
         if (base.length() > 60) base = base.substring(0, 60).trim();
         String date = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd_HH-mm-ss"));
         File d = dossierSortie();
@@ -894,7 +894,7 @@ public final class Capture {
         String s = sortie == null ? "" : sortie;
         String m = s.toLowerCase(Locale.ROOT);
         if (s.contains("HABBO_ABSENT"))
-            return "L'appli Habbo n'est pas ouverte : lance-la et entre dans la salle.";
+            return "L'appli Habbo n'est pas ouverte : lance-la et entre dans l'appart.";
         if (m.contains("-1719") || m.contains("-25211") || m.contains("assistive") || m.contains("accessibilit"))
             return "macOS bloque la frappe au clavier. Réglages Système › Confidentialité et sécurité › "
                     + "Accessibilité : active Terminal (ou l'appli qui lance l'Atelier, ou java), "

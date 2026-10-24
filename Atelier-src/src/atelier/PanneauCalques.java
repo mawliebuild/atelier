@@ -121,6 +121,7 @@ public class PanneauCalques implements Ancrage.Ancrable {
         corps.getStyleClass().add("calques-corps");
         corps.setPadding(new Insets(7, 8, 8, 8));
         etat.setWrapText(true);
+        etat.setMinHeight(Region.USE_PREF_SIZE);
         etat.getStyleClass().add("calques-etat");
         etat.visibleProperty().bind(etat.textProperty().isNotEmpty());
         etat.managedProperty().bind(etat.visibleProperty());
@@ -152,6 +153,7 @@ public class PanneauCalques implements Ancrage.Ancrable {
         Groupes.ecouter(this::rafraichir);
         Zone.ecouter(this::zoneChoisie);
         Ui.majusculesAuto(corps);
+        Ui.rienDeCoupe(corps);
         suivreSalle();
     }
 
@@ -202,7 +204,7 @@ public class PanneauCalques implements Ancrage.Ancrable {
                 () -> surCible(actions::hauteur));
 
         Button remplir = icone(Icones.REMPLIR, "Remplir une zone avec un mobi : choisis la zone (deux cases), puis pose "
-                + "le mobi depuis ton inventaire ou clique un mobi de la salle, il couvre toute la zone (re-clique pour annuler)",
+                + "le mobi depuis ton inventaire ou clique un mobi de l'appart, il couvre toute la zone (re-clique pour annuler)",
                 RemplirZone::lancer);
 
         Button etats = icone(Icones.ETAT, "Changer l'état ou pivoter les mobis d'une zone : choisis la zone (deux cases), "
@@ -234,7 +236,7 @@ public class PanneauCalques implements Ancrage.Ancrable {
             boolean on = grille.isSelected();
             if (!GrilleVue.montrer(on)) grille.setSelected(false);
         });
-        Button photo = icone(Icones.GALERIE, "Photo de référence : une photo de la Galerie en transparence sur la salle",
+        Button photo = icone(Icones.GALERIE, "Photo de référence : une photo de la Galerie en transparence sur l'appart",
                 () -> CalquePhoto.ouvrir(css, stage));
         Button escalier = icone(Icones.ESCALIER, "Escalier : ouvre la fenêtre de l'outil", () -> {
             Runnable r = surEscalier;
@@ -243,13 +245,27 @@ public class PanneauCalques implements Ancrage.Ancrable {
         Button fam = icone(Icones.FILTRES, "Familles : masquer d'un coup les wired, les dalles, les muraux, un nom…",
                 () -> actions.familles(familles));
 
-        // Rangees nommees, comme avant : Selection, Actions, Composants, Masquer
+        // Sol de tout l'appart cache chez moi, mobis gardes (VisibiliteZone.cacherSol)
+        Button sol = icone(Icones.SANS_DALLE, "Masquer le sol de l'appart (chez toi seulement) : les mobis restent, les clics passent aux cases derrière",
+                () -> VisibiliteZone.cacherSol(!VisibiliteZone.solCache()));
+        Runnable majSol = () -> {
+            boolean c = VisibiliteZone.solCache();
+            sol.setGraphic(Icones.trace(c ? Icones.AVEC_DALLE : Icones.SANS_DALLE, "icone-barre"));
+            sol.getTooltip().setText(c ? "Remontrer le sol de l'appart"
+                    : "Masquer le sol de l'appart (chez toi seulement) : les mobis restent, les clics passent aux cases derrière");
+        };
+        VisibiliteZone.ecouter(majSol);
+
+        // Rangees nommees par ce qu'on fait : Selection, Modifier (le calque ou
+        // une zone), Zone (remplir, remplacer, ramasser), Creer, Reperes, Masquer
         // (les familles s'ouvrent dans leur fenetre).
         VBox l = new VBox(4,
                 rangee("Sélection", modeSel, zone, vider),
-                rangee("Actions", deplacer, pivoter, miroir, hauteur, remplir, etats, remplacer, ramasser),
-                rangee("Composants", escalier, regle, grille, photo),
-                rangee("Masquer", fam));
+                rangee("Modifier", deplacer, pivoter, miroir, hauteur, etats),
+                rangee("Zone", remplir, remplacer, ramasser),
+                rangee("Créer", escalier),
+                rangee("Repères", regle, grille, photo),
+                rangee("Masquer", fam, sol));
         return l;
     }
 
@@ -507,7 +523,7 @@ public class PanneauCalques implements Ancrage.Ancrable {
         if (Groupes.MOBIS.equals(i.id)) return "Mobis : tous les mobis qui ne sont dans aucun autre calque (" + i.nombre() + "). Il ne se supprime pas.";
         if (Groupes.MUR.equals(i.id)) return "Mur : les murs de l'appart. L'œil les masque chez toi seulement.";
         if (Groupes.SOL.equals(i.id)) return "Sol : le sol de l'appart. Il reste visible.";
-        return i.nom + " : " + i.sols + " sol(s), " + i.murs + " mural(aux). Double-clic pour renommer, glisse pour changer l'ordre.";
+        return i.nom + " : " + Ui.accorder(i.sols + " sol(s), " + i.murs + " mural(aux).") + " Double-clic pour renommer, glisse pour changer l'ordre.";
     }
 
     // ============================================================ renommer
@@ -641,7 +657,8 @@ public class PanneauCalques implements Ancrage.Ancrable {
         int n = Groupes.verrouiller(ids, v);
         if (n == 0) return;
         String quoi = n == 1 ? "« " + nomDe(ids.get(0)) + " »" : n + " calques";
-        Journal.succes(quoi + (v ? (n == 1 ? " verrouillé." : " verrouillés.") : (n == 1 ? " déverrouillé." : " déverrouillés.")));
+        // le cadenas change dans le panneau : pas de message dans le jeu
+        Journal.debug("calques : " + quoi + (v ? (n == 1 ? " verrouillé." : " verrouillés.") : (n == 1 ? " déverrouillé." : " déverrouillés.")));
     }
 
     private void basculerVisibiliteChoisis() {
@@ -659,16 +676,18 @@ public class PanneauCalques implements Ancrage.Ancrable {
         List<Groupes.Info> faire = new ArrayList<>();
         for (Groupes.Info x : l) if (x.masquable && x.visible == masquer) faire.add(x);
         int[] reste = {faire.size()};
-        List<String> echecs = new ArrayList<>();
+        List<String> echecs = new ArrayList<>(), partiels = new ArrayList<>();
         for (Groupes.Info x : faire) {
             Groupes.Progression p = new Groupes.Progression() {
                 @Override public void fin(Groupes.Resultat r) {
                     if (!r.ok && r.reussis == 0) echecs.add(r.message);
+                    else if (r.echecs > 0) partiels.add("« " + x.nom + " » : " + r.message);
                     if (--reste[0] > 0) return;
+                    // masque ou reaffiche, ca se voit dans le jeu : un message seulement si quelque chose a rate
                     if (!echecs.isEmpty()) Journal.erreur(echecs.get(0));
-                    else if (faire.size() == 1) Journal.succes(r.message.startsWith("Murs") ? r.message
-                            : "« " + x.nom + " » " + (masquer ? "masqué" : "affiché") + " : " + r.message);
-                    else Journal.succes(faire.size() + " calques " + (masquer ? "masqués chez toi." : "réaffichés."));
+                    else if (!partiels.isEmpty()) Journal.erreur(partiels.get(0));
+                    else Journal.debug("calques : " + (faire.size() == 1 ? "« " + x.nom + " »" : faire.size() + " calques")
+                            + (masquer ? " masqué(s) : " : " réaffiché(s) : ") + r.message);
                 }
             };
             if (masquer) Groupes.masquer(x.id, p); else Groupes.afficher(x.id, p);

@@ -103,7 +103,7 @@ public class AtelierLauncher extends GEarth {
         // 2. Build et Apparts.
         Tab build = ongletProvisoire("Build",
                 "Outils muraux",
-                "Déplacer un mur au pixel, ou en aligner des copies.");
+                "Déplacer un mural au pixel, ou en poser des copies.");
         onglets.getTabs().add(build);
 
         Tab apparts = ongletProvisoire("Apparts",
@@ -172,7 +172,7 @@ public class AtelierLauncher extends GEarth {
         onglets.getTabs().clear();
         Tab tBuild = parNom.get("Build"), tApparts = parNom.get("Apparts"),
             tWired = parNom.get("Wired"), tInv = parNom.get("Inventaire"),
-            tConnexion = connexion, tParam = parNom.get("Paramètres");
+            tConnexion = connexion, tParam = parNom.get("Réglages");
 
         // Les menus suivent le travail, pas l'origine du code :
         //   Construction  un mode : menu lateral en bas a droite (Construction,
@@ -203,16 +203,16 @@ public class AtelierLauncher extends GEarth {
                 INV = Prerequis.Condition.INVENTAIRE, BC = Prerequis.Condition.BC,
                 MUR = Prerequis.Condition.MUR, COULEUR = Prerequis.Condition.COULEUR;
         // Murs : deux boutons dans le menu lateral, Deplacer et Aligner (ligne / grille).
-        nav.ajouter("murs-deplacer", "Déplacer un mur", Icones.DEPLACER,
-                Navigation.source(tBuild, "Déplacer un mur", "Déplacer").avec(SALLE, DROITS, MUR));
-        nav.ajouter("murs-aligner", "Aligner des murs", Icones.ALIGNER,
+        nav.ajouter("murs-deplacer", "Déplacer un mural", Icones.DEPLACER,
+                Navigation.source(tBuild, "Déplacer un mural", "Déplacer").avec(SALLE, DROITS, MUR));
+        nav.ajouter("murs-aligner", "Poser des muraux", Icones.ALIGNER,
                 Navigation.source(tBuild, "Aligner", "En ligne").avec(SALLE, DROITS, MUR, INV, BC),
                 Navigation.source(tBuild, "Grille", "En grille").avec(SALLE, DROITS, MUR, INV, BC),
                 Navigation.source(tBuild, "Écarts", "Écarts par mobi").avec(NOMS));
         // « Ma salle » n'est plus dans la barre du haut : chacun de ses outils a
         // son bouton en bas a droite du jeu (BarreSalle), qui ouvre la fenetre.
-        nav.ajouter("salle-mobis", "Salle", Icones.SALLE,
-                Navigation.source(tApparts, "Ma salle", "Salle")).pleineHauteur();   // seul le tableau defile
+        nav.ajouter("salle-mobis", "Mon appart", Icones.SALLE,
+                Navigation.source(tApparts, "Mon appart", "Mon appart")).pleineHauteur();   // seul le tableau defile
         nav.ajouter("salle-couleur", "Couleur de décor", Icones.GOUTTE,
                 Navigation.source(tBuild, "Couleur de décor").avec(SALLE, DROITS, COULEUR));
         Tab tHauteur = new OutilHauteur().construire();
@@ -220,33 +220,43 @@ public class AtelierLauncher extends GEarth {
         nav.ajouter("construction", "Construction", Icones.CONSTRUCTION);
         nav.ajouter("hauteur-mobis", "Hauteur mobis", Icones.HAUTEUR,
                 Navigation.source(tHauteur, null, "Hauteur fixe").avec(SALLE, DROITS, INV, BC));
-        // Escalier : ouvert par « Composants » du panneau des calques
-        // (le miroir, lui, est dans ses Actions). Aucun bouton dans les barres.
+        // Visibilite zone : cacher le sol et les mobis d'une zone chez soi (comme un Selecteur de zone).
+        Tab tVisibilite = new OutilVisibiliteZone().construire();
+        nav.ajouter("visibilite-zone", "Visibilité zone", Icones.ZONE_VISIBLE,
+                Navigation.source(tVisibilite, null, "Visibilité zone").avec(SALLE));
+        // Escalier : ouvert par « Créer » du panneau des calques
+        // (le miroir, lui, est dans « Modifier »). Aucun bouton dans les barres.
         nav.ajouter("composant-escalier", "Escalier", Icones.ESCALIER,
                 Navigation.source(tConstruction, "Escalier", "Escalier").avec(SALLE, DROITS, NOMS, INV, BC));
         // Floor : plus de fenetre d'editeur ; le bouton Floor ouvre le mode Floor
         // (grille du jeu + palette a la place des calques, voir ModeCases / BarreFloor).
         nav.ajouter("apparts", "Apparts", Icones.APPARTS,
-                Navigation.source(tApparts, "Dupliquer un appart"));
+                Navigation.source(tApparts, "Dupliquer un appart"),
+                Navigation.source(new OngletLiensApparts().construire(), null, "Liens d'apparts"));
         Tab tCollageWired = new OngletCollageWired().construire();
         nav.ajouter("wired", "Wired", Icones.WIRED,
                 Navigation.source(tWired, "Ordre", "Remettre en ordre").avec(SALLE, WIRED, NOMS),
                 Navigation.source(tAnalyse, "Vérificateur", "Vérificateur de wired").avec(SALLE, WIRED, NOMS),
-                Navigation.source(tCollageWired, null, "Copier / coller la config").avec(SALLE, WIRED, NOMS));
+                Navigation.source(tCollageWired, null, "Copier des wired").avec(SALLE, WIRED, NOMS));
         nav.ajouter("plantes", "Monster Plants", Icones.PLANTES,
                 Navigation.source(tPlantes, "Monster Plants")).pleineHauteur();   // seul le tableau defile
         Tab[] tPatrimoine = new OngletValeur().construireVolets();
         // Le filtrage de l'inventaire se fait dans le jeu (client modifie) : plus de
         // menu Inventaire. L'onglet reste construit (cache de l'inventaire, liaison
-        // avec le jeu). La valeur des mobis passe dans « Patrimoine », en haut, ou
-        // viendra ce qui touche aux credits et aux investissements.
-        nav.ajouter("patrimoine", "Mobis", Icones.PATRIMOINE,
-                // la recherche et l'estimation n'ont pas besoin de l'inventaire : prerequis separes
+        // avec le jeu). La valeur des mobis passe dans « Valeur », en haut ; la
+        // recherche au troc et la boutique troc dans « Troc ».
+        nav.ajouter("patrimoine", "Valeur", Icones.PATRIMOINE,
+                // l'estimation n'a pas besoin de l'inventaire : prerequis separes
                 Navigation.source(tPatrimoine[0], null, "Valeur de mes mobis").avec(NOMS, INV),
-                Navigation.source(tPatrimoine[1], null, "Recherche de mobis").avec(NOMS),
-                Navigation.source(tPatrimoine[2], null, "Estimation mobi").avec(NOMS),
-                // boutique wired de la salle : « Vendre au troc » dans l'inventaire du jeu (TrocVente)
-                Navigation.source(new ConfigTroc().construire(), null, "Config troc").avec(SALLE, NOMS));
+                Navigation.source(tPatrimoine[2], null, "Prix d'un mobi").avec(NOMS),
+                // journal des credits, duckets et diamants (Depenses) : suivi des le lancement
+                Navigation.source(new OngletDepenses().construire(), null, "Mes dépenses"));
+        nav.ajouter("troc", "Troc", Icones.TROC,
+                Navigation.source(tPatrimoine[1], null, "Trouver au troc").avec(NOMS),
+                // boutique wired de l'appart : « Vendre au troc » dans l'inventaire du jeu (TrocVente)
+                Navigation.source(new ConfigTroc().construire(), null, "Ma boutique troc").avec(SALLE, NOMS));
+        // Taches quotidiennes du jeu (Missions) : l'Atelier fait celles qui ne coutent rien.
+        nav.ajouter("taches", "Tâches quotidiennes", Icones.TACHES, Navigation.source(new OngletTaches().construire()));
         // Galerie : des photos d'apparts a garder a cote du jeu pendant qu'on construit.
         Tab tGalerie = new OngletGalerie(css).construire();
         nav.ajouter("galerie", "Galerie", Icones.GALERIE, Navigation.source(tGalerie)).pleineHauteur();
@@ -262,7 +272,7 @@ public class AtelierLauncher extends GEarth {
         BarreMesure barreMesure = new BarreMesure(css);
         PanneauCalques panneauCalques = new PanneauCalques(css,
                 voletCalques != null ? voletCalques : Ui.colonne(Ui.discret("Calques indisponibles.")));
-        // La regle est passee de la barre de mesure aux Actions des calques.
+        // La regle est passee de la barre de mesure aux Reperes des calques.
         panneauCalques.surMesure(barreMesure::basculerMesure);
         // Barre du haut : les menus, sauf « Ma salle » (icones en bas a droite)
         // Murs / Floor (menu lateral) et Wired (avec « Ma salle ») : tout cela
@@ -270,13 +280,14 @@ public class AtelierLauncher extends GEarth {
         // seule la barre de mesure (photo, regle, cases) reste.
         // Ouvrir l'une de ces fenetres (ou la capture) ne fait pas sortir du mode.
         java.util.Set<String> lateral = java.util.Set.of("construction", "hauteur-mobis", "murs-deplacer", "murs-aligner", "floor",
-                "salle-mobis", "wired", "salle-couleur", "salle-capture", "inventaire", "composant-escalier");
+                "salle-mobis", "wired", "salle-couleur", "visibilite-zone", "salle-capture", "inventaire", "composant-escalier");
         java.util.List<Navigation.Menu> enHaut = new java.util.ArrayList<>();
         java.util.List<BarreIcones.Entree> enBas = new java.util.ArrayList<>();
         for (Navigation.Menu m : nav.menus()) {
             if (m.cle.equals("salle-capture")) continue;   // appareil photo de BarreMesure
-            if (m.cle.startsWith("composant-")) continue;   // panneau des calques (Composants)
+            if (m.cle.startsWith("composant-")) continue;   // panneau des calques (Créer)
             if (m.cle.equals("hauteur-mobis")) continue;    // menu lateral
+            if (m.cle.equals("visibilite-zone")) continue;  // menu lateral
             if (m.cle.startsWith("salle-") || m.cle.equals("wired")) continue;
             else if (m.cle.startsWith("murs-") || m.cle.equals("floor")) continue;
             else if (m.cle.equals("inventaire")) continue;   // bouton de la barre du bas (BarreMesure)
@@ -293,7 +304,7 @@ public class AtelierLauncher extends GEarth {
         java.util.List<BarreIcones.Entree> enCote = new java.util.ArrayList<>();
         // puis Wired, Couleur de decor et Inventaire.
         for (String cle : new String[]{"hauteur-mobis", "murs-deplacer", "murs-aligner",
-                "wired", "salle-couleur"}) {
+                "wired", "salle-couleur", "visibilite-zone"}) {
             Navigation.Menu m = nav.menu(cle);
             if (m != null) enCote.add(new BarreIcones.Entree(m.cle, m.nom, m.icone));
         }
@@ -321,16 +332,17 @@ public class AtelierLauncher extends GEarth {
             if (!on && Groupes.modeSelection()) {
                 Groupes.modeSelection(false);
                 Groupes.viderSelection();
-                InfoJeu.consigne("Mode calque arrêté, sélection vidée.");
+                Journal.debug("mode calque arrêté, sélection vidée.");   // la sélection s'efface dans le jeu : pas de message
             }
             panneauCalques.actif(on);
             if (!on) barreConstruction.actif(null);
         };
 
         java.util.prefs.Preferences prefs = java.util.prefs.Preferences.userRoot().node("atelier");
-        java.util.function.Consumer<String> ouvrir = cle -> {
+        // sous : la sous-rubrique a montrer seule (menu deroulant de la barre), -1 = tout le menu
+        java.util.function.BiConsumer<String, Integer> ouvrirSous = (cle, sous) -> {
             if (!lateral.contains(cle) && construction[0]) modeConstruction.accept(false);
-            nav.afficher(cle);
+            nav.afficher(cle, sous);
             fenetre.ouvrir();
             barre.actif(construction[0] ? "construction" : cle);
             barreSalle.actif(cle);
@@ -338,13 +350,14 @@ public class AtelierLauncher extends GEarth {
             WiredLecteur.actif("wired".equals(cle));   // les wired ne se lisent qu'outil ouvert
             prefs.put("menu", cle);
         };
+        java.util.function.Consumer<String> ouvrir = cle -> ouvrirSous.accept(cle, -1);
         panneauCalques.surEscalier(() -> ouvrir.accept("composant-escalier"));
         nav.surChangement(m -> {
             // Largeur par defaut de chaque menu, verifiee hors jeu pour que rien
             // ne soit coupe (0 = Fenetre.LARGEUR, 334). Le bord gauche de la
             // fenetre se tire pour l'elargir ; la largeur choisie est retenue
             // par menu (double-clic sur le bord : retour au defaut).
-            //   Salle : tableau a 6 colonnes. Patrimoine : 6 colonnes (Source se
+            //   Mon appart : tableau a 6 colonnes. Valeur : 6 colonnes (Source se
             //   masque sous 430). Plantes : rangee de filtres + 4 colonnes.
             //   Couleur de decor : un champ et une palette. Deplacer un mur :
             //   deux blocs de fleches. Reglages : 620 (a 760 le contenu flottait).
@@ -352,14 +365,14 @@ public class AtelierLauncher extends GEarth {
             double l = switch (m.cle) {
                 case "reglages" -> Math.min(620, ecran * 0.6);
                 case "salle-mobis", "galerie", "documentation" -> 580;
-                case "patrimoine" -> 480;
+                case "patrimoine", "troc" -> 480;
                 case "plantes" -> 440;
                 case "salle-couleur" -> Fenetre.LARGEUR - 50;
                 case "murs-deplacer" -> Fenetre.LARGEUR - 80;
                 default -> 0;
             };
             fenetre.largeur(m.cle, l);
-            fenetre.montrer(m.nom, m.contenu(), m.info());
+            fenetre.montrer(m.titre(), m.contenu(), m.info());   // « Rubrique › Sous-rubrique » si une seule
             MiseEnValeur.fenetre(m.cle);
         });
         java.util.function.Consumer<String> basculer = cle -> {
@@ -392,6 +405,9 @@ public class AtelierLauncher extends GEarth {
             if (barreFloor.actif()) { barreFloor.quitter(() -> changerConstruction.accept(true)); return; }
             changerConstruction.accept(!construction[0]);
         });
+        // Menu deroulant (survol d'une rubrique) : la sous-rubrique cliquee seule.
+        // La fenetre deja ouverte passe a ce choix, sans se fermer.
+        barre.surSousChoix(ouvrirSous::accept);
         barreSalle.surChoix(basculer);
         barreConstruction.surChoix(basculer);
         // L'appareil photo prend la photo tout de suite (fenetre agrandie), puis
@@ -417,8 +433,9 @@ public class AtelierLauncher extends GEarth {
             boolean on = !Groupes.modeSelection();
             Groupes.modeSelection(on);
             if (!on) Groupes.viderSelection();
-            InfoJeu.consigne(on ? "Mode calque : clique des mobis pour les sélectionner (Option + C pour arrêter)."
-                                : "Mode calque arrêté, sélection vidée.");
+            // la consigne seulement en entrant ; l'arret se voit (la selection s'efface)
+            if (on) InfoJeu.consigne("Mode calque : clique des mobis pour les sélectionner (Option + C pour arrêter).");
+            else Journal.debug("mode calque arrêté, sélection vidée.");
         };
         RaccourcisGlobaux.surP(() -> Platform.runLater(basculerCalque));
         // Option + G (mode Construction) : la grille du jeu, affichee ou cachee.
@@ -426,7 +443,8 @@ public class AtelierLauncher extends GEarth {
             if (!construction[0]) return;
             Salle.tache("grille-raccourci", () -> {
                 boolean on = !GrilleVue.voulue();
-                if (GrilleVue.montrer(on)) InfoJeu.dire(on ? "Grille affichée." : "Grille cachée.");
+                // la grille se voit dans le jeu : pas de message
+                if (GrilleVue.montrer(on)) Journal.debug(on ? "grille affichée." : "grille cachée.");
             });
         };
         RaccourcisGlobaux.surG(() -> Platform.runLater(basculerGrille));
@@ -435,7 +453,7 @@ public class AtelierLauncher extends GEarth {
         javafx.event.EventHandler<javafx.scene.input.KeyEvent> touches = e -> {
             javafx.scene.Node f = ((javafx.scene.Scene) e.getSource()).getFocusOwner();
             if (f instanceof TextInputControl) return;
-            if (e.getCode() == javafx.scene.input.KeyCode.ESCAPE) { fenetre.fermer(); e.consume(); }
+            if (e.getCode() == javafx.scene.input.KeyCode.ESCAPE) { barre.fermerListe(); fenetre.fermer(); e.consume(); }
             else if (e.getCode() == javafx.scene.input.KeyCode.C && e.isAltDown() && !e.isShiftDown() && !e.isShortcutDown() && construction[0]) {
                 basculerCalque.run(); e.consume();
             }
@@ -457,6 +475,9 @@ public class AtelierLauncher extends GEarth {
         stage.setWidth(1);
         stage.setHeight(1);
         Ancrage.demarrer(barre, fenetre, panneauCalques, barreMesure, barreSalle, barreConstruction, barreFloor);
+        // La fiche du jeu (en bas a droite) se decale de ces menus quand ils la couvrent.
+        MesureActions.demarrer();
+        MargesFiche.demarrer(barreMesure.fenetre(), barreSalle.fenetre(), barreConstruction.fenetre(), barreFloor.fenetre());
 
         // 7. A l'ouverture, seul l'ecran de connexion s'affiche, et se connecte
         //    de lui-meme. Une fois connectee : la barre seulement, aucun menu

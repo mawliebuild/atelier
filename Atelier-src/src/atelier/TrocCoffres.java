@@ -130,7 +130,7 @@ final class TrocCoffres {
             case 2: return "temps écoulé";
             case 3: return "transaction annulée";
             case 4: return "tu effectues déjà une transaction";
-            case 5: return "mauvaise configuration wired";
+            case 5: return "mauvais réglage des wired";
             case 6: return "fonds insuffisants";
             case 7: return "fonds épuisés";
             case 8: return "tu ne peux pas échanger";
@@ -138,7 +138,7 @@ final class TrocCoffres {
             case 10: return "transaction vide";
             case 11: return "coffre plein";
             case 12: return "fonctionnalité désactivée";
-            case 13: return "coffre absent de la salle";
+            case 13: return "coffre absent de l'appart";
             case 14: return "trop de coffres";
             case 15: return "pas de coffre disponible";
             case 17: return "trop d'offres wired";
@@ -414,7 +414,7 @@ final class TrocCoffres {
 
     /** Retire tous les credits du coffre. null si c'est fait, sinon l'erreur. */
     static String retirerCredits(int coffre) {
-        if (coffre == 0) return "Pas de coffre à crédits dans cette salle.";
+        if (coffre == 0) return "Pas de coffre à crédits dans cet appart.";
         if (ouvertParElle(coffre)) return "Ferme d'abord le coffre dans le jeu.";
         installer();
         if (!OCCUPE.tryLock()) return "Le coffre est déjà en cours d'utilisation par l'Atelier.";
@@ -450,7 +450,7 @@ final class TrocCoffres {
      * relit le coffre pour verifier. Fil de travail.
      */
     static Retrait retirerMobis(int coffre, int type, int quantite) {
-        if (coffre == 0) return new Retrait(0, "Pas de coffre à mobis dans cette salle.");
+        if (coffre == 0) return new Retrait(0, "Pas de coffre à mobis dans cet appart.");
         if (ouvertParElle(coffre)) return new Retrait(0, "Ferme d'abord le coffre dans le jeu.");
         installer();
         if (!OCCUPE.tryLock()) return new Retrait(0, "Le coffre est déjà en cours d'utilisation par l'Atelier.");
@@ -491,7 +491,7 @@ final class TrocCoffres {
      * confirmer. null si c'est fait, sinon l'erreur (en francais).
      */
     static String deposer(int coffre, List<Integer> ids, Consumer<String> dire) {
-        if (coffre == 0) return "Pas de coffre à mobis dans cette salle.";
+        if (coffre == 0) return "Pas de coffre à mobis dans cet appart.";
         if (ids == null || ids.isEmpty()) return "Aucun mobi à déposer.";
         if (ids.size() > 1500) return "Pas plus de 1500 mobis à la fois.";
         if (ouvertParElle(coffre)) return "Ferme d'abord le coffre dans le jeu.";
@@ -530,7 +530,7 @@ final class TrocCoffres {
             if (a != null) { fini = true; return "Dépôt annulé : " + raison((Integer) a[2]) + "."; }
             Salle.envoyerEspace(confirmation(true));
             Object[] f = attendre(10_000, "fin", "annule");
-            if (f == null) return "Pas de confirmation du coffre : vérifie son contenu dans Config troc.";
+            if (f == null) return "Pas de confirmation du coffre : vérifie son contenu dans Troc › Ma boutique troc.";
             fini = true;
             if ("annule".equals(f[0])) return "Dépôt annulé : " + raison((Integer) f[2]) + ".";
             changement = true;
@@ -576,14 +576,21 @@ final class TrocCoffres {
             if (Salle.sol(v.id()) == null && Salle.installeeDepuis(5000)) ConfigTroc.oublierVitrine(salle, v.id());
         vs = ConfigTroc.vitrines(salle);
         if (vs.isEmpty()) return 0;
+        // pendant une vente, la nouvelle vitrine est posee AVANT le depot : son type
+        // n'est pas encore dans le coffre, elle serait ramassee a tort
+        if (TrocVente.venteEnCours()) return 0;
         Coffres c = dansLaSalle();
         if (c.mobis() == 0) return 0;
+        // coffre ouvert dans le jeu : seul un contenu ancien est connu, on ne ramasse rien dessus
+        if (ouvertParElle(c.mobis())) return 0;
         List<Rangement> contenu = lireMobis(c.mobis());
+        if (TrocVente.venteEnCours()) return 0;
         if (contenu == null) return 0;
         int n = 0;
         List<String> noms = new ArrayList<>();
         for (ConfigTroc.Vitrine v : vs) {
-            if (stock(contenu, v.type()) > 0 || Salle.sol(v.id()) == null) continue;
+            // vitrine posee seule (voulu, sans stock) : jamais ramassee pour un stock vide
+            if (v.seule() || stock(contenu, v.type()) > 0 || Salle.sol(v.id()) == null) continue;
             PoseOutils.Signaux.ramassageEnCours(List.of(v.id()));
             Salle.envoyerEspace(PoseOutils.ramassageSol(v.id()));
             ConfigTroc.oublierVitrine(salle, v.id());
@@ -605,7 +612,8 @@ final class TrocCoffres {
                 int salle = Salle.salleId();
                 if (salle == -1) { salleVue = -1; continue; }
                 if (salle != salleVue) { salleVue = salle; derniere = System.currentTimeMillis() - 100_000; }
-                if (ConfigTroc.vitrines(salle).isEmpty() || occupe() || !Salle.installeeDepuis(8000)) continue;
+                if (ConfigTroc.vitrines(salle).isEmpty() || occupe() || TrocVente.venteEnCours()
+                        || !Salle.installeeDepuis(8000)) continue;
                 long t = System.currentTimeMillis();
                 boolean c = changement;
                 if (!(c && t - derniere > 15_000) && t - derniere < 120_000) continue;

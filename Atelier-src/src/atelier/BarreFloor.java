@@ -306,6 +306,7 @@ public class BarreFloor implements Ancrage.Ancrable {
         legende.setPrefWrapLength(LARGEUR - 20);
         Label chiffre = petitTexte("Le chiffre sur une case = sa hauteur.");
         chiffre.setWrapText(true);
+        chiffre.setMinHeight(Region.USE_PREF_SIZE);
 
         // --- etat, confirmation, boutons du bas
         etat.setWrapText(true);
@@ -322,7 +323,8 @@ public class BarreFloor implements Ancrage.Ancrable {
         confirmerAppliquer = texte("Appliquer", true, "Envoyer le floor puis quitter", this::confirmeAppliquer);
         confirmerAbandonner = texte("Abandonner", false, "Quitter sans appliquer : les changements sont oubliés", this::confirmeAbandonner);
         confirmerRester = texte("Rester", false, "Revenir au mode Floor", this::cacherConfirmation);
-        HBox bc = new HBox(5, confirmerAppliquer, confirmerAbandonner, confirmerRester);
+        // passent a la ligne plutot que d'etre rognes (palette etroite, polices Windows)
+        FlowPane bc = new FlowPane(5, 5, confirmerAppliquer, confirmerAbandonner, confirmerRester);
         bc.setAlignment(Pos.CENTER_RIGHT);
         confirmation.getChildren().addAll(confirmationTexte, bc);
         confirmation.getStyleClass().add("floor-confirmation");
@@ -373,6 +375,7 @@ public class BarreFloor implements Ancrage.Ancrable {
         Deplacement.activer(stage, barre, CLE, this::placer);
         BarrePremierPlan.menu(stage);
         Ui.majusculesAuto(corps);
+        Ui.rienDeCoupe(corps);
 
         chrono = new Timeline(new KeyFrame(Duration.seconds(1), e -> majEnvoi()));
         chrono.setCycleCount(Timeline.INDEFINITE);
@@ -438,7 +441,7 @@ public class BarreFloor implements Ancrage.Ancrable {
                 return;
             case DIRECTE:
                 sortir();
-                InfoJeu.consigne("Mode Floor quitté.");
+                Journal.debug("mode Floor quitté.");          // la palette se ferme : ca se voit
                 if (ensuite != null) ensuite.run();
                 return;
             default:
@@ -571,7 +574,7 @@ public class BarreFloor implements Ancrage.Ancrable {
     }
 
     private void dire(String s) {
-        etat.setText(s == null ? "" : WindowsClavier.texte(Ui.majuscule(s)));
+        etat.setText(s == null ? "" : Ui.majuscule(Ui.accorder(s)));   // pas de « (s) » ; touches selon la plateforme
         ajuster();
     }
 
@@ -590,7 +593,7 @@ public class BarreFloor implements Ancrage.Ancrable {
         ToggleButton b = outils.get(t[i]);
         if (b == null) return;
         b.setSelected(true);
-        if (dansLeJeu) InfoJeu.consigne("Outil " + t[i].libelle + ".");
+        if (dansLeJeu) Journal.debug("floor : outil " + t[i].libelle + ".");   // l'outil s'allume dans la palette
     }
 
     /** Cmd/Ctrl+Z (annuler) ou Cmd/Ctrl+Maj+Z (retablir) dans le jeu, sur le floor en travail. */

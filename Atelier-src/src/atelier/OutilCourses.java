@@ -51,7 +51,7 @@ public class OutilCourses {
         String classe; Integer typeId; boolean mural; int nombre;
     }
 
-    private static final String S_APPART = "Un appart enregistré", S_ZONE = "La zone", S_SALLE = "Toute la salle";
+    private static final String S_APPART = "Un appart enregistré", S_ZONE = "La zone", S_SALLE = "Tout l'appart";
 
     private ToggleGroup gSource;
     private RadioButton rAppart, rZone, rSalle;
@@ -85,7 +85,7 @@ public class OutilCourses {
         choixAppart.valueProperty().addListener((o, a, b) -> { if (rAppart.isSelected()) calculer(); });
         choixAppart.disableProperty().bind(rAppart.selectedProperty().not());
 
-        avecSalle = new CheckBox("Compter aussi les mobis déjà dans la salle");
+        avecSalle = new CheckBox("Compter aussi les mobis déjà dans l'appart");
         avecSalle.setWrapText(true);
         avecSalle.selectedProperty().addListener((o, a, b) -> calculer());
         avecSalle.disableProperty().bind(rSalle.selectedProperty());
@@ -103,7 +103,7 @@ public class OutilCourses {
         table.setPlaceholder(new Label("Rien à afficher"));
         TableColumn<Ligne, String> cNom = new TableColumn<>("Mobi");
         cNom.setCellValueFactory(c -> new ReadOnlyStringWrapper(c.getValue().nom
-                + (c.getValue().mural ? " (mur)" : "")));
+                + (c.getValue().mural ? " (mural)" : "")));
         cNom.setPrefWidth(140);
         TableColumn<Ligne, Integer> cBes = colNombre("Besoin", l -> l.besoin);
         TableColumn<Ligne, Integer> cInv = colNombre("Inv.", l -> l.inventaire);
@@ -117,7 +117,7 @@ public class OutilCourses {
                 if (vide || v == null) { setText(null); setTooltip(null); return; }
                 setText(v < 0 ? "?" : String.valueOf(v));
                 Ligne l = getTableRow() == null ? null : getTableRow().getItem();
-                setTooltip(l != null && l.salle > 0 ? new Tooltip("+ " + l.salle + " déjà dans la salle") : null);
+                setTooltip(l != null && l.salle > 0 ? new Tooltip("+ " + l.salle + " déjà dans l'appart") : null);
             }
         });
         cMan.setCellFactory(col -> new TableCell<>() {
@@ -254,13 +254,13 @@ public class OutilCourses {
                     titre = "appart « " + appart + " »";
                 } else if (S_ZONE.equals(source)) {
                     if (!Zone.definie()) throw new IllegalStateException("aucune zone définie (onglet Plan ou « Choisir dans le jeu »)");
-                    if (!Salle.dansUneSalle()) throw new IllegalStateException("pas dans une salle");
+                    if (!Salle.dansUneSalle()) throw new IllegalStateException("pas dans un appart");
                     b = besoinsSalle(true);
                     titre = "zone " + Zone.texte();
                 } else {
-                    if (!Salle.dansUneSalle()) throw new IllegalStateException("pas dans une salle");
+                    if (!Salle.dansUneSalle()) throw new IllegalStateException("pas dans un appart");
                     b = besoinsSalle(false);
-                    titre = "salle actuelle";
+                    titre = "appart actuel";
                 }
                 res = comparer(b, salle, S_ZONE.equals(source));
                 msg = null;
@@ -278,7 +278,7 @@ public class OutilCourses {
                 afficher();
                 lancerPrix(false);
                 String n = "Liste calculée pour " + ti + ".";
-                if (!Salle.furnidataPrete()) n += " Furnidata pas encore chargée : noms techniques, inventaire non comparable.";
+                if (!Salle.furnidataPrete()) n += " Liste des mobis pas encore chargée : noms techniques, inventaire non comparable.";
                 if (!inventaireCharge()) n += " L'inventaire n'est PAS chargé : la colonne « Inv. » est inconnue (?).";
                 etat.setText(n);
             });
@@ -503,10 +503,10 @@ public class OutilCourses {
         for (Ligne l : lignes) {
             if (l.manque() <= 0) continue;
             rien = false;
-            sb.append("- ").append(l.nom).append(l.mural ? " (mur)" : "").append(" x").append(l.manque())
+            sb.append("- ").append(l.nom).append(l.mural ? " (mural)" : "").append(" x").append(l.manque())
               .append("   (besoin ").append(l.besoin).append(", inventaire ")
               .append(l.inventaire < 0 ? "?" : String.valueOf(l.inventaire));
-            if (l.salle > 0) sb.append(", salle ").append(l.salle);
+            if (l.salle > 0) sb.append(", appart ").append(l.salle);
             sb.append(", BC : ").append(l.bc);
             PrixHabbofurni.Entree e = PrixHabbofurni.enCache(l.classe);
             if (e != null && e.credits != null)
@@ -518,7 +518,7 @@ public class OutilCourses {
         sb.append("\nDéjà couvert :\n");
         for (Ligne l : lignes)
             if (l.manque() <= 0)
-                sb.append("- ").append(l.nom).append(l.mural ? " (mur)" : "").append(" x").append(l.besoin).append('\n');
+                sb.append("- ").append(l.nom).append(l.mural ? " (mural)" : "").append(" x").append(l.besoin).append('\n');
         sb.append('\n').append(total.getText()).append('\n');
         if (!estimation.getText().isEmpty()) sb.append(estimation.getText()).append('\n');
         sb.append('\n').append(avertPrix.getText()).append('\n');

@@ -134,7 +134,7 @@ final class EstimationMobi {
         PrixChargement.ecouter(this::rafraichir);
         majFiche();
 
-        Tab t = new Tab("Estimation mobi", sp);
+        Tab t = new Tab("Prix d'un mobi", sp);
         t.setClosable(false);
         return t;
     }

@@ -68,6 +68,9 @@ public class OngletPlantes {
     private Label resume, details, etat, progresTxt, apercu;
     private ProgressBar progres;
     private HBox progression;
+    /** La progression du travail en cours, barre commune de l'Atelier (Arreter compris). */
+    private final Avancement.Barre barrePlantes = new Avancement.Barre();
+    private volatile Avancement.Suivi av;
     private VBox confirmation;
     private Button confirmer, stop;
     private TextField monNomTxt, recherche;
@@ -145,7 +148,7 @@ public class OngletPlantes {
         etat = Ui.etat();
 
         // --- resume et actions de masse
-        resume = Ui.valeur("Aucune plante dans cette salle");
+        resume = Ui.valeur("Aucune plante dans cet appart");
         resume.setWrapText(true);
         details = new Label();
         details.getStyleClass().add("etat-ligne");
@@ -158,6 +161,7 @@ public class OngletPlantes {
         bRecolter = bouton("Récolter", "Tes plantes adultes : tu reçois leur récompense, la plante disparaît.");
         bRecolter.setOnAction(e -> proposerRecolte(cibles(this::aRecolter)));
         bComposter = bouton("Composter", "Tes plantes mortes : elles disparaissent. C'est définitif.");
+        bComposter.getStyleClass().add("danger");                // sans retour : rouge
         bComposter.setOnAction(e -> proposerCompost(cibles(this::aComposter)));
         bReproduire = bouton("Reproduire", "Associe tes plantes adultes deux par deux, des plus rares aux moins rares. "
                 + "Une graine par couple, dans ton inventaire.");
@@ -203,7 +207,7 @@ public class OngletPlantes {
         progression.setAlignment(Pos.CENTER_LEFT);
         montrer(progression, false);
 
-        VBox blocResume = Ui.bloc("Résumé", resume, details, masse, ligneMonNom, confirmation, progression);
+        VBox blocResume = Ui.bloc("Résumé", resume, details, masse, ligneMonNom, confirmation, barrePlantes);
 
         // --- recherche et filtres
         recherche = new TextField();
@@ -240,7 +244,10 @@ public class OngletPlantes {
         Label vide = new Label("Aucune plante à montrer.");
         vide.getStyleClass().add("aide-vide");
         table.setPlaceholder(vide);
-        table.getColumns().add(colonne("Nom", 110, PlanteVue.PAR_NOM, (c, p) -> c.setText(p.nom)));
+        table.getColumns().add(colonne("Nom", 110, PlanteVue.PAR_NOM, (c, p) -> {
+            c.setText(p.nom);
+            c.setGraphic(pastille(p));
+        }));
         TableColumn<Plante, Plante> rar = colonne("Rareté", 62, PlanteVue.PAR_RARETE,
                 (c, p) -> c.setText(PlanteVue.rarete(p.rarete)));
         table.getColumns().add(rar);
@@ -272,6 +279,7 @@ public class OngletPlantes {
         sRecolter = bouton("Récolter", "Tes plantes adultes choisies.");
         sRecolter.setOnAction(e -> agirSelection("recolter"));
         sComposter = bouton("Composter", "Tes plantes mortes choisies (définitif).");
+        sComposter.getStyleClass().add("danger");
         sComposter.setOnAction(e -> agirSelection("composter"));
         sReproduire = bouton("Reproduire ces 2", "Deux plantes adultes, à toi ou dont la reproduction est permise. "
                 + "Tu reçois une graine.");
@@ -284,7 +292,7 @@ public class OngletPlantes {
 
         Label aide = Ui.aide("Clique une ligne : la plante est choisie dans le jeu, comme si tu cliquais dessus. "
                 + "Cmd/Ctrl + clic ou Maj + clic pour en choisir plusieurs. Clic droit : les actions.");
-        VBox blocListe = Ui.bloc("Plantes de la salle", barre, table, actionsSel, reproLbl, aide);
+        VBox blocListe = Ui.bloc("Plantes de l'appart", barre, table, actionsSel, reproLbl, aide);
         VBox.setVgrow(blocListe, Priority.ALWAYS);
 
         VBox v = new VBox(12, blocResume, blocListe, etat);
@@ -328,6 +336,13 @@ public class OngletPlantes {
                 try { remplir.accept(this, p); } catch (Throwable t) { setGraphic(null); setText("?"); }
             }
         });
+        return c;
+    }
+
+    /** Pastille devant le nom : rouge (morte), orange (a soigner), verte (en forme). */
+    private static javafx.scene.Node pastille(Plante p) {
+        javafx.scene.shape.Circle c = new javafx.scene.shape.Circle(4);
+        c.getStyleClass().add(p.morte ? "pastille-echec" : PlanteVue.aSoigner(p) ? "pastille-attente" : "pastille-ok");
         return c;
     }
 
@@ -582,6 +597,10 @@ public class OngletPlantes {
     private void proposer(String texte, String libelle, Runnable action) {
         apercu.setText(Ui.accorder(texte));
         confirmer.setText(libelle);
+        // composter est sans retour : le bouton de confirmation passe au rouge
+        boolean sansRetour = libelle != null && libelle.startsWith("Composter");
+        confirmer.getStyleClass().removeAll("primaire", "danger");
+        confirmer.getStyleClass().add(sansRetour ? "danger" : "primaire");
         confirmer.setOnAction(e -> { cacherConfirmation(); action.run(); });
         montrer(confirmation, true);
     }
@@ -690,10 +709,20 @@ public class OngletPlantes {
     }
 
     /** Resultat d'une action : une seule fois, dans le jeu (Journal). */
-    private void succes(String s) { Ui.succes(etat, s); }
-    private void erreur(String s) { Ui.erreur(etat, s); }
+    private void succes(String s) {
+        Avancement.Suivi a = av;
+        if (a != null) a.fin(s);
+        Ui.succes(etat, s);
+    }
+    private void erreur(String s) {
+        Avancement.Suivi a = av;
+        if (a != null) { Avancement.Issue i = Avancement.issue(s); a.fin(i == Avancement.Issue.REUSSI ? Avancement.Issue.ECHEC : i); }
+        Ui.erreur(etat, s);
+    }
 
     private void avancer(int i, int n, String texte) {
+        Avancement.Suivi a = av;
+        if (a != null) { a.texte(texte); if (n > 0) a.compte(i, n); else a.part(-1); }
         Platform.runLater(() -> {
             progres.setProgress(n <= 0 ? ProgressBar.INDETERMINATE_PROGRESS : i / (double) n);
             progresTxt.setText(Ui.accorder(texte + (n > 1 ? " (" + i + "/" + n + ")" : "")));
@@ -707,16 +736,30 @@ public class OngletPlantes {
         cacherConfirmation();
         progres.setProgress(ProgressBar.INDETERMINATE_PROGRESS);
         progresTxt.setText("");
-        montrer(progression, true);
+        Avancement.Suivi a = Avancement.debut(libelle(nom), () -> arret = true).part(-1);
+        av = a;
+        barrePlantes.suivre(a);
         majResume();
         Salle.tache(nom, () -> {
             try { PlanteSuivi.enActionExplicite(r); }
-            catch (Throwable t) { Ui.erreur(etat, "Erreur pendant le travail sur les plantes", t); }
+            catch (Throwable t) { a.fin(Avancement.Issue.ECHEC); Ui.erreur(etat, "Erreur pendant le travail sur les plantes", t); }
             finally {
+                a.fin(arret ? Avancement.Issue.PARTIEL : Avancement.Issue.REUSSI);    // sans effet si deja dit
+                av = null;
                 occupe.set(false);
                 Platform.runLater(() -> { montrer(progression, false); rafraichir(); });
             }
         });
+    }
+
+    /** Nom du travail, pour la barre de progression. */
+    private static String libelle(String nom) {
+        switch (nom) {
+            case "plantes-soigner":   return "Soins des plantes";
+            case "plantes-recolter":  return "Récolte des plantes";
+            case "plantes-composter": return "Compost des plantes";
+            default:                  return nom.startsWith("plantes-reprod") ? "Reproduction des plantes" : "Plantes";
+        }
     }
 
     private boolean pret() {

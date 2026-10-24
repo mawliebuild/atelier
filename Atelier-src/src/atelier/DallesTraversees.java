@@ -28,6 +28,7 @@ final class DallesTraversees {
     static synchronized void demarrer() {
         if (demarre) return;
         demarre = true;
+        PrixFiche.demarrer();
         Thread t = new Thread(() -> {
             while (true) {
                 Salle.sommeil(1500);

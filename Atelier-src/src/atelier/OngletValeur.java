@@ -222,12 +222,12 @@ public class OngletValeur {
 
         // Trois volets : la valeur, la recherche de mobis (RechercheMobis) et
         // l'estimation d'un mobi (EstimationMobi). Navigation en fait trois
-        // sections repliables du menu Mobis.
+        // sections des menus Valeur et Troc.
         Tab tValeur = new Tab("Valeur de mes mobis", sp);
         tValeur.setClosable(false);
         tRecherche = new RechercheMobis().construire();
         tEstimation = new EstimationMobi().construire();
-        Tab t = new Tab("Patrimoine", Ui.sousMenu(tValeur, tRecherche, tEstimation));
+        Tab t = new Tab("Valeur de mes mobis", Ui.sousMenu(tValeur, tRecherche, tEstimation));
         t.setClosable(false);
         this.tValeurSeule = tValeur;
         return t;
@@ -249,8 +249,8 @@ public class OngletValeur {
         tValeurSeule.setContent(null);
         tRecherche.setContent(null);
         tEstimation.setContent(null);
-        Tab a = new Tab("Valeur de mes mobis", valeur), b = new Tab("Recherche de mobis", recherche),
-                c = new Tab("Estimation mobi", estimation);
+        Tab a = new Tab("Valeur de mes mobis", valeur), b = new Tab("Trouver au troc", recherche),
+                c = new Tab("Prix d'un mobi", estimation);
         a.setClosable(false); b.setClosable(false); c.setClosable(false);
         return new Tab[]{a, b, c};
     }
@@ -363,6 +363,7 @@ public class OngletValeur {
             case SITE: return "Site";
             case SITE_ESTIMATION: return "Estim.";
             case JEU: return "Jeu";
+            case MARCHE: return "Marché";
             case NON_VENDABLE: return "Non vend.";
             default: return "—";
         }
@@ -528,6 +529,7 @@ public class OngletValeur {
                 Marche.Prix p = Marche.prix(mur, typeId);
                 return p == null || p.moyen <= 0 ? null : p.moyen;
             }
+            @Override public Integer marche(boolean mur, int typeId) { return MarcheOffres.prix(mur, typeId); }
         };
     }
 
@@ -700,6 +702,7 @@ public class OngletValeur {
 
     /** Prix unitaire d'un mobi, pour les autres volets (Salle) ; -1 si inconnu. */
     public static int prixUnitaire(Moteur gp, boolean mur, int typeId) {
+        MarcheOffres.installer(gp);      // offre la moins chere du mobi clique (fiche du jeu)
         try {
             return PrixCalcul.prix(mur, typeId, PrixTexte.classe(gp, mur, typeId), true, sources()).prix;
         } catch (Throwable t) { return -1; }

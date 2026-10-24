@@ -57,7 +57,7 @@ public class BarreMesure implements Ancrage.Ancrable {
         inventaire.setOnAction(e -> surInventaire.run());
         survol(inventaire, "Inventaire");
 
-        Button salleB = bouton(Icones.SALLE, "Salle", () -> surSalle.run());
+        Button salleB = bouton(Icones.SALLE, "Mon appart", () -> surSalle.run());
         floorB = bouton(Icones.FLOOR, "Mode Floor : éditer les cases dans le jeu", () -> surFloor.run());
 
         Button photo = new Button();
@@ -180,7 +180,8 @@ public class BarreMesure implements Ancrage.Ancrable {
         GrilleVue.attente("mesure", mesure);         // grille et clics a travers les mobis pendant la mesure
         brancher();
         Salle.tache("mesure-dalles", BarreMesure::retirerDalles);
-        InfoJeu.consigne(mesure ? "Mesure : clique la première case." : "Mesure annulée.");
+        if (mesure) InfoJeu.consigne("Mesure : clique la première case.");
+        else Journal.debug("mesure annulée.");          // l'icone de la regle s'eteint : ca se voit
         regle.getStyleClass().remove("actif");
         if (mesure) {
             regle.getStyleClass().add("actif");
